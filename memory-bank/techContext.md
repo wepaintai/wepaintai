@@ -21,23 +21,17 @@
   - Custom color palette
   - Responsive design utilities
   
-- **shadcn/ui** - Component library
-  - Accessible components
-  - Customizable with Tailwind
-  - Radix UI primitives
+- **Lucide React** - Icon library
+  - Consistent iconography
+  - Tree-shakeable imports
 
 ### Backend & Database
-- **Convex** - Backend platform
-  - Real-time database
-  - Serverless functions
-  - File storage
-  - Built-in TypeScript support
+- **Convex** - Real-time backend platform
+  - Real-time database with WebSocket connections
+  - Serverless functions with TypeScript
+  - Built-in optimistic updates
+  - Automatic schema validation
   
-- **Convex Auth** - Authentication
-  - Email/password support
-  - Social login providers
-  - Session management
-
 ### Drawing & Graphics
 - **perfect-freehand** - Stroke processing
   - Pressure simulation
@@ -46,9 +40,21 @@
   
 - **HTML5 Canvas API** - Drawing surface
   - 2D context for rendering
-  - Image manipulation
+  - Pointer events for multi-touch
+  - Real-time collaborative rendering
 
-### AI Integration
+### Real-time Features
+- **Convex Real-time Queries** - Live data synchronization
+  - WebSocket connections
+  - Automatic reconnection
+  - Optimistic updates
+  
+- **Presence System** - User tracking
+  - Live cursor positions
+  - User identification
+  - Session management
+
+### AI Integration (Planned)
 - **Replicate API** - AI model hosting
   - Ideogram V2 Turbo model
   - REST API interface
@@ -69,12 +75,20 @@ ipaintai/
 ├── app/
 │   ├── routes/          # TanStack Start routes
 │   ├── components/      # React components
+│   │   ├── Canvas.tsx   # Real-time collaborative canvas
+│   │   ├── PaintingView.tsx # Main container
+│   │   ├── ToolPanel.tsx    # Drawing tools
+│   │   └── SessionInfo.tsx  # User presence display
 │   ├── hooks/          # Custom React hooks
+│   │   └── usePaintingSession.ts # Real-time session hook
+│   ├── lib/            # Library integrations
+│   │   └── convex.tsx  # Convex client setup
 │   └── utils/          # Utility functions
 ├── convex/
 │   ├── schema.ts       # Database schema
-│   ├── auth.config.ts  # Auth configuration
-│   └── functions/      # Backend functions
+│   ├── paintingSessions.ts # Session management
+│   ├── strokes.ts      # Stroke operations
+│   └── presence.ts     # User presence tracking
 ├── public/             # Static assets
 └── styles/            # Global styles
 ```
@@ -83,108 +97,214 @@ ipaintai/
 ```env
 # Convex
 CONVEX_DEPLOYMENT=
-NEXT_PUBLIC_CONVEX_URL=
+VITE_CONVEX_URL=
 
-# Replicate
+# Replicate (planned)
 REPLICATE_API_TOKEN=
-
-# Auth providers (optional)
-AUTH_GOOGLE_ID=
-AUTH_GOOGLE_SECRET=
 ```
+
+## Real-time Architecture
+
+### Database Schema (Convex)
+```typescript
+// paintingSessions table
+{
+  name?: string,
+  canvasWidth: number,
+  canvasHeight: number,
+  isPublic: boolean,
+  createdBy?: Id<"users">
+}
+
+// strokes table
+{
+  sessionId: Id<"paintingSessions">,
+  userId?: Id<"users">,
+  userColor: string,
+  points: Array<{x: number, y: number, pressure?: number}>,
+  brushColor: string,
+  brushSize: number,
+  opacity: number,
+  strokeOrder: number
+}
+
+// userPresence table
+{
+  sessionId: Id<"paintingSessions">,
+  userId?: Id<"users">,
+  userColor: string,
+  userName: string,
+  cursorX: number,
+  cursorY: number,
+  isDrawing: boolean,
+  currentTool: string,
+  lastSeen: number
+}
+```
+
+### Real-time Data Flow
+1. **User draws stroke** → Local canvas update (optimistic)
+2. **Stroke data sent** → Convex mutation
+3. **Database updated** → All clients receive update
+4. **Canvas redraws** → Consistent state across users
+
+### Session Management
+- **URL-based sharing**: `?session=<sessionId>`
+- **Automatic session creation**: New session if no ID provided
+- **User identification**: Random names and colors
+- **Presence tracking**: Live cursor positions and user count
 
 ## Technical Constraints
 
 ### Performance Requirements
-- Initial paint < 1s
-- Time to interactive < 3s
-- Smooth 60fps drawing
-- Canvas size up to 4K resolution
+- Initial paint < 1s ✅
+- Time to interactive < 3s ✅
+- Smooth 60fps drawing ✅
+- Real-time latency < 100ms
+- Canvas size up to 800x600 (current)
 
 ### Browser Support
-- Chrome 90+
-- Firefox 88+
-- Safari 14+
-- Edge 90+
-- Mobile Safari/Chrome
+- Chrome 90+ ✅
+- Firefox 88+ ✅
+- Safari 14+ ✅
+- Edge 90+ ✅
+- Mobile Safari/Chrome (needs optimization)
 
-### API Limits
-- Replicate API: Rate limits apply
-- Convex: Storage and bandwidth limits
-- Image size: Max 10MB for inpainting
+### Real-time Limits
+- Convex: 1000 concurrent connections (free tier)
+- Stroke rate: Optimized for smooth drawing
+- Presence updates: Throttled to 60fps
 
 ## Dependencies
 
 ### Core Dependencies
 ```json
 {
-  "@tanstack/start": "latest",
-  "react": "^18.2.0",
-  "react-dom": "^18.2.0",
-  "convex": "latest",
-  "@convex-dev/auth": "latest",
-  "perfect-freehand": "^1.2.0",
-  "tailwindcss": "^3.4.0",
-  "@radix-ui/react-*": "latest"
+  "@tanstack/react-router": "^1.87.0",
+  "@tanstack/start": "^1.87.0",
+  "react": "^18.3.1",
+  "react-dom": "^18.3.1",
+  "convex": "^1.17.4",
+  "perfect-freehand": "^1.2.2",
+  "tailwindcss": "^4.0.0",
+  "lucide-react": "^0.468.0"
 }
 ```
 
 ### Dev Dependencies
 ```json
 {
-  "typescript": "^5.0.0",
-  "@types/react": "^18.2.0",
-  "@types/node": "^20.0.0",
-  "eslint": "^8.0.0",
-  "prettier": "^3.0.0"
+  "typescript": "^5.7.3",
+  "@types/react": "^18.3.17",
+  "@types/node": "^22.10.2",
+  "vite": "^6.0.5",
+  "vinxi": "^0.5.1"
 }
 ```
 
-## Tool Usage Patterns
+## Implementation Patterns
 
-### Canvas Rendering
+### Real-time Canvas Updates
 ```typescript
-// Efficient canvas updates
-const renderFrame = () => {
-  ctx.clearRect(dirtyRect)
-  ctx.drawImage(bufferCanvas, dirtyRect)
-  requestAnimationFrame(renderFrame)
+// Optimistic drawing with real-time sync
+const handlePointerMove = (e) => {
+  const point = getPointerPosition(e)
+  
+  // Update presence immediately
+  updateUserPresence(point.x, point.y, isDrawing, 'brush')
+  
+  if (isDrawing) {
+    // Local update for responsiveness
+    drawStroke(context, currentStroke)
+    
+    // Sync to database
+    addStrokeToSession(currentStroke, color, size, opacity)
+  }
 }
 ```
 
-### Convex Patterns
+### Convex Query Patterns
 ```typescript
-// Optimistic updates
-const { mutate, isLoading } = useMutation(
-  api.paintings.update
-).withOptimisticUpdate((store, args) => {
-  // Update local state immediately
-})
+// Real-time data subscription
+const strokes = useQuery(
+  api.strokes.getSessionStrokes,
+  sessionId ? { sessionId } : "skip"
+)
+
+// Optimistic mutations
+const addStroke = useMutation(api.strokes.addStroke)
 ```
 
-### Error Handling
+### Session Hook Pattern
 ```typescript
-// Graceful degradation
-try {
-  await saveToCloud()
-} catch (error) {
-  saveToLocalStorage()
-  showRetryNotification()
+// Custom hook for session management
+export function usePaintingSession(sessionId) {
+  const strokes = useQuery(api.strokes.getSessionStrokes, ...)
+  const presence = useQuery(api.presence.getSessionPresence, ...)
+  const addStroke = useMutation(api.strokes.addStroke)
+  
+  return {
+    strokes: strokes || [],
+    presence: presence || [],
+    addStrokeToSession,
+    updateUserPresence,
+    currentUser
+  }
 }
 ```
 
 ## Security Considerations
 
-1. **Input Validation** - Sanitize all user inputs
-2. **API Keys** - Server-side only, never exposed
-3. **CORS** - Properly configured for Convex
-4. **Content Security Policy** - Restrict resource loading
-5. **Rate Limiting** - Prevent API abuse
+1. **Input Validation** - Sanitize stroke data and user inputs
+2. **Rate Limiting** - Prevent spam drawing/presence updates
+3. **Session Access** - Public sessions by default (no auth required)
+4. **Data Validation** - Convex schema validation
+5. **XSS Prevention** - Sanitized user names and content
 
 ## Performance Optimizations
 
-1. **Canvas Layering** - Separate layers for performance
-2. **Debouncing** - Reduce API calls
-3. **Web Workers** - Offload heavy computations
-4. **Lazy Loading** - Load features as needed
-5. **Image Compression** - Optimize before upload
+### Implemented
+1. **Optimistic Updates** - Immediate local canvas updates
+2. **Efficient Redrawing** - Only redraw when strokes change
+3. **Stroke Ordering** - Consistent rendering across clients
+4. **Presence Throttling** - Limit cursor update frequency
+5. **Canvas Layering** - Separate current stroke from history
+
+### Planned
+1. **Stroke Batching** - Group rapid strokes for efficiency
+2. **Canvas Virtualization** - Handle large canvases
+3. **Mobile Optimization** - Touch event handling
+4. **Connection Recovery** - Handle network interruptions
+5. **Memory Management** - Cleanup old presence data
+
+## Real-time Testing
+
+### Multi-user Testing Methods
+1. **Multiple browser tabs** - Same device testing
+2. **Different browsers** - Cross-browser compatibility
+3. **Incognito windows** - Separate user sessions
+4. **Network simulation** - Test with slow connections
+5. **Mobile devices** - Touch interaction testing
+
+### Expected Behaviors
+- Instant stroke appearance across all users
+- Live cursor tracking with user identification
+- Session persistence via URL sharing
+- Automatic user count updates
+- Graceful handling of user disconnections
+
+## Known Technical Debt
+
+1. **Session-wide undo/redo** - Currently local only
+2. **Mobile touch optimization** - Needs pressure sensitivity
+3. **Error boundaries** - Better error handling for network issues
+4. **Performance monitoring** - Real-time metrics collection
+5. **Stroke compression** - Optimize data transfer for complex drawings
+
+## Future Enhancements
+
+1. **AI Integration** - Inpainting with collaborative sessions
+2. **Authentication** - Optional user accounts
+3. **Session persistence** - Save/load collaborative sessions
+4. **Advanced tools** - Layers, selection, text
+5. **Voice chat** - Audio communication during collaboration
