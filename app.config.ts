@@ -7,5 +7,14 @@ export default defineConfig({
   },
   vite: {
     plugins: [tailwindcss()],
+    build: {
+      cssCodeSplit: true,
+      assetsInlineLimit: 0, // Force CSS to be a separate file
+      rollupOptions: {
+        output: {
+          assetFileNames: 'assets/[name]-[hash][extname]',
+        },
+      },
+    },
   },
 })
