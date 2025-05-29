@@ -5,6 +5,7 @@ import {
   createRootRoute,
 } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
+import { ConvexClientProvider } from '../lib/convex'
 import '../globals.css'
 
 function NotFoundComponent() {
@@ -48,9 +49,11 @@ export const Route = createRootRoute({
 
 function RootComponent() {
   return (
-    <RootDocument>
-      <Outlet />
-    </RootDocument>
+    <ConvexClientProvider>
+      <RootDocument>
+        <Outlet />
+      </RootDocument>
+    </ConvexClientProvider>
   )
 }
 
