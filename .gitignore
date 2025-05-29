@@ -1,0 +1,14 @@
+# Dependencies
+node_modules/
+
+# Env
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+.env.staging
+
+# System Files
+.DS_Store
+Thumbs.db
