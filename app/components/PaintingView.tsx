@@ -1,6 +1,7 @@
-import React, { useRef, useState, useEffect } from 'react'
+import React, { useRef, useState, useEffect, useCallback } from 'react'
 import { Canvas, CanvasRef } from './Canvas'
 import { ToolPanel } from './ToolPanel'
+import { AdminPanel } from './AdminPanel' // Import AdminPanel
 import { SessionInfo } from './SessionInfo'
 import { usePaintingSession } from '../hooks/usePaintingSession'
 import { Id } from '../../convex/_generated/dataModel'
@@ -8,11 +9,25 @@ import { Id } from '../../convex/_generated/dataModel'
 export function PaintingView() {
   const canvasRef = useRef<CanvasRef>(null)
   const [color, setColor] = useState('#000000')
-  const [size, setSize] = useState(20)
+  const [size, setSize] = useState(20) // perfect-freehand: size
   const [opacity, setOpacity] = useState(1.0)
+
+  // perfect-freehand options
+  const [smoothing, setSmoothing] = useState(0.5)
+  const [thinning, setThinning] = useState(0.5)
+  const [streamline, setStreamline] = useState(0.5)
+  const [startTaper, setStartTaper] = useState(0)
+  const [startCap, setStartCap] = useState(true)
+  const [endTaper, setEndTaper] = useState(0)
+  const [endCap, setEndCap] = useState(true)
+  // For simplicity, easing is kept constant for now.
+  // If it needs to be dynamic, it requires a more complex state management.
+  const easing = (t: number) => t
+
   const [history, setHistory] = useState<string[]>([])
   const [historyIndex, setHistoryIndex] = useState(-1)
   const [sessionId, setSessionId] = useState<Id<"paintingSessions"> | null>(null)
+  const [isAdminPanelVisible, setIsAdminPanelVisible] = useState(true) // Default to true for easy testing
 
   const { createNewSession, presence, currentUser, isLoading } = usePaintingSession(sessionId)
 
@@ -85,8 +100,35 @@ export function PaintingView() {
     }
   }
 
+  const toggleAdminPanel = useCallback(() => {
+    setIsAdminPanelVisible(prev => !prev)
+  }, [])
+
+  // Add keyboard listener for toggling admin panel (e.g., Ctrl+Shift+A)
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.ctrlKey && event.shiftKey && event.key === 'A') {
+        event.preventDefault()
+        toggleAdminPanel()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [toggleAdminPanel])
+
   return (
     <div className="relative w-full h-full bg-gray-50">
+      {/* Button to toggle Admin Panel - for easy testing */}
+      <button 
+        onClick={toggleAdminPanel} 
+        className="absolute top-2 right-28 z-50 bg-blue-500 hover:bg-blue-700 text-white font-bold py-1 px-2 rounded text-xs"
+        title="Toggle Admin Panel (Ctrl+Shift+A)"
+      >
+        {isAdminPanelVisible ? 'Hide' : 'Show'} Admin
+      </button>
+
       {sessionId ? (
         <Canvas
           ref={canvasRef}
@@ -94,6 +136,15 @@ export function PaintingView() {
           color={color}
           size={size}
           opacity={opacity}
+          // perfect-freehand options
+          smoothing={smoothing}
+          thinning={thinning}
+          streamline={streamline}
+          easing={easing}
+          startTaper={startTaper}
+          startCap={startCap}
+          endTaper={endTaper}
+          endCap={endCap}
           onStrokeEnd={handleStrokeEnd}
         />
       ) : (
@@ -120,6 +171,26 @@ export function PaintingView() {
         onRedo={handleRedo}
         onClear={handleClear}
         onExport={handleExport}
+      />
+      <AdminPanel
+        isVisible={isAdminPanelVisible}
+        onClose={toggleAdminPanel}
+        size={size}
+        onSizeChange={setSize}
+        smoothing={smoothing}
+        onSmoothingChange={setSmoothing}
+        thinning={thinning}
+        onThinningChange={setThinning}
+        streamline={streamline}
+        onStreamlineChange={setStreamline}
+        startTaper={startTaper}
+        onStartTaperChange={setStartTaper}
+        startCap={startCap}
+        onStartCapChange={setStartCap}
+        endTaper={endTaper}
+        onEndTaperChange={setEndTaper}
+        endCap={endCap}
+        onEndCapChange={setEndCap}
       />
     </div>
   )

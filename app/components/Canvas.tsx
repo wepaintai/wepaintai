@@ -21,9 +21,18 @@ interface LocalStroke {
 interface CanvasProps {
   sessionId: Id<"paintingSessions"> | null
   color: string
-  size: number
+  size: number // perfect-freehand: size
   opacity: number
   onStrokeEnd?: () => void
+  // perfect-freehand options
+  smoothing?: number
+  thinning?: number
+  streamline?: number
+  easing?: (t: number) => number
+  startTaper?: number
+  startCap?: boolean
+  endTaper?: number
+  endCap?: boolean
 }
 
 export interface CanvasRef {
@@ -33,7 +42,25 @@ export interface CanvasRef {
 }
 
 export const Canvas = forwardRef<CanvasRef, CanvasProps>(
-  ({ sessionId, color, size, opacity, onStrokeEnd }, ref) => {
+  (
+    {
+      sessionId,
+      color,
+      size,
+      opacity,
+      onStrokeEnd,
+      // perfect-freehand options
+      smoothing = 0.5, // Default value
+      thinning = 0.5,  // Default value
+      streamline = 0.5, // Default value
+      easing = (t: number) => t, // Default value
+      startTaper = 0,    // Default value
+      startCap = true,   // Default value
+      endTaper = 0,      // Default value
+      endCap = true,     // Default value
+    },
+    ref
+  ) => {
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const [isDrawing, setIsDrawing] = useState(false)
     const [currentStroke, setCurrentStroke] = useState<Point[]>([])
@@ -139,35 +166,48 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       // Draw all confirmed strokes from the session
       strokes
         .sort((a, b) => a.strokeOrder - b.strokeOrder)
-        .forEach((stroke) => {
+        .forEach((s) => { // Renamed stroke to s to avoid conflict with outer scope if any
           drawStroke(context, {
-            points: stroke.points,
-            color: stroke.brushColor,
-            size: stroke.brushSize,
+            points: s.points,
+            color: s.brushColor,
+            size: s.brushSize, // Use size from the stored stroke
           })
         })
 
       // Draw pending strokes
-      pendingStrokes.forEach((pendingStroke) => {
-        drawStroke(context, pendingStroke)
+      pendingStrokes.forEach((pendingS) => { // Renamed pendingStroke to pendingS
+        drawStroke(context, pendingS)
       })
-    }, [context, strokes, pendingStrokes])
+    }, [context, strokes, pendingStrokes, smoothing, thinning, streamline, easing, startTaper, startCap, endTaper, endCap, opacity]) // Added new dependencies
 
     // Draw a single stroke
-    const drawStroke = (ctx: CanvasRenderingContext2D, stroke: LocalStroke) => {
-      if (stroke.points.length === 0) return
+    // Note: 'size' for getStroke comes from stroke.size. Other perfect-freehand options come from CanvasProps.
+    const drawStroke = (ctx: CanvasRenderingContext2D, currentLocalStroke: LocalStroke) => {
+      if (currentLocalStroke.points.length === 0) return
 
-      const outlinePoints = getStroke(stroke.points, {
-        size: stroke.size,
-        thinning: 0.5,
-        smoothing: 0.5,
-        streamline: 0.5,
-      })
+      const options = {
+        size: currentLocalStroke.size,
+        smoothing,
+        thinning,
+        streamline,
+        easing,
+        start: {
+          taper: startTaper,
+          cap: startCap,
+        },
+        end: {
+          taper: endTaper,
+          cap: endCap,
+        },
+      }
+      const outlinePoints = getStroke(currentLocalStroke.points, options)
 
       if (outlinePoints.length === 0) return
 
-      ctx.fillStyle = stroke.color
-      ctx.globalAlpha = opacity
+      ctx.fillStyle = currentLocalStroke.color
+      // Use the opacity from CanvasProps for all strokes for consistency in this version
+      // If individual strokes should have their own opacity, LocalStroke and Convex schema would need update
+      ctx.globalAlpha = opacity 
 
       ctx.beginPath()
       ctx.moveTo(outlinePoints[0][0], outlinePoints[0][1])
@@ -256,10 +296,12 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       redrawCanvas()
 
       // Draw current stroke
+      // For the currently drawn stroke, use the main 'color' and 'size' props from PaintingView
       drawStroke(context, {
         points: newStroke,
-        color,
-        size,
+        color: color, // from CanvasProps
+        size: size,   // from CanvasProps
+        // opacity is handled by drawStroke directly from CanvasProps
       })
 
       // Draw user cursors
