@@ -6,7 +6,7 @@ import {
 } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
 import { ConvexClientProvider } from '../lib/convex'
-import '../globals.css'
+import appCss from '../styles/app.css?url'
 
 function NotFoundComponent() {
   return (
@@ -40,6 +40,12 @@ export const Route = createRootRoute({
       },
       {
         title: 'iPaintAI - AI-Powered Painting App',
+      },
+    ],
+    links: [
+      {
+        rel: 'stylesheet',
+        href: appCss,
       },
     ],
   }),
