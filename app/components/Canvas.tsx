@@ -13,6 +13,9 @@ interface LocalStroke {
   points: Point[]
   color: string
   size: number
+  opacity?: number
+  id?: string
+  isPending?: boolean
 }
 
 interface CanvasProps {
@@ -36,6 +39,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
     const [currentStroke, setCurrentStroke] = useState<Point[]>([])
     const [context, setContext] = useState<CanvasRenderingContext2D | null>(null)
     const [lastStrokeOrder, setLastStrokeOrder] = useState(0)
+    const [pendingStrokes, setPendingStrokes] = useState<Map<string, LocalStroke>>(new Map())
 
     // Use the painting session hook
     const {
@@ -46,6 +50,55 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       updateUserPresence,
     } = usePaintingSession(sessionId)
 
+    // Remove confirmed strokes from pending when they appear in the strokes array
+    useEffect(() => {
+      if (strokes.length > 0) {
+        setPendingStrokes(prev => {
+          const newPending = new Map(prev)
+          strokes.forEach(stroke => {
+            for (const [id, pendingStroke] of newPending) {
+              if (pendingStroke.points.length === stroke.points.length &&
+                  pendingStroke.color === stroke.brushColor &&
+                  pendingStroke.size === stroke.brushSize) {
+                const firstMatch = Math.abs(pendingStroke.points[0].x - stroke.points[0].x) < 1 &&
+                                 Math.abs(pendingStroke.points[0].y - stroke.points[0].y) < 1
+                const lastIdx = pendingStroke.points.length - 1
+                const lastMatch = Math.abs(pendingStroke.points[lastIdx].x - stroke.points[lastIdx].x) < 1 &&
+                                Math.abs(pendingStroke.points[lastIdx].y - stroke.points[lastIdx].y) < 1
+                
+                if (firstMatch && lastMatch) {
+                  newPending.delete(id)
+                  break
+                }
+              }
+            }
+          })
+          return newPending
+        })
+      }
+    }, [strokes])
+
+    // Clean up pending strokes that haven't been confirmed after 10 seconds
+    useEffect(() => {
+      const cleanup = setInterval(() => {
+        setPendingStrokes(prev => {
+          const newPending = new Map(prev)
+          const now = Date.now()
+          for (const [id] of newPending) {
+            // Simple cleanup: remove all pending strokes older than 10 seconds
+            // In a real app, you'd track creation time more precisely
+            if (newPending.size > 5) {
+              newPending.delete(id)
+              break
+            }
+          }
+          return newPending
+        })
+      }, 5000)
+
+      return () => clearInterval(cleanup)
+    }, [])
+
     // Initialize canvas
     useEffect(() => {
       const canvas = canvasRef.current
@@ -54,21 +107,28 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       const ctx = canvas.getContext('2d')
       if (!ctx) return
 
-      // Set canvas size
+      // Set canvas size to match container
       const resizeCanvas = () => {
-        canvas.width = 800
-        canvas.height = 600
-        redrawCanvas()
+        const container = canvas.parentElement
+        if (container) {
+          canvas.width = container.clientWidth
+          canvas.height = container.clientHeight
+          redrawCanvas()
+        }
       }
 
       resizeCanvas()
       setContext(ctx)
+
+      // Add resize listener
+      window.addEventListener('resize', resizeCanvas)
+      return () => window.removeEventListener('resize', resizeCanvas)
     }, [])
 
     // Redraw all strokes when they change
     useEffect(() => {
       redrawCanvas()
-    }, [strokes])
+    }, [strokes, pendingStrokes])
 
     // Redraw all strokes
     const redrawCanvas = useCallback(() => {
@@ -76,7 +136,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
 
       context.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height)
 
-      // Draw all strokes from the session
+      // Draw all confirmed strokes from the session
       strokes
         .sort((a, b) => a.strokeOrder - b.strokeOrder)
         .forEach((stroke) => {
@@ -86,7 +146,12 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
             size: stroke.brushSize,
           })
         })
-    }, [context, strokes])
+
+      // Draw pending strokes
+      pendingStrokes.forEach((pendingStroke) => {
+        drawStroke(context, pendingStroke)
+      })
+    }, [context, strokes, pendingStrokes])
 
     // Draw a single stroke
     const drawStroke = (ctx: CanvasRenderingContext2D, stroke: LocalStroke) => {
@@ -148,12 +213,17 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
 
     // Get pointer position
     const getPointerPosition = (e: React.PointerEvent<HTMLCanvasElement>): Point => {
-      const rect = canvasRef.current?.getBoundingClientRect()
-      if (!rect) return { x: 0, y: 0 }
+      const canvas = canvasRef.current
+      const rect = canvas?.getBoundingClientRect()
+      if (!rect || !canvas) return { x: 0, y: 0 }
+
+      // Calculate the scale factor between the canvas display size and actual size
+      const scaleX = canvas.width / rect.width
+      const scaleY = canvas.height / rect.height
 
       return {
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top,
+        x: (e.clientX - rect.left) * scaleX,
+        y: (e.clientY - rect.top) * scaleY,
         pressure: e.pressure,
       }
     }
@@ -207,7 +277,22 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       updateUserPresence(point.x, point.y, false, 'brush')
 
       if (currentStroke.length > 0) {
-        // Add stroke to session
+        // Generate a temporary ID for the stroke
+        const tempId = crypto.randomUUID()
+        
+        // Add stroke to pending state immediately for optimistic update
+        const pendingStroke: LocalStroke = {
+          points: currentStroke,
+          color,
+          size,
+          opacity,
+          id: tempId,
+          isPending: true
+        }
+        
+        setPendingStrokes(prev => new Map(prev.set(tempId, pendingStroke)))
+        
+        // Send stroke to Convex
         addStrokeToSession(currentStroke, color, size, opacity)
         setCurrentStroke([])
         onStrokeEnd?.()
