@@ -7,11 +7,5 @@ export default defineConfig({
   },
   vite: {
     plugins: [tailwindcss()],
-    css: {
-      postcss: './postcss.config.js',
-    },
-    build: {
-      cssMinify: true,
-    },
   },
 })
