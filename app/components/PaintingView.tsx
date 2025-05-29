@@ -6,7 +6,7 @@ export function PaintingView() {
   const canvasRef = useRef<CanvasRef>(null)
   const [color, setColor] = useState('#000000')
   const [size, setSize] = useState(20)
-  const [opacity, setOpacity] = useState(0.8)
+  const [opacity, setOpacity] = useState(1.0)
   const [history, setHistory] = useState<string[]>([])
   const [historyIndex, setHistoryIndex] = useState(-1)
 

@@ -10,8 +10,7 @@ import {
   X,
   ChevronUp,
   Circle,
-  Eye,
-  GripHorizontal
+  Eye
 } from 'lucide-react'
 
 // Types
@@ -294,7 +293,7 @@ export function ToolPanel({
         transition: isDragging ? 'none' : 'transform 0.15s ease-out'
       }}
       role="toolbar"
-      aria-label="Painting tools"
+      aria-label="ipaint.ai tools"
     >
       <div 
         className="bg-background/95 backdrop-blur-sm border border-border overflow-hidden"
@@ -310,9 +309,8 @@ export function ToolPanel({
           aria-label="Drag to move panel"
           role="button"
         >
-          <div className="flex items-center gap-1.5">
-            <GripHorizontal className="w-3.5 h-3.5 text-muted-foreground" aria-hidden="true" />
-            <span className="text-xs font-medium text-foreground/80">Tools</span>
+          <div className="flex items-center">
+            <span className="text-xs font-medium text-foreground/80">ipaint.ai</span>
           </div>
           <button
             onClick={(e) => {
@@ -370,7 +368,7 @@ export function ToolPanel({
                 onChange={(value) => onOpacityChange(value / 100)}
                 icon={Eye}
                 label="Opacity"
-                color="hsl(var(--accent))"
+                color="hsl(0, 0%, 50%)"
               />
             </div>
 
