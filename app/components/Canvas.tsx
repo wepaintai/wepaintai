@@ -283,6 +283,49 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       })
     }, [drawingContext, presence, currentUser.name])
     
+    // Fallback global listener to ensure drawing stops if pointer capture fails
+    useEffect(() => {
+      if (!isDrawing) return
+      
+      const handleGlobalPointerUp = () => {
+        if (isDrawing) {
+          setIsDrawing(false)
+          
+          // Save the current stroke if it has points
+          if (currentStroke.length > 0) {
+            const tempId = crypto.randomUUID()
+            const newPendingStroke: LocalStroke = {
+              points: currentStroke,
+              color,
+              size,
+              opacity,
+              id: tempId,
+              isPending: true,
+            }
+            setPendingStrokes(prev => new Map(prev).set(tempId, newPendingStroke))
+            
+            addStrokeToSession(currentStroke, color, size, opacity)
+            
+            // Redraw main canvas to include the new pending stroke immediately
+            if (mainContext) {
+              drawSingleStroke(mainContext, newPendingStroke)
+            }
+          }
+          
+          setCurrentStroke([])
+          onStrokeEnd?.()
+          
+          // Clear drawing canvas
+          if (drawingContext && drawingCanvasRef.current) {
+            drawingContext.clearRect(0, 0, drawingCanvasRef.current.width, drawingCanvasRef.current.height)
+          }
+        }
+      }
+      
+      document.addEventListener('pointerup', handleGlobalPointerUp)
+      return () => document.removeEventListener('pointerup', handleGlobalPointerUp)
+    }, [isDrawing, currentStroke, color, size, opacity, addStrokeToSession, onStrokeEnd, mainContext, drawingContext])
+
     // Effect to draw pending strokes and cursors on the drawing canvas
     useEffect(() => {
       if (!drawingContext || !drawingCanvasRef.current) return;
@@ -423,6 +466,49 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       onStrokeEnd?.()
     }
 
+    // Handle pointer leave - force end stroke when pointer leaves canvas
+    const handlePointerLeave = (e: React.PointerEvent<HTMLCanvasElement>) => {
+      if (!isDrawing) return
+      
+      // End the stroke when pointer leaves the canvas
+      e.currentTarget.releasePointerCapture(e.pointerId)
+      setIsDrawing(false)
+      
+      if (drawingContext && drawingCanvasRef.current) {
+        drawingContext.clearRect(0, 0, drawingCanvasRef.current.width, drawingCanvasRef.current.height)
+      }
+      
+      // Update presence to show user is no longer drawing
+      const lastPoint = currentStroke[currentStroke.length - 1]
+      if (lastPoint) {
+        updateUserPresence(lastPoint.x, lastPoint.y, false, 'brush')
+      }
+      
+      // Save the current stroke if it has points
+      if (currentStroke.length > 0) {
+        const tempId = crypto.randomUUID()
+        const newPendingStroke: LocalStroke = {
+          points: currentStroke,
+          color,
+          size,
+          opacity,
+          id: tempId,
+          isPending: true,
+        }
+        setPendingStrokes(prev => new Map(prev).set(tempId, newPendingStroke))
+        
+        addStrokeToSession(currentStroke, color, size, opacity)
+        
+        // Redraw main canvas to include the new pending stroke immediately
+        if (mainContext) {
+          drawSingleStroke(mainContext, newPendingStroke)
+        }
+      }
+      
+      setCurrentStroke([]) // Reset current stroke
+      onStrokeEnd?.()
+    }
+
     // Expose methods via ref
     useImperativeHandle(ref, () => ({
       clear: () => {
@@ -457,6 +543,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
+          onPointerLeave={handlePointerLeave}
           style={{ touchAction: 'none', zIndex: 1 }} // Drawing canvas on top
         />
       </>
