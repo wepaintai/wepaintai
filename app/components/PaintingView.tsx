@@ -4,6 +4,7 @@ import { ToolPanel } from './ToolPanel'
 import { AdminPanel } from './AdminPanel' // Import AdminPanel
 import { SessionInfo } from './SessionInfo'
 import { usePaintingSession } from '../hooks/usePaintingSession'
+import { shouldShowAdminFeatures } from '../utils/environment'
 import { Id } from '../../convex/_generated/dataModel'
 
 export function PaintingView() {
@@ -27,7 +28,9 @@ export function PaintingView() {
   const [history, setHistory] = useState<string[]>([])
   const [historyIndex, setHistoryIndex] = useState(-1)
   const [sessionId, setSessionId] = useState<Id<"paintingSessions"> | null>(null)
-  const [isAdminPanelVisible, setIsAdminPanelVisible] = useState(true) // Default to true for easy testing
+  // Check if admin features should be shown based on environment
+  const adminFeaturesEnabled = shouldShowAdminFeatures()
+  const [isAdminPanelVisible, setIsAdminPanelVisible] = useState(adminFeaturesEnabled)
 
   const { createNewSession, presence, currentUser, isLoading } = usePaintingSession(sessionId)
 
@@ -104,8 +107,10 @@ export function PaintingView() {
     setIsAdminPanelVisible(prev => !prev)
   }, [])
 
-  // Add keyboard listener for toggling admin panel (e.g., Ctrl+Shift+A)
+  // Add keyboard listener for toggling admin panel (e.g., Ctrl+Shift+A) - only when admin features are enabled
   useEffect(() => {
+    if (!adminFeaturesEnabled) return
+    
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.ctrlKey && event.shiftKey && event.key === 'A') {
         event.preventDefault()
@@ -116,18 +121,20 @@ export function PaintingView() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [toggleAdminPanel])
+  }, [toggleAdminPanel, adminFeaturesEnabled])
 
   return (
     <div className="relative w-full h-full bg-gray-50">
-      {/* Button to toggle Admin Panel - for easy testing */}
-      <button 
-        onClick={toggleAdminPanel} 
-        className="absolute top-2 right-28 z-50 bg-blue-500 hover:bg-blue-700 text-white font-bold py-1 px-2 rounded text-xs"
-        title="Toggle Admin Panel (Ctrl+Shift+A)"
-      >
-        {isAdminPanelVisible ? 'Hide' : 'Show'} Admin
-      </button>
+      {/* Button to toggle Admin Panel - only shown when admin features are enabled */}
+      {adminFeaturesEnabled && (
+        <button 
+          onClick={toggleAdminPanel} 
+          className="absolute top-2 right-28 z-50 bg-blue-500 hover:bg-blue-700 text-white font-bold py-1 px-2 rounded text-xs"
+          title="Toggle Admin Panel (Ctrl+Shift+A)"
+        >
+          {isAdminPanelVisible ? 'Hide' : 'Show'} Admin
+        </button>
+      )}
 
       {sessionId ? (
         <Canvas
@@ -172,26 +179,29 @@ export function PaintingView() {
         onClear={handleClear}
         onExport={handleExport}
       />
-      <AdminPanel
-        isVisible={isAdminPanelVisible}
-        onClose={toggleAdminPanel}
-        size={size}
-        onSizeChange={setSize}
-        smoothing={smoothing}
-        onSmoothingChange={setSmoothing}
-        thinning={thinning}
-        onThinningChange={setThinning}
-        streamline={streamline}
-        onStreamlineChange={setStreamline}
-        startTaper={startTaper}
-        onStartTaperChange={setStartTaper}
-        startCap={startCap}
-        onStartCapChange={setStartCap}
-        endTaper={endTaper}
-        onEndTaperChange={setEndTaper}
-        endCap={endCap}
-        onEndCapChange={setEndCap}
-      />
+      {/* Admin Panel - only rendered when admin features are enabled */}
+      {adminFeaturesEnabled && (
+        <AdminPanel
+          isVisible={isAdminPanelVisible}
+          onClose={toggleAdminPanel}
+          size={size}
+          onSizeChange={setSize}
+          smoothing={smoothing}
+          onSmoothingChange={setSmoothing}
+          thinning={thinning}
+          onThinningChange={setThinning}
+          streamline={streamline}
+          onStreamlineChange={setStreamline}
+          startTaper={startTaper}
+          onStartTaperChange={setStartTaper}
+          startCap={startCap}
+          onStartCapChange={setStartCap}
+          endTaper={endTaper}
+          onEndTaperChange={setEndTaper}
+          endCap={endCap}
+          onEndCapChange={setEndCap}
+        />
+      )}
     </div>
   )
 }

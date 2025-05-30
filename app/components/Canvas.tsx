@@ -51,6 +51,7 @@ interface LocalStroke {
   opacity?: number
   id?: string
   isPending?: boolean
+  isLive?: boolean // True for strokes currently being drawn
 }
 
 interface CanvasProps {
@@ -104,6 +105,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
     const [drawingContext, setDrawingContext] = useState<CanvasRenderingContext2D | null>(null)
     const [lastStrokeOrder, setLastStrokeOrder] = useState(0)
     const [pendingStrokes, setPendingStrokes] = useState<Map<string, LocalStroke>>(new Map())
+    const strokeEndedRef = useRef(false) // Flag to prevent duplicate stroke ending
 
     // Use the painting session hook
     const {
@@ -244,7 +246,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
           taper: endTaper,
           cap: endCap,
         },
-        last: currentLocalStroke.isPending === false, // Use `last: false` for live preview
+        last: !currentLocalStroke.isLive, // Use `last: false` only for live strokes being drawn
       }
       const outlinePoints = getStroke(currentLocalStroke.points, options)
 
@@ -288,43 +290,52 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       if (!isDrawing) return
       
       const handleGlobalPointerUp = () => {
-        if (isDrawing) {
-          setIsDrawing(false)
-          
-          // Save the current stroke if it has points
-          if (currentStroke.length > 0) {
-            const tempId = crypto.randomUUID()
-            const newPendingStroke: LocalStroke = {
-              points: currentStroke,
-              color,
-              size,
-              opacity,
-              id: tempId,
-              isPending: true,
-            }
-            setPendingStrokes(prev => new Map(prev).set(tempId, newPendingStroke))
-            
-            addStrokeToSession(currentStroke, color, size, opacity)
-            
-            // Redraw main canvas to include the new pending stroke immediately
-            if (mainContext) {
-              drawSingleStroke(mainContext, newPendingStroke)
-            }
+        if (strokeEndedRef.current) return // Prevent duplicate stroke ending
+        strokeEndedRef.current = true
+        
+        // Use a ref to get the current stroke state to avoid stale closure
+        setIsDrawing(prevIsDrawing => {
+          if (prevIsDrawing) {
+            // Get current stroke from state
+            setCurrentStroke(prevStroke => {
+              // Save the current stroke if it has points
+              if (prevStroke.length > 0) {
+                const tempId = crypto.randomUUID()
+                const newPendingStroke: LocalStroke = {
+                  points: prevStroke,
+                  color,
+                  size,
+                  opacity,
+                  id: tempId,
+                  isPending: true,
+                }
+                setPendingStrokes(prev => new Map(prev).set(tempId, newPendingStroke))
+                
+                addStrokeToSession(prevStroke, color, size, opacity)
+                
+                // Redraw main canvas to include the new pending stroke immediately
+                if (mainContext) {
+                  drawSingleStroke(mainContext, newPendingStroke)
+                }
+              }
+              
+              onStrokeEnd?.()
+              
+              // Clear drawing canvas
+              if (drawingContext && drawingCanvasRef.current) {
+                drawingContext.clearRect(0, 0, drawingCanvasRef.current.width, drawingCanvasRef.current.height)
+              }
+              
+              return [] // Reset current stroke
+            })
           }
-          
-          setCurrentStroke([])
-          onStrokeEnd?.()
-          
-          // Clear drawing canvas
-          if (drawingContext && drawingCanvasRef.current) {
-            drawingContext.clearRect(0, 0, drawingCanvasRef.current.width, drawingCanvasRef.current.height)
-          }
-        }
+          return false // Set isDrawing to false
+        })
       }
       
       document.addEventListener('pointerup', handleGlobalPointerUp)
       return () => document.removeEventListener('pointerup', handleGlobalPointerUp)
-    }, [isDrawing, currentStroke, color, size, opacity, addStrokeToSession, onStrokeEnd, mainContext, drawingContext])
+    }, [isDrawing, color, size, opacity, addStrokeToSession, onStrokeEnd, mainContext, drawingContext])
 
     // Effect to draw pending strokes and cursors on the drawing canvas
     useEffect(() => {
@@ -339,6 +350,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
           size: size,
           opacity: opacity,
           isPending: true,
+          isLive: true, // This is a live stroke being drawn
         });
       }
       drawUserCursors();
@@ -366,6 +378,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       if (!drawingContext || !drawingCanvasRef.current) return
       e.currentTarget.setPointerCapture(e.pointerId)
       setIsDrawing(true)
+      strokeEndedRef.current = false // Reset the flag when starting a new stroke
       
       drawingContext.clearRect(0, 0, drawingCanvasRef.current.width, drawingCanvasRef.current.height) // Clear drawing canvas
 
@@ -425,6 +438,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
         size: size,
         opacity: opacity,
         isPending: true, // Live stroke is pending
+        isLive: true, // This is a live stroke being drawn
       })
       drawUserCursors()
     }
@@ -432,6 +446,8 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
     // Handle pointer up
     const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
       if (!isDrawing || !drawingContext || !drawingCanvasRef.current) return
+      if (strokeEndedRef.current) return // Prevent duplicate stroke ending
+      strokeEndedRef.current = true
 
       e.currentTarget.releasePointerCapture(e.pointerId)
       setIsDrawing(false)
@@ -469,6 +485,8 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
     // Handle pointer leave - force end stroke when pointer leaves canvas
     const handlePointerLeave = (e: React.PointerEvent<HTMLCanvasElement>) => {
       if (!isDrawing) return
+      if (strokeEndedRef.current) return // Prevent duplicate stroke ending
+      strokeEndedRef.current = true
       
       // End the stroke when pointer leaves the canvas
       e.currentTarget.releasePointerCapture(e.pointerId)
@@ -478,17 +496,18 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
         drawingContext.clearRect(0, 0, drawingCanvasRef.current.width, drawingCanvasRef.current.height)
       }
       
-      // Update presence to show user is no longer drawing
-      const lastPoint = currentStroke[currentStroke.length - 1]
-      if (lastPoint) {
-        updateUserPresence(lastPoint.x, lastPoint.y, false, 'brush')
-      }
+      // Get the final point at the edge of the canvas
+      const point = getPointerPosition(e)
+      updateUserPresence(point.x, point.y, false, 'brush')
+      
+      // Add final point to current stroke
+      const finalStrokePoints = [...currentStroke, point]
       
       // Save the current stroke if it has points
-      if (currentStroke.length > 0) {
+      if (finalStrokePoints.length > 0) {
         const tempId = crypto.randomUUID()
         const newPendingStroke: LocalStroke = {
-          points: currentStroke,
+          points: finalStrokePoints,
           color,
           size,
           opacity,
@@ -497,7 +516,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
         }
         setPendingStrokes(prev => new Map(prev).set(tempId, newPendingStroke))
         
-        addStrokeToSession(currentStroke, color, size, opacity)
+        addStrokeToSession(finalStrokePoints, color, size, opacity)
         
         // Redraw main canvas to include the new pending stroke immediately
         if (mainContext) {

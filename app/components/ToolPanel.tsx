@@ -10,7 +10,8 @@ import {
   X,
   ChevronUp,
   Circle,
-  Eye
+  Eye,
+  Pipette
 } from 'lucide-react'
 
 // Types
@@ -154,6 +155,51 @@ const ActionButton = React.memo(({
 ))
 
 ActionButton.displayName = 'ActionButton'
+
+// Color Mixer component
+const ColorMixer = React.memo(({ 
+  color, 
+  onColorChange 
+}: { 
+  color: string, 
+  onColorChange: (color: string) => void 
+}) => {
+  const colorInputRef = React.useRef<HTMLInputElement>(null)
+  
+  const handleColorClick = () => {
+    colorInputRef.current?.click()
+  }
+  
+  const handleColorChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    onColorChange(e.target.value)
+  }
+  
+  return (
+    <div className="flex items-center gap-2 mb-3" role="group" aria-labelledby="color-mixer-label">
+      <Pipette className="w-4 h-4 text-muted-foreground flex-shrink-0" aria-hidden="true" />
+      <button
+        onClick={handleColorClick}
+        className="flex-1 h-6 border border-border rounded transition-all duration-100 hover:border-primary focus:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+        style={{ backgroundColor: color }}
+        title="Click to change color"
+        aria-label="Current brush color, click to change"
+      >
+        <span className="sr-only">Current color: {color}</span>
+      </button>
+      <input
+        ref={colorInputRef}
+        type="color"
+        value={color}
+        onChange={handleColorChange}
+        className="sr-only"
+        aria-label="Color picker"
+      />
+      <span id="color-mixer-label" className="sr-only">Color mixer</span>
+    </div>
+  )
+})
+
+ColorMixer.displayName = 'ColorMixer'
 
 // Main ToolPanel component
 export function ToolPanel({
@@ -347,6 +393,14 @@ export function ToolPanel({
                   />
                 </div>
               ))}
+            </div>
+
+            {/* Color Mixer */}
+            <div className="border-b border-border mb-3 pb-3">
+              <ColorMixer
+                color={color}
+                onColorChange={onColorChange}
+              />
             </div>
 
             {/* Sliders */}
