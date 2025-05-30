@@ -113,3 +113,38 @@ export const getStrokesAfter = query({
       .collect();
   },
 });
+
+/**
+ * Clear all strokes from a painting session
+ */
+export const clearSession = mutation({
+  args: {
+    sessionId: v.id("paintingSessions"),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    // Get the session to verify it exists
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) {
+      throw new Error("Session not found");
+    }
+
+    // Get all strokes for this session
+    const strokes = await ctx.db
+      .query("strokes")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+
+    // Delete all strokes
+    for (const stroke of strokes) {
+      await ctx.db.delete(stroke._id);
+    }
+
+    // Reset the stroke counter
+    await ctx.db.patch(args.sessionId, {
+      strokeCounter: 0,
+    });
+
+    return null;
+  },
+});

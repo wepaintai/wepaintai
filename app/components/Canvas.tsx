@@ -538,7 +538,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
           drawingContext.clearRect(0, 0, drawingCanvasRef.current.width, drawingCanvasRef.current.height)
         }
         setPendingStrokes(new Map())
-        // TODO: Implement clear for session on Convex side
+        // Note: Session clearing is handled by the parent component via clearSession mutation
       },
       undo: () => {
         // TODO: Implement undo for session

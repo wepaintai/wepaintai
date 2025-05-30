@@ -62,6 +62,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
   // Mutations
   const createSession = useMutation(api.paintingSessions.createSession);
   const addStroke = useMutation(api.strokes.addStroke);
+  const clearSessionMutation = useMutation(api.strokes.clearSession);
   const updatePresence = useMutation(api.presence.updatePresence);
   const leaveSession = useMutation(api.presence.leaveSession);
 
@@ -118,6 +119,15 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     });
   }, [sessionId, updatePresence, currentUser]);
 
+  // Clear all strokes from the session
+  const clearSession = useCallback(async () => {
+    if (!sessionId) return;
+    
+    return await clearSessionMutation({
+      sessionId,
+    });
+  }, [sessionId, clearSessionMutation]);
+
   // Leave session on unmount
   useEffect(() => {
     return () => {
@@ -138,6 +148,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     createNewSession,
     addStrokeToSession,
     updateUserPresence,
+    clearSession,
     
     // State
     isLoading: session === undefined,

@@ -32,7 +32,7 @@ export function PaintingView() {
   const adminFeaturesEnabled = shouldShowAdminFeatures()
   const [isAdminPanelVisible, setIsAdminPanelVisible] = useState(adminFeaturesEnabled)
 
-  const { createNewSession, presence, currentUser, isLoading } = usePaintingSession(sessionId)
+  const { createNewSession, presence, currentUser, isLoading, clearSession } = usePaintingSession(sessionId)
 
   // Create a new session or join existing one on mount
   useEffect(() => {
@@ -87,10 +87,18 @@ export function PaintingView() {
     }
   }
 
-  const handleClear = () => {
+  const handleClear = async () => {
+    // Clear local canvas immediately for responsiveness
     canvasRef.current?.clear()
     setHistory([])
     setHistoryIndex(-1)
+    
+    // Clear the session in the backend
+    try {
+      await clearSession()
+    } catch (error) {
+      console.error('Failed to clear session:', error)
+    }
   }
 
   const handleExport = () => {
