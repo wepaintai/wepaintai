@@ -15,7 +15,7 @@ export function PaintingView() {
 
   // perfect-freehand options
   const [smoothing, setSmoothing] = useState(0.5)
-  const [thinning, setThinning] = useState(0.5)
+  const [thinning, setThinning] = useState(0.2)
   const [streamline, setStreamline] = useState(0.5)
   const [startTaper, setStartTaper] = useState(0)
   const [startCap, setStartCap] = useState(true)
