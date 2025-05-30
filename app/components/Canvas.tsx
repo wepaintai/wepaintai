@@ -3,6 +3,41 @@ import { getStroke } from 'perfect-freehand'
 import { usePaintingSession, type PaintPoint, type Stroke, type UserPresence } from '../hooks/usePaintingSession'
 import { Id } from '../../convex/_generated/dataModel'
 
+const average = (a: number, b: number): number => (a + b) / 2;
+
+function getSvgPathFromStroke(points: number[][], closed: boolean = true): string {
+  const len = points.length;
+
+  if (len < 4) {
+    return ``;
+  }
+
+  let a = points[0];
+  let b = points[1];
+  const c = points[2];
+
+  let result = `M${a[0].toFixed(2)},${a[1].toFixed(2)} Q${b[0].toFixed(
+    2
+  )},${b[1].toFixed(2)} ${average(b[0], c[0]).toFixed(2)},${average(
+    b[1],
+    c[1]
+  ).toFixed(2)} T`;
+
+  for (let i = 2, max = len - 1; i < max; i++) {
+    a = points[i];
+    b = points[i + 1];
+    result += `${average(a[0], b[0]).toFixed(2)},${average(a[1], b[1]).toFixed(
+      2
+    )} `;
+  }
+
+  if (closed) {
+    result += 'Z';
+  }
+
+  return result;
+}
+
 interface Point {
   x: number
   y: number
@@ -50,9 +85,9 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       opacity,
       onStrokeEnd,
       // perfect-freehand options
-      smoothing = 0.5, // Default value
+      smoothing = 0.75, // Increased for smoother lines
       thinning = 0.5,  // Default value
-      streamline = 0.5, // Default value
+      streamline = 0.65, // Increased for smoother lines
       easing = (t: number) => t, // Default value
       startTaper = 0,    // Default value
       startCap = true,   // Default value
@@ -61,10 +96,12 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
     },
     ref
   ) => {
-    const canvasRef = useRef<HTMLCanvasElement>(null)
+    const mainCanvasRef = useRef<HTMLCanvasElement>(null) // For committed strokes
+    const drawingCanvasRef = useRef<HTMLCanvasElement>(null) // For live drawing
     const [isDrawing, setIsDrawing] = useState(false)
     const [currentStroke, setCurrentStroke] = useState<Point[]>([])
-    const [context, setContext] = useState<CanvasRenderingContext2D | null>(null)
+    const [mainContext, setMainContext] = useState<CanvasRenderingContext2D | null>(null)
+    const [drawingContext, setDrawingContext] = useState<CanvasRenderingContext2D | null>(null)
     const [lastStrokeOrder, setLastStrokeOrder] = useState(0)
     const [pendingStrokes, setPendingStrokes] = useState<Map<string, LocalStroke>>(new Map())
 
@@ -126,63 +163,71 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       return () => clearInterval(cleanup)
     }, [])
 
-    // Initialize canvas
+    // Initialize canvases
     useEffect(() => {
-      const canvas = canvasRef.current
-      if (!canvas) return
+      const mainCanvas = mainCanvasRef.current
+      const drawCv = drawingCanvasRef.current // Renamed to avoid conflict
+      if (!mainCanvas || !drawCv) return
 
-      const ctx = canvas.getContext('2d')
-      if (!ctx) return
+      const mainCtx = mainCanvas.getContext('2d')
+      const drawingCtx = drawCv.getContext('2d')
+      if (!mainCtx || !drawingCtx) return
 
-      // Set canvas size to match container
-      const resizeCanvas = () => {
-        const container = canvas.parentElement
+      const resizeCanvases = () => {
+        const container = mainCanvas.parentElement
         if (container) {
-          canvas.width = container.clientWidth
-          canvas.height = container.clientHeight
-          redrawCanvas()
+          const { clientWidth, clientHeight } = container
+          mainCanvas.width = clientWidth
+          mainCanvas.height = clientHeight
+          drawCv.width = clientWidth
+          drawCv.height = clientHeight
+          redrawMainCanvas() // Redraw committed strokes on resize
         }
       }
 
-      resizeCanvas()
-      setContext(ctx)
+      resizeCanvases()
+      setMainContext(mainCtx)
+      setDrawingContext(drawingCtx)
 
-      // Add resize listener
-      window.addEventListener('resize', resizeCanvas)
-      return () => window.removeEventListener('resize', resizeCanvas)
+      window.addEventListener('resize', resizeCanvases)
+      return () => window.removeEventListener('resize', resizeCanvases)
     }, [])
 
-    // Redraw all strokes when they change
+    // Redraw main canvas when committed strokes change
     useEffect(() => {
-      redrawCanvas()
-    }, [strokes, pendingStrokes])
+      redrawMainCanvas()
+    }, [strokes]) // Only redraw main canvas when confirmed strokes change
 
-    // Redraw all strokes
-    const redrawCanvas = useCallback(() => {
-      if (!context || !canvasRef.current) return
+    // Redraw all committed strokes on the main canvas
+    const redrawMainCanvas = useCallback(() => {
+      if (!mainContext || !mainCanvasRef.current) return
 
-      context.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height)
+      mainContext.clearRect(0, 0, mainCanvasRef.current.width, mainCanvasRef.current.height)
 
       // Draw all confirmed strokes from the session
       strokes
         .sort((a, b) => a.strokeOrder - b.strokeOrder)
-        .forEach((s) => { // Renamed stroke to s to avoid conflict with outer scope if any
-          drawStroke(context, {
+        .forEach((s) => {
+          drawSingleStroke(mainContext, {
             points: s.points,
             color: s.brushColor,
-            size: s.brushSize, // Use size from the stored stroke
+            size: s.brushSize,
+            isPending: false, // Confirmed strokes are not pending
           })
         })
-
-      // Draw pending strokes
-      pendingStrokes.forEach((pendingS) => { // Renamed pendingStroke to pendingS
-        drawStroke(context, pendingS)
+      
+      // Draw pending strokes on the main canvas as well, so they persist if drawing canvas is cleared
+      // This might be slightly redundant if live drawing is fast, but ensures they are not lost
+      // Alternatively, pending strokes could be drawn only on the drawing canvas until confirmed.
+      // For now, let's draw them on main too, to ensure they are visible if user stops interacting.
+      pendingStrokes.forEach((pendingS) => {
+        drawSingleStroke(mainContext, pendingS)
       })
-    }, [context, strokes, pendingStrokes, smoothing, thinning, streamline, easing, startTaper, startCap, endTaper, endCap, opacity]) // Added new dependencies
 
-    // Draw a single stroke
-    // Note: 'size' for getStroke comes from stroke.size. Other perfect-freehand options come from CanvasProps.
-    const drawStroke = (ctx: CanvasRenderingContext2D, currentLocalStroke: LocalStroke) => {
+    }, [mainContext, strokes, pendingStrokes, smoothing, thinning, streamline, easing, startTaper, startCap, endTaper, endCap, opacity])
+
+    // Draw a single stroke (helper for both canvases)
+    const drawSingleStroke = (ctx: CanvasRenderingContext2D, currentLocalStroke: LocalStroke) => {
       if (currentLocalStroke.points.length === 0) return
 
       const options = {
@@ -199,65 +244,70 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
           taper: endTaper,
           cap: endCap,
         },
+        last: currentLocalStroke.isPending === false, // Use `last: false` for live preview
       }
       const outlinePoints = getStroke(currentLocalStroke.points, options)
 
-      if (outlinePoints.length === 0) return
+      const pathData = getSvgPathFromStroke(outlinePoints)
+
+      if (pathData === '') return // If pathData is empty, nothing to draw
 
       ctx.fillStyle = currentLocalStroke.color
-      // Use the opacity from CanvasProps for all strokes for consistency in this version
-      // If individual strokes should have their own opacity, LocalStroke and Convex schema would need update
-      ctx.globalAlpha = opacity 
+      ctx.globalAlpha = currentLocalStroke.opacity !== undefined ? currentLocalStroke.opacity : opacity
 
-      ctx.beginPath()
-      ctx.moveTo(outlinePoints[0][0], outlinePoints[0][1])
+      const myPath = new Path2D(pathData)
+      ctx.fill(myPath)
       
-      for (let i = 1; i < outlinePoints.length; i++) {
-        ctx.lineTo(outlinePoints[i][0], outlinePoints[i][1])
-      }
-      
-      ctx.closePath()
-      ctx.fill()
-      ctx.globalAlpha = 1
+      ctx.globalAlpha = 1 // Reset globalAlpha
     }
 
-    // Draw user cursors
+    // Draw user cursors on the drawing canvas
     const drawUserCursors = useCallback(() => {
-      if (!context || !canvasRef.current) return
+      if (!drawingContext || !drawingCanvasRef.current) return
 
       presence.forEach((user) => {
-        if (user.userName === currentUser.name) return // Don't draw own cursor
+        if (user.userName === currentUser.name) return
 
-        // Draw cursor
-        context.fillStyle = user.userColor
-        context.beginPath()
-        context.arc(user.cursorX, user.cursorY, 5, 0, 2 * Math.PI)
-        context.fill()
+        drawingContext.fillStyle = user.userColor
+        drawingContext.beginPath()
+        drawingContext.arc(user.cursorX, user.cursorY, 5, 0, 2 * Math.PI)
+        drawingContext.fill()
 
-        // Draw user name
-        context.fillStyle = 'white'
-        context.strokeStyle = user.userColor
-        context.lineWidth = 2
-        context.font = '12px Arial'
-        const textWidth = context.measureText(user.userName).width
-        context.strokeText(user.userName, user.cursorX - textWidth / 2, user.cursorY - 10)
-        context.fillText(user.userName, user.cursorX - textWidth / 2, user.cursorY - 10)
+        drawingContext.fillStyle = 'white'
+        drawingContext.strokeStyle = user.userColor
+        drawingContext.lineWidth = 2
+        drawingContext.font = '12px Arial'
+        const textWidth = drawingContext.measureText(user.userName).width
+        drawingContext.strokeText(user.userName, user.cursorX - textWidth / 2, user.cursorY - 10)
+        drawingContext.fillText(user.userName, user.cursorX - textWidth / 2, user.cursorY - 10)
       })
-    }, [context, presence, currentUser.name])
-
-    // Redraw with cursors
+    }, [drawingContext, presence, currentUser.name])
+    
+    // Effect to draw pending strokes and cursors on the drawing canvas
     useEffect(() => {
-      redrawCanvas()
-      drawUserCursors()
-    }, [redrawCanvas, drawUserCursors])
+      if (!drawingContext || !drawingCanvasRef.current) return;
+      drawingContext.clearRect(0, 0, drawingCanvasRef.current.width, drawingCanvasRef.current.height);
+      
+      // Draw current live stroke if any
+      if (isDrawing && currentStroke.length > 0) {
+        drawSingleStroke(drawingContext, {
+          points: currentStroke,
+          color: color,
+          size: size,
+          opacity: opacity,
+          isPending: true,
+        });
+      }
+      drawUserCursors();
+    }, [drawingContext, currentStroke, isDrawing, color, size, opacity, drawUserCursors]);
+
 
     // Get pointer position
     const getPointerPosition = (e: React.PointerEvent<HTMLCanvasElement>): Point => {
-      const canvas = canvasRef.current
+      const canvas = drawingCanvasRef.current // Use drawing canvas for pointer events
       const rect = canvas?.getBoundingClientRect()
       if (!rect || !canvas) return { x: 0, y: 0 }
 
-      // Calculate the scale factor between the canvas display size and actual size
       const scaleX = canvas.width / rect.width
       const scaleY = canvas.height / rect.height
 
@@ -270,102 +320,146 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
 
     // Handle pointer down
     const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+      if (!drawingContext || !drawingCanvasRef.current) return
       e.currentTarget.setPointerCapture(e.pointerId)
       setIsDrawing(true)
+      
+      drawingContext.clearRect(0, 0, drawingCanvasRef.current.width, drawingCanvasRef.current.height) // Clear drawing canvas
+
       const point = getPointerPosition(e)
       setCurrentStroke([point])
-
-      // Update presence
       updateUserPresence(point.x, point.y, true, 'brush')
     }
 
     // Handle pointer move
     const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-      const point = getPointerPosition(e)
+      if (!isDrawing || !drawingContext || !drawingCanvasRef.current) {
+        // Still update presence even if not drawing, for cursor tracking
+        const nonDrawingPoint = getPointerPosition(e)
+        updateUserPresence(nonDrawingPoint.x, nonDrawingPoint.y, false, 'brush')
+        return
+      }
 
-      // Always update presence for cursor tracking
-      updateUserPresence(point.x, point.y, isDrawing, 'brush')
+      // Access the native browser event to use getCoalescedEvents
+      const nativeEvent = e.nativeEvent as globalThis.PointerEvent
+      const coalescedEvents = nativeEvent.getCoalescedEvents?.() ?? [nativeEvent]
+      
+      const newPoints: Point[] = coalescedEvents.map(event => {
+        // We need to construct a compatible event object for getPointerPosition
+        // or adapt getPointerPosition to take a native PointerEvent.
+        // For now, let's assume getPointerPosition can work with the properties
+        // available on the native event if we simulate the React event structure
+        // or, more simply, pass the native event and adjust getPointerPosition.
+        // However, getPointerPosition expects a React.PointerEvent.
+        // Let's create a "mock" React.PointerEvent-like structure for getPointerPosition
+        // or it's better to pass the raw clientX/clientY/pressure.
 
-      if (!isDrawing || !context) return
-
-      const newStroke = [...currentStroke, point]
-      setCurrentStroke(newStroke)
-
-      // Clear and redraw
-      context.clearRect(0, 0, canvasRef.current!.width, canvasRef.current!.height)
-      redrawCanvas()
-
-      // Draw current stroke
-      // For the currently drawn stroke, use the main 'color' and 'size' props from PaintingView
-      drawStroke(context, {
-        points: newStroke,
-        color: color, // from CanvasProps
-        size: size,   // from CanvasProps
-        // opacity is handled by drawStroke directly from CanvasProps
+        // Simpler: pass the native event directly to a modified getPointerPosition,
+        // or extract values here. For minimal changes to getPointerPosition:
+        return getPointerPosition({
+          clientX: event.clientX,
+          clientY: event.clientY,
+          pressure: event.pressure,
+          currentTarget: e.currentTarget, // Keep currentTarget from the original React event
+          target: event.target,
+        } as unknown as React.PointerEvent<HTMLCanvasElement>); // Cast needed due to partial mock
       })
+      
+      if (newPoints.length === 0) return
 
-      // Draw user cursors
+      // Update presence with the last point in the batch
+      const lastPoint = newPoints[newPoints.length - 1]
+      updateUserPresence(lastPoint.x, lastPoint.y, isDrawing, 'brush')
+
+      const newStrokePoints = [...currentStroke, ...newPoints]
+      setCurrentStroke(newStrokePoints)
+
+      // Clear drawing canvas and redraw current stroke and cursors
+      drawingContext.clearRect(0, 0, drawingCanvasRef.current.width, drawingCanvasRef.current.height)
+      drawSingleStroke(drawingContext, {
+        points: newStrokePoints,
+        color: color,
+        size: size,
+        opacity: opacity,
+        isPending: true, // Live stroke is pending
+      })
       drawUserCursors()
     }
 
     // Handle pointer up
     const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
-      if (!isDrawing) return
+      if (!isDrawing || !drawingContext || !drawingCanvasRef.current) return
 
       e.currentTarget.releasePointerCapture(e.pointerId)
       setIsDrawing(false)
+      
+      drawingContext.clearRect(0, 0, drawingCanvasRef.current.width, drawingCanvasRef.current.height) // Clear drawing canvas
 
-      const point = getPointerPosition(e)
+      const point = getPointerPosition(e) // Get final point
       updateUserPresence(point.x, point.y, false, 'brush')
+      
+      const finalStrokePoints = [...currentStroke, point] // Add final point to current stroke
 
-      if (currentStroke.length > 0) {
-        // Generate a temporary ID for the stroke
+      if (finalStrokePoints.length > 0) {
         const tempId = crypto.randomUUID()
-        
-        // Add stroke to pending state immediately for optimistic update
-        const pendingStroke: LocalStroke = {
-          points: currentStroke,
+        const newPendingStroke: LocalStroke = {
+          points: finalStrokePoints,
           color,
           size,
           opacity,
           id: tempId,
-          isPending: true
+          isPending: true,
         }
+        setPendingStrokes(prev => new Map(prev).set(tempId, newPendingStroke))
         
-        setPendingStrokes(prev => new Map(prev.set(tempId, pendingStroke)))
+        addStrokeToSession(finalStrokePoints, color, size, opacity)
         
-        // Send stroke to Convex
-        addStrokeToSession(currentStroke, color, size, opacity)
-        setCurrentStroke([])
-        onStrokeEnd?.()
+        // Redraw main canvas to include the new pending stroke immediately
+        if (mainContext) {
+            drawSingleStroke(mainContext, newPendingStroke)
+        }
       }
+      setCurrentStroke([]) // Reset current stroke
+      onStrokeEnd?.()
     }
 
     // Expose methods via ref
     useImperativeHandle(ref, () => ({
       clear: () => {
-        // TODO: Implement clear for session
-        if (context && canvasRef.current) {
-          context.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height)
+        if (mainContext && mainCanvasRef.current) {
+          mainContext.clearRect(0, 0, mainCanvasRef.current.width, mainCanvasRef.current.height)
         }
+        if (drawingContext && drawingCanvasRef.current) {
+          drawingContext.clearRect(0, 0, drawingCanvasRef.current.width, drawingCanvasRef.current.height)
+        }
+        setPendingStrokes(new Map())
+        // TODO: Implement clear for session on Convex side
       },
       undo: () => {
         // TODO: Implement undo for session
       },
       getImageData: () => {
-        return canvasRef.current?.toDataURL('image/png')
+        // Return image data from the main canvas which has all committed strokes
+        return mainCanvasRef.current?.toDataURL('image/png')
       },
-    }), [context])
+    }), [mainContext, drawingContext])
 
     return (
-      <canvas
-        ref={canvasRef}
-        className="absolute inset-0 w-full h-full border border-gray-300"
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        style={{ touchAction: 'none' }}
-      />
+      <>
+        <canvas
+          ref={mainCanvasRef}
+          className="absolute inset-0 w-full h-full border border-gray-300"
+          style={{ zIndex: 0 }} // Main canvas at the bottom
+        />
+        <canvas
+          ref={drawingCanvasRef}
+          className="absolute inset-0 w-full h-full"
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          style={{ touchAction: 'none', zIndex: 1 }} // Drawing canvas on top
+        />
+      </>
     )
   }
 )
