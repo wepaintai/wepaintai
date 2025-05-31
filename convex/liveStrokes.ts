@@ -86,12 +86,10 @@ export const getLiveStrokes = query({
     lastUpdated: v.number(),
   })),
   handler: async (ctx, args) => {
-    const thirtySecondsAgo = Date.now() - 30 * 1000; // 30 seconds
-    
+    // Remove all filtering to isolate the issue
     return await ctx.db
       .query("liveStrokes")
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
-      .filter((q) => q.gt(q.field("lastUpdated"), thirtySecondsAgo))
       .collect();
   },
 });
@@ -130,10 +128,14 @@ export const cleanupStaleLiveStrokes = internalMutation({
   handler: async (ctx) => {
     const thirtySecondsAgo = Date.now() - 30 * 1000; // 30 seconds
     
-    const staleLiveStrokes = await ctx.db
+    // Get all live strokes and filter in JavaScript to avoid database filter issues
+    const allLiveStrokes = await ctx.db
       .query("liveStrokes")
-      .filter((q) => q.lt(q.field("lastUpdated"), thirtySecondsAgo))
       .collect();
+    
+    const staleLiveStrokes = allLiveStrokes.filter(stroke => 
+      stroke.lastUpdated < thirtySecondsAgo
+    );
 
     for (const liveStroke of staleLiveStrokes) {
       await ctx.db.delete(liveStroke._id);
