@@ -449,7 +449,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       const newStrokePoints = [...currentStroke, ...newPoints]
       setCurrentStroke(newStrokePoints)
 
-      // Update live stroke for other users to see
+      // Update live stroke for other users to see (throttled in the hook)
       updateLiveStrokeForUser(newStrokePoints, color, size, opacity)
 
       // Clear drawing canvas and redraw current stroke and cursors

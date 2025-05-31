@@ -152,8 +152,18 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     ]);
   }, [sessionId, clearSessionMutation, clearSessionLiveStrokes]);
 
-  // Update live stroke (for in-progress drawing)
-  const updateLiveStrokeForUser = useCallback(async (
+  // Throttle live stroke updates to reduce lag
+  const liveStrokeUpdateRef = useRef<NodeJS.Timeout | null>(null);
+  const pendingLiveStrokeRef = useRef<{
+    points: PaintPoint[];
+    brushColor: string;
+    brushSize: number;
+    opacity: number;
+  } | null>(null);
+  const lastUpdateTimeRef = useRef<number>(0);
+
+  // Update live stroke (for in-progress drawing) with throttling
+  const updateLiveStrokeForUser = useCallback((
     points: PaintPoint[],
     brushColor: string,
     brushSize: number,
@@ -161,15 +171,57 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
   ) => {
     if (!sessionId) return;
     
-    return await updateLiveStroke({
-      sessionId,
-      userColor: currentUser.color,
-      userName: currentUser.name,
-      points,
-      brushColor,
-      brushSize,
-      opacity,
-    });
+    const now = Date.now();
+    const timeSinceLastUpdate = now - lastUpdateTimeRef.current;
+    
+    // Store the latest stroke data
+    pendingLiveStrokeRef.current = { points, brushColor, brushSize, opacity };
+    
+    // If this is the first point or enough time has passed, update immediately
+    if (points.length === 1 || timeSinceLastUpdate >= 16) { // ~60 FPS for immediate updates
+      lastUpdateTimeRef.current = now;
+      updateLiveStroke({
+        sessionId,
+        userColor: currentUser.color,
+        userName: currentUser.name,
+        points,
+        brushColor,
+        brushSize,
+        opacity,
+      });
+      pendingLiveStrokeRef.current = null;
+      
+      // Clear any pending timeout since we just updated
+      if (liveStrokeUpdateRef.current) {
+        clearTimeout(liveStrokeUpdateRef.current);
+        liveStrokeUpdateRef.current = null;
+      }
+      return;
+    }
+    
+    // Clear existing timeout
+    if (liveStrokeUpdateRef.current) {
+      clearTimeout(liveStrokeUpdateRef.current);
+    }
+    
+    // Throttle subsequent updates to every 16ms (~60 FPS) for smooth performance
+    liveStrokeUpdateRef.current = setTimeout(() => {
+      const pending = pendingLiveStrokeRef.current;
+      if (pending) {
+        lastUpdateTimeRef.current = Date.now();
+        updateLiveStroke({
+          sessionId,
+          userColor: currentUser.color,
+          userName: currentUser.name,
+          points: pending.points,
+          brushColor: pending.brushColor,
+          brushSize: pending.brushSize,
+          opacity: pending.opacity,
+        });
+        pendingLiveStrokeRef.current = null;
+      }
+      liveStrokeUpdateRef.current = null;
+    }, 16); // 16ms throttle (~60 FPS)
   }, [sessionId, updateLiveStroke, currentUser]);
 
   // Clear live stroke (when finishing drawing)
@@ -181,11 +233,15 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     });
   }, [sessionId, clearLiveStroke]);
 
-  // Leave session on unmount
+  // Leave session on unmount and cleanup timeouts
   useEffect(() => {
     return () => {
       if (sessionId) {
         leaveSession({ sessionId });
+      }
+      // Clean up any pending live stroke updates
+      if (liveStrokeUpdateRef.current) {
+        clearTimeout(liveStrokeUpdateRef.current);
       }
     };
   }, [sessionId, leaveSession]);
