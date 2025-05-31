@@ -40,6 +40,23 @@ const schema = defineSchema({
   }).index("by_session", ["sessionId"])
     .index("by_user_session", ["userId", "sessionId"]),
 
+  liveStrokes: defineTable({
+    sessionId: v.id("paintingSessions"),
+    userId: v.optional(v.id("users")),
+    userColor: v.string(),
+    userName: v.string(),
+    points: v.array(v.object({
+      x: v.number(),
+      y: v.number(),
+      pressure: v.optional(v.number()),
+    })),
+    brushColor: v.string(),
+    brushSize: v.number(),
+    opacity: v.number(),
+    lastUpdated: v.number(),
+  }).index("by_session", ["sessionId"])
+    .index("by_user_session", ["userId", "sessionId"]),
+
   users: defineTable({
     name: v.string(),
     email: v.optional(v.string()),

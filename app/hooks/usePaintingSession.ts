@@ -1,7 +1,7 @@
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 
 export interface PaintPoint {
   x: number;
@@ -36,6 +36,20 @@ export interface UserPresence {
   lastSeen: number;
 }
 
+export interface LiveStroke {
+  _id: Id<"liveStrokes">;
+  _creationTime: number;
+  sessionId: Id<"paintingSessions">;
+  userId?: Id<"users">;
+  userColor: string;
+  userName: string;
+  points: PaintPoint[];
+  brushColor: string;
+  brushSize: number;
+  opacity: number;
+  lastUpdated: number;
+}
+
 export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
   const [currentUser] = useState(() => ({
     id: crypto.randomUUID(),
@@ -58,6 +72,11 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     api.presence.getSessionPresence,
     sessionId ? { sessionId } : "skip"
   );
+  
+  const liveStrokes = useQuery(
+    api.liveStrokes.getLiveStrokes,
+    sessionId ? { sessionId } : "skip"
+  );
 
   // Mutations
   const createSession = useMutation(api.paintingSessions.createSession);
@@ -65,6 +84,9 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
   const clearSessionMutation = useMutation(api.strokes.clearSession);
   const updatePresence = useMutation(api.presence.updatePresence);
   const leaveSession = useMutation(api.presence.leaveSession);
+  const updateLiveStroke = useMutation(api.liveStrokes.updateLiveStroke);
+  const clearLiveStroke = useMutation(api.liveStrokes.clearLiveStroke);
+  const clearSessionLiveStrokes = useMutation(api.liveStrokes.clearSessionLiveStrokes);
 
   // Create a new session
   const createNewSession = useCallback(async (
@@ -123,10 +145,41 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
   const clearSession = useCallback(async () => {
     if (!sessionId) return;
     
-    return await clearSessionMutation({
+    // Clear both completed strokes and live strokes
+    await Promise.all([
+      clearSessionMutation({ sessionId }),
+      clearSessionLiveStrokes({ sessionId })
+    ]);
+  }, [sessionId, clearSessionMutation, clearSessionLiveStrokes]);
+
+  // Update live stroke (for in-progress drawing)
+  const updateLiveStrokeForUser = useCallback(async (
+    points: PaintPoint[],
+    brushColor: string,
+    brushSize: number,
+    opacity: number = 1
+  ) => {
+    if (!sessionId) return;
+    
+    return await updateLiveStroke({
+      sessionId,
+      userColor: currentUser.color,
+      userName: currentUser.name,
+      points,
+      brushColor,
+      brushSize,
+      opacity,
+    });
+  }, [sessionId, updateLiveStroke, currentUser]);
+
+  // Clear live stroke (when finishing drawing)
+  const clearLiveStrokeForUser = useCallback(async () => {
+    if (!sessionId) return;
+    
+    return await clearLiveStroke({
       sessionId,
     });
-  }, [sessionId, clearSessionMutation]);
+  }, [sessionId, clearLiveStroke]);
 
   // Leave session on unmount
   useEffect(() => {
@@ -142,6 +195,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     session,
     strokes: strokes || [],
     presence: presence || [],
+    liveStrokes: liveStrokes || [],
     currentUser,
     
     // Actions
@@ -149,6 +203,8 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     addStrokeToSession,
     updateUserPresence,
     clearSession,
+    updateLiveStrokeForUser,
+    clearLiveStrokeForUser,
     
     // State
     isLoading: session === undefined,
