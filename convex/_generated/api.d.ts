@@ -13,6 +13,8 @@ import type {
   FilterApi,
   FunctionReference,
 } from "convex/server";
+import type * as crons from "../crons.js";
+import type * as liveStrokes from "../liveStrokes.js";
 import type * as paintingSessions from "../paintingSessions.js";
 import type * as presence from "../presence.js";
 import type * as strokes from "../strokes.js";
@@ -26,6 +28,8 @@ import type * as strokes from "../strokes.js";
  * ```
  */
 declare const fullApi: ApiFromModules<{
+  crons: typeof crons;
+  liveStrokes: typeof liveStrokes;
   paintingSessions: typeof paintingSessions;
   presence: typeof presence;
   strokes: typeof strokes;

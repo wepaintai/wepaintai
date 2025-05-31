@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { getStroke } from 'perfect-freehand'
-import { usePaintingSession, type PaintPoint, type Stroke, type UserPresence } from '../hooks/usePaintingSession'
+import { usePaintingSession, type PaintPoint, type Stroke, type UserPresence, type LiveStroke } from '../hooks/usePaintingSession'
 import { Id } from '../../convex/_generated/dataModel'
 
 const average = (a: number, b: number): number => (a + b) / 2;
@@ -111,9 +111,12 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
     const {
       strokes,
       presence,
+      liveStrokes,
       currentUser,
       addStrokeToSession,
       updateUserPresence,
+      updateLiveStrokeForUser,
+      clearLiveStrokeForUser,
     } = usePaintingSession(sessionId)
 
     // Remove confirmed strokes from pending when they appear in the strokes array
@@ -337,12 +340,12 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       return () => document.removeEventListener('pointerup', handleGlobalPointerUp)
     }, [isDrawing, color, size, opacity, addStrokeToSession, onStrokeEnd, mainContext, drawingContext])
 
-    // Effect to draw pending strokes and cursors on the drawing canvas
+    // Effect to draw live strokes and cursors on the drawing canvas
     useEffect(() => {
       if (!drawingContext || !drawingCanvasRef.current) return;
       drawingContext.clearRect(0, 0, drawingCanvasRef.current.width, drawingCanvasRef.current.height);
       
-      // Draw current live stroke if any
+      // Draw current user's live stroke if any
       if (isDrawing && currentStroke.length > 0) {
         drawSingleStroke(drawingContext, {
           points: currentStroke,
@@ -353,8 +356,24 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
           isLive: true, // This is a live stroke being drawn
         });
       }
+      
+      // Draw other users' live strokes
+      liveStrokes.forEach((liveStroke) => {
+        // Don't draw our own live stroke (we handle that above)
+        if (liveStroke.userName === currentUser.name) return;
+        
+        drawSingleStroke(drawingContext, {
+          points: liveStroke.points,
+          color: liveStroke.brushColor,
+          size: liveStroke.brushSize,
+          opacity: liveStroke.opacity,
+          isPending: true,
+          isLive: true, // Other users' live strokes
+        });
+      });
+      
       drawUserCursors();
-    }, [drawingContext, currentStroke, isDrawing, color, size, opacity, drawUserCursors]);
+    }, [drawingContext, currentStroke, isDrawing, color, size, opacity, liveStrokes, currentUser.name, drawUserCursors]);
 
 
     // Get pointer position
@@ -430,6 +449,9 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       const newStrokePoints = [...currentStroke, ...newPoints]
       setCurrentStroke(newStrokePoints)
 
+      // Update live stroke for other users to see (throttled in the hook)
+      updateLiveStrokeForUser(newStrokePoints, color, size, opacity)
+
       // Clear drawing canvas and redraw current stroke and cursors
       drawingContext.clearRect(0, 0, drawingCanvasRef.current.width, drawingCanvasRef.current.height)
       drawSingleStroke(drawingContext, {
@@ -472,6 +494,9 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
         setPendingStrokes(prev => new Map(prev).set(tempId, newPendingStroke))
         
         addStrokeToSession(finalStrokePoints, color, size, opacity)
+        
+        // Clear live stroke for other users
+        clearLiveStrokeForUser()
         
         // Redraw main canvas to include the new pending stroke immediately
         if (mainContext) {
