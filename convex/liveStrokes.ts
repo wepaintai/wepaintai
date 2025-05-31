@@ -21,40 +21,45 @@ export const updateLiveStroke = mutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const now = Date.now();
-    
-    // Find existing live stroke for this user in this session
-    const existingLiveStroke = await ctx.db
-      .query("liveStrokes")
-      .withIndex("by_user_session", (q) => 
-        q.eq("userId", args.userId).eq("sessionId", args.sessionId)
-      )
-      .first();
+    try {
+      const now = Date.now();
+      
+      // Find existing live stroke for this user in this session
+      const existingLiveStroke = await ctx.db
+        .query("liveStrokes")
+        .withIndex("by_user_session", (q) => 
+          q.eq("userId", args.userId).eq("sessionId", args.sessionId)
+        )
+        .first();
 
-    if (existingLiveStroke) {
-      // Update existing live stroke
-      await ctx.db.patch(existingLiveStroke._id, {
-        userColor: args.userColor,
-        userName: args.userName,
-        points: args.points,
-        brushColor: args.brushColor,
-        brushSize: args.brushSize,
-        opacity: args.opacity,
-        lastUpdated: now,
-      });
-    } else {
-      // Create new live stroke
-      await ctx.db.insert("liveStrokes", {
-        sessionId: args.sessionId,
-        userId: args.userId,
-        userColor: args.userColor,
-        userName: args.userName,
-        points: args.points,
-        brushColor: args.brushColor,
-        brushSize: args.brushSize,
-        opacity: args.opacity,
-        lastUpdated: now,
-      });
+      if (existingLiveStroke) {
+        // Update existing live stroke
+        await ctx.db.patch(existingLiveStroke._id, {
+          userColor: args.userColor,
+          userName: args.userName,
+          points: args.points,
+          brushColor: args.brushColor,
+          brushSize: args.brushSize,
+          opacity: args.opacity,
+          lastUpdated: now,
+        });
+      } else {
+        // Create new live stroke
+        await ctx.db.insert("liveStrokes", {
+          sessionId: args.sessionId,
+          userId: args.userId,
+          userColor: args.userColor,
+          userName: args.userName,
+          points: args.points,
+          brushColor: args.brushColor,
+          brushSize: args.brushSize,
+          opacity: args.opacity,
+          lastUpdated: now,
+        });
+      }
+    } catch (error) {
+      console.error("Error updating live stroke:", error);
+      // Don't throw error to prevent client crashes during drawing
     }
 
     return null;
@@ -86,7 +91,7 @@ export const getLiveStrokes = query({
     lastUpdated: v.number(),
   })),
   handler: async (ctx, args) => {
-    // Remove all filtering to isolate the issue
+    // Simple query without filtering to avoid server errors
     return await ctx.db
       .query("liveStrokes")
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
@@ -104,15 +109,20 @@ export const clearLiveStroke = mutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const liveStroke = await ctx.db
-      .query("liveStrokes")
-      .withIndex("by_user_session", (q) => 
-        q.eq("userId", args.userId).eq("sessionId", args.sessionId)
-      )
-      .first();
+    try {
+      const liveStroke = await ctx.db
+        .query("liveStrokes")
+        .withIndex("by_user_session", (q) => 
+          q.eq("userId", args.userId).eq("sessionId", args.sessionId)
+        )
+        .first();
 
-    if (liveStroke) {
-      await ctx.db.delete(liveStroke._id);
+      if (liveStroke) {
+        await ctx.db.delete(liveStroke._id);
+      }
+    } catch (error) {
+      console.error("Error clearing live stroke:", error);
+      // Don't throw error to prevent client crashes
     }
 
     return null;

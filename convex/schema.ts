@@ -55,7 +55,8 @@ const schema = defineSchema({
     opacity: v.number(),
     lastUpdated: v.number(),
   }).index("by_session", ["sessionId"])
-    .index("by_user_session", ["userId", "sessionId"]),
+    .index("by_user_session", ["userId", "sessionId"])
+    .index("by_session_and_lastUpdated", ["sessionId", "lastUpdated"]),
 
   users: defineTable({
     name: v.string(),
