@@ -18,6 +18,7 @@ import type * as liveStrokes from "../liveStrokes.js";
 import type * as paintingSessions from "../paintingSessions.js";
 import type * as presence from "../presence.js";
 import type * as strokes from "../strokes.js";
+import type * as viewerAcks from "../viewerAcks.js";
 
 /**
  * A utility for referencing Convex functions in your app's API.
@@ -33,6 +34,7 @@ declare const fullApi: ApiFromModules<{
   paintingSessions: typeof paintingSessions;
   presence: typeof presence;
   strokes: typeof strokes;
+  viewerAcks: typeof viewerAcks;
 }>;
 export declare const api: FilterApi<
   typeof fullApi,

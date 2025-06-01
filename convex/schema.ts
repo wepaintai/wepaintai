@@ -61,6 +61,15 @@ const schema = defineSchema({
     name: v.string(),
     email: v.optional(v.string()),
   }),
+
+  viewerStates: defineTable({
+    sessionId: v.id("paintingSessions"),
+    // Using string for client-generated ID. If proper auth is added, 
+    // this could be v.id("users") or a stable user identifier.
+    viewerId: v.string(), 
+    lastAckedStrokeOrder: v.number(),
+  })
+  .index("by_session_viewer", ["sessionId", "viewerId"]),
 });
 
 export default schema;

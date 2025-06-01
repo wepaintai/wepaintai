@@ -1,7 +1,7 @@
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
-import { useCallback, useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useState, useRef, useMemo } from "react";
 
 export interface PaintPoint {
   x: number;
@@ -87,6 +87,35 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
   const updateLiveStroke = useMutation(api.liveStrokes.updateLiveStroke);
   const clearLiveStroke = useMutation(api.liveStrokes.clearLiveStroke);
   const clearSessionLiveStrokes = useMutation(api.liveStrokes.clearSessionLiveStrokes);
+  const upsertViewerState = useMutation(api.viewerAcks.upsertViewerState);
+  const removeViewerState = useMutation(api.viewerAcks.removeViewerState);
+  const getViewerState = useQuery(api.viewerAcks.getViewerState, sessionId ? { sessionId, viewerId: currentUser.id } : "skip");
+
+
+  const localLastAckedStrokeOrderRef = useRef<number>(0);
+
+  // Effect to initialize lastAckedStrokeOrder from server
+  useEffect(() => {
+    if (getViewerState?.lastAckedStrokeOrder) {
+      localLastAckedStrokeOrderRef.current = getViewerState.lastAckedStrokeOrder;
+    }
+  }, [getViewerState]);
+
+
+  // Effect to process strokes and update viewer acknowledgement
+  useEffect(() => {
+    if (strokes && strokes.length > 0 && sessionId) {
+      const maxStrokeOrder = strokes.reduce((max, stroke) => Math.max(max, stroke.strokeOrder), 0);
+      if (maxStrokeOrder > localLastAckedStrokeOrderRef.current) {
+        localLastAckedStrokeOrderRef.current = maxStrokeOrder;
+        upsertViewerState({
+          sessionId,
+          viewerId: currentUser.id,
+          lastAckedStrokeOrder: maxStrokeOrder,
+        });
+      }
+    }
+  }, [strokes, sessionId, currentUser.id, upsertViewerState]);
 
   // Create a new session
   const createNewSession = useCallback(async (
@@ -235,21 +264,37 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
 
   // Leave session on unmount and cleanup timeouts
   useEffect(() => {
+    const currentSessionId = sessionId; // Capture sessionId for cleanup
+    const currentViewerId = currentUser.id; // Capture viewerId for cleanup
     return () => {
-      if (sessionId) {
-        leaveSession({ sessionId });
+      if (currentSessionId) {
+        leaveSession({ sessionId: currentSessionId });
+        removeViewerState({ sessionId: currentSessionId, viewerId: currentViewerId });
       }
       // Clean up any pending live stroke updates
       if (liveStrokeUpdateRef.current) {
         clearTimeout(liveStrokeUpdateRef.current);
       }
     };
-  }, [sessionId, leaveSession]);
+  }, [sessionId, leaveSession, removeViewerState, currentUser.id]);
+
+  // Memoized strokes to prevent re-renders if the array instance changes but content is same.
+  // This is particularly for the catch-up, ensuring we only process "new" strokes.
+  const memoizedStrokes = useMemo(() => {
+    if (!strokes) return [];
+    // Potentially, filter strokes here based on localLastAckedStrokeOrderRef for catch-up display
+    // For now, just return all strokes; the ack logic handles updates.
+    return strokes;
+  }, [strokes]);
+
+
+  // TODO: Implement a more direct catch-up query if getSessionStrokes proves insufficient
+  // For example, using api.strokes.getStrokesAfter with localLastAckedStrokeOrderRef.current
 
   return {
     // Data
     session,
-    strokes: strokes || [],
+    strokes: memoizedStrokes,
     presence: presence || [],
     liveStrokes: liveStrokes || [],
     currentUser,

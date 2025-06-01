@@ -64,11 +64,60 @@
 ## Development Setup
 
 ### Prerequisites
+- Node.js (version specified in `.nvmrc` or latest LTS)
+- pnpm (latest version)
+- Convex account (for cloud deployments, optional for local-only)
+
+### Initial Setup
+
+1.  **Install dependencies:**
+    ```bash
+    pnpm install
+    ```
+
+2.  **Convex Login (for cloud deployment, optional for local-only):**
+    If you plan to deploy to the Convex cloud, log in:
+    ```bash
+    npx convex login
+    ```
+    And then link your project (follow CLI instructions after `npx convex deploy` for the first time or `npx convex link`).
+
+### Running Locally (Default - Free)
+
+To run the application with a **local Convex backend** (no cloud usage, recommended for most development):
+
 ```bash
-# Required versions
-Node.js >= 18.0.0
-npm >= 9.0.0
+pnpm dev
 ```
+
+This command will:
+1.  Start the Vinxi frontend development server.
+2.  Start a local Convex backend instance using `convex dev --local`.
+3.  Your application will connect to `http://127.0.0.1:3210` for Convex services.
+4.  Data will be stored locally in the `.convex/local.db` file.
+
+### Running with Convex Cloud (Uses Paid Resources)
+
+If you need to test against your **cloud Convex deployment**:
+
+```bash
+pnpm dev:cloud
+```
+
+This command will:
+1.  Start the Vinxi frontend development server.
+2.  Start the Convex development CLI connected to your designated cloud project (configured via `npx convex link` and `.env.local` or environment variables).
+3.  Your application will connect to the Convex URL specified in your `VITE_CONVEX_URL` (typically from `.env.local` pointing to `https://your-project.convex.cloud`).
+
+### Other Useful Scripts
+
+-   **`pnpm build`**: Builds the application for production.
+-   **`pnpm start`**: Starts the production server (after building).
+-   **`pnpm dev:app`**: Runs only the Vinxi frontend development server.
+-   **`pnpm dev:convex:local`**: Runs only the local Convex backend.
+-   **`pnpm dev:convex:cloud`**: Runs only the Convex CLI connected to the cloud.
+-   **`pnpm dev:prod-db`**: Runs the local Vinxi frontend development server connected to the **production Convex database** (`https://cool-crow-733.convex.cloud`). This script directly sets the `VITE_CONVEX_URL` environment variable. **Use with extreme caution as this will interact with live production data.**
+
 
 ### Project Structure
 ```
@@ -95,13 +144,25 @@ ipaintai/
 ```
 
 ### Environment Variables
-```env
-# Convex
-CONVEX_DEPLOYMENT=
-VITE_CONVEX_URL=
 
-# Replicate (planned)
-REPLICATE_API_TOKEN=
+Key environment variables are managed in `.env` and `.env.local` files.
+
+-   `VITE_CONVEX_URL`: Specifies the Convex backend URL.
+    -   For local development (`pnpm dev`), this is set to `http://127.0.0.1:3210` in `.env.local`.
+    -   For cloud development (`pnpm dev:cloud`), this should point to your `https://<your-project-name>.convex.cloud` URL (usually managed by Convex CLI in `.env.local` after linking or via environment variables in your deployment platform).
+-   `CONVEX_DEPLOYMENT`: (Handled by Convex CLI) Specifies the cloud deployment target.
+-   Other `VITE_` prefixed variables can be added to `.env` or `.env.local` as needed for frontend configuration.
+-   Server-side secrets for Convex (like API keys for third-party services used in actions) should be set in the Convex dashboard.
+
+```env
+# Example .env.local for local development:
+VITE_CONVEX_URL=http://127.0.0.1:3210
+VITE_INTERNAL_HIDE_ADMIN_PANEL=true
+VITE_INTERNAL_HIDE_DRIFT_MONITOR=false
+
+# Example .env.local after 'npx convex link' for cloud:
+# CONVEX_DEPLOYMENT=prod:...
+# VITE_CONVEX_URL=https://your-project.convex.cloud
 ```
 
 ## Real-time Architecture
