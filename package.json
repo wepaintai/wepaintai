@@ -6,7 +6,7 @@
   "scripts": {
     "dev:app": "vinxi dev",
     "dev:convex:local": "convex dev --local",
-    "dev:convex:cloud": "convex dev",
+    "dev:convex:cloud": "convex dev --prod",
     "dev": "run-p \"dev:app\" \"dev:convex:local\"",
     "dev:cloud": "run-p \"dev:app\" \"dev:convex:cloud\"",
     "dev:prod-db": "VITE_CONVEX_URL=https://cool-crow-733.convex.cloud pnpm dev:app",
