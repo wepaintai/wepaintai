@@ -15,6 +15,7 @@ export interface P2PPaintingOptions {
   sessionId: Id<"paintingSessions"> | null;
   userId: string;
   enabled?: boolean;
+  presence?: Array<{ userName: string; userColor: string }>; // To get peer colors
 }
 
 export interface P2PPaintingResult {
@@ -32,6 +33,7 @@ export function useP2PPainting({
   sessionId,
   userId,
   enabled = true,
+  presence = [],
 }: P2PPaintingOptions): P2PPaintingResult {
   const convex = useConvex();
   const p2pManagerRef = useRef<P2PManager | null>(null);
@@ -85,7 +87,8 @@ export function useP2PPainting({
             y: packet.y,
             pressure: packet.p,
           }],
-          color: '#FF0000', // Red for remote strokes (temporary)
+          // Try to find peer color from presence
+          color: presence.find(p => p.userName === peerId)?.userColor || '#FF0000',
           size: 20, // Default brush size
           lastUpdate: Date.now(),
         };

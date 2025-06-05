@@ -134,13 +134,17 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       sessionId,
       userId: currentUser.id ? currentUser.id.toString() : currentUser.name, // Convert ID to string
       enabled: !!currentUser.id, // Only enable when user is created
+      presence, // Pass presence to get peer colors
     })
     
-    console.log('🎨 Canvas - Current user:', { 
-      id: currentUser.id, 
-      name: currentUser.name,
-      idType: typeof currentUser.id 
-    })
+    // Log only in development
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🎨 Canvas - Current user:', { 
+        id: currentUser.id, 
+        name: currentUser.name,
+        idType: typeof currentUser.id 
+      })
+    }
 
     // Track current stroke ID for P2P
     const [currentStrokeId, setCurrentStrokeId] = useState<string | null>(null)
@@ -305,19 +309,28 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
           const x = cursor.x * canvasWidth;
           const y = cursor.y * canvasHeight;
           
-          drawingContext.fillStyle = cursor.drawing ? '#FF0000' : '#0000FF';
+          // Get peer color from presence
+          const peerColor = presence.find(p => p.userName === peerId || p.userId?.toString() === peerId)?.userColor || '#666666';
+          
+          drawingContext.fillStyle = peerColor;
           drawingContext.beginPath()
           drawingContext.arc(x, y, cursor.drawing ? 8 : 5, 0, 2 * Math.PI)
           drawingContext.fill()
           
-          // Simple peer label
+          // Draw cursor outline
+          drawingContext.strokeStyle = cursor.drawing ? '#000000' : '#FFFFFF';
+          drawingContext.lineWidth = cursor.drawing ? 2 : 1;
+          drawingContext.stroke();
+          
+          // Peer label
           drawingContext.fillStyle = 'white'
-          drawingContext.strokeStyle = cursor.drawing ? '#FF0000' : '#0000FF';
-          drawingContext.lineWidth = 2
-          drawingContext.font = '10px Arial'
-          const label = peerId.substring(0, 8);
-          drawingContext.strokeText(label, x + 10, y - 5)
-          drawingContext.fillText(label, x + 10, y - 5)
+          drawingContext.strokeStyle = peerColor;
+          drawingContext.lineWidth = 3
+          drawingContext.font = 'bold 11px Arial'
+          const peerName = presence.find(p => p.userName === peerId || p.userId?.toString() === peerId)?.userName || peerId.substring(0, 8);
+          const textWidth = drawingContext.measureText(peerName).width;
+          drawingContext.strokeText(peerName, x - textWidth / 2, y - 15)
+          drawingContext.fillText(peerName, x - textWidth / 2, y - 15)
         });
       } else {
         // Fallback to Convex cursors
@@ -423,11 +436,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
               pressure: p.pressure
             }));
             
-            console.log('🎨 Drawing remote stroke', {
-              strokeId: remoteStroke.strokeId,
-              points: denormalizedPoints.length,
-              firstPoint: denormalizedPoints[0]
-            });
+            // Drawing remote stroke
             
             drawSingleStroke(drawingContext, {
               points: denormalizedPoints,
@@ -565,7 +574,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
 
       // Send points via P2P if connected
       if (isP2PConnected && currentStrokeId && drawingCanvasRef.current) {
-        console.log('📤 Sending via P2P, connected:', isP2PConnected, 'mode:', connectionMode);
+        // Log removed for production
         // Send batch of new points
         newPoints.forEach(point => {
           const normalizedX = point.x / drawingCanvasRef.current!.width
@@ -576,12 +585,9 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       
       // Update live stroke for other users to see (throttled in the hook)
       // Only use Convex if P2P is not connected
-      console.log('🔍 P2P Status - Connected:', isP2PConnected, 'Mode:', connectionMode);
+      // Use P2P if connected, otherwise fall back to Convex
       if (!isP2PConnected || connectionMode === 'fallback') {
-        console.log('📡 Using Convex fallback for live strokes');
         updateLiveStrokeForUser(newStrokePoints, color, size, opacity)
-      } else {
-        console.log('✅ Using P2P for live strokes');
       }
 
       // Clear drawing canvas and redraw current stroke and cursors
