@@ -1,0 +1,24 @@
+{
+  "/Users/travisirby/Documents/GitHub/ipaintai-core/app/styles/app.css": {
+    "file": "assets/app-D3oyAGc5.css",
+    "src": "/Users/travisirby/Documents/GitHub/ipaintai-core/app/styles/app.css"
+  },
+  "app/routes/index.tsx?tsr-split=component": {
+    "file": "assets/index-CPBHqSQU.js",
+    "name": "index",
+    "src": "app/routes/index.tsx?tsr-split=component",
+    "isDynamicEntry": true
+  },
+  "virtual:$vinxi/handler/ssr": {
+    "file": "ssr.js",
+    "name": "ssr",
+    "src": "virtual:$vinxi/handler/ssr",
+    "isEntry": true,
+    "dynamicImports": [
+      "app/routes/index.tsx?tsr-split=component"
+    ],
+    "assets": [
+      "assets/app-D3oyAGc5.css"
+    ]
+  }
+}

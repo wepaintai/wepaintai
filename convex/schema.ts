@@ -70,6 +70,18 @@ const schema = defineSchema({
     lastAckedStrokeOrder: v.number(),
   })
   .index("by_session_viewer", ["sessionId", "viewerId"]),
+
+  // WebRTC signaling messages (ephemeral)
+  webrtcSignals: defineTable({
+    sessionId: v.id("paintingSessions"),
+    fromPeerId: v.string(),
+    toPeerId: v.string(),
+    type: v.union(v.literal("offer"), v.literal("answer"), v.literal("ice-candidate")),
+    data: v.any(),
+    timestamp: v.number(),
+  })
+  .index("by_session_to", ["sessionId", "toPeerId"])
+  .index("by_timestamp", ["timestamp"]),
 });
 
 export default schema;

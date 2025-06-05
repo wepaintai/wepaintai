@@ -3,9 +3,13 @@ import { Canvas, CanvasRef } from './Canvas'
 import { ToolPanel } from './ToolPanel'
 import { AdminPanel } from './AdminPanel' // Import AdminPanel
 import { SessionInfo } from './SessionInfo'
+import { P2PStatus } from './P2PStatus'
+import { P2PDebugPanel } from './P2PDebugPanel'
 import { usePaintingSession } from '../hooks/usePaintingSession'
+import { useP2PPainting } from '../hooks/useP2PPainting'
 import { shouldShowAdminFeatures } from '../utils/environment'
 import { Id } from '../../convex/_generated/dataModel'
+import { initP2PLogger } from '../lib/p2p-logger'
 
 export function PaintingView() {
   const canvasRef = useRef<CanvasRef>(null)
@@ -33,6 +37,25 @@ export function PaintingView() {
   const [isAdminPanelVisible, setIsAdminPanelVisible] = useState(adminFeaturesEnabled)
 
   const { createNewSession, presence, currentUser, isLoading, clearSession } = usePaintingSession(sessionId)
+  
+  // P2P connection status
+  const { 
+    isConnected: isP2PConnected, 
+    connectionMode, 
+    metrics: p2pMetrics,
+    remoteStrokes 
+  } = useP2PPainting({
+    sessionId,
+    userId: currentUser.id ? currentUser.id.toString() : currentUser.name, // Convert ID to string
+    enabled: !!currentUser.id, // Only enable when user is created
+  })
+
+  // Initialize P2P logger in development
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'development') {
+      initP2PLogger();
+    }
+  }, []);
 
   // Create a new session or join existing one on mount
   useEffect(() => {
@@ -175,6 +198,21 @@ export function PaintingView() {
         userCount={presence.length + 1}
         currentUser={currentUser}
       />
+      <P2PStatus
+        isConnected={isP2PConnected}
+        connectionMode={connectionMode}
+        metrics={p2pMetrics}
+        className="absolute bottom-2 left-2 z-10"
+      />
+      {/* Debug panel - only in development */}
+      {process.env.NODE_ENV === 'development' && (
+        <P2PDebugPanel
+          isConnected={isP2PConnected}
+          connectionMode={connectionMode}
+          metrics={p2pMetrics}
+          remoteStrokesCount={remoteStrokes.size}
+        />
+      )}
       <ToolPanel
         color={color}
         size={size}

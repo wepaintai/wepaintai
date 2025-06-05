@@ -28,8 +28,10 @@ export const updatePresence = mutation({
       .first();
 
     if (existingPresence) {
-      // Update existing presence
-      await ctx.db.patch(existingPresence._id, {
+      // Replace the entire document to avoid conflicts
+      await ctx.db.replace(existingPresence._id, {
+        sessionId: args.sessionId,
+        userId: args.userId,
         userColor: args.userColor,
         userName: args.userName,
         cursorX: args.cursorX,
@@ -95,6 +97,7 @@ export const leaveSession = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
     userId: v.optional(v.id("users")),
+    userName: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {

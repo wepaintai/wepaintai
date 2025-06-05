@@ -2,6 +2,7 @@ import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { useCallback, useEffect, useState, useRef, useMemo } from "react";
+import { p2pLogger } from "../lib/p2p-logger";
 
 export interface PaintPoint {
   x: number;
@@ -51,11 +52,18 @@ export interface LiveStroke {
 }
 
 export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
-  const [currentUser] = useState(() => ({
-    id: crypto.randomUUID(),
+  // Create anonymous user
+  const createUser = useMutation(api.users.createAnonymousUser);
+  const [currentUser, setCurrentUser] = useState<{
+    id: Id<"users"> | null;
+    name: string;
+    color: string;
+  }>({
+    id: null,
     name: `User ${Math.floor(Math.random() * 1000)}`,
     color: `hsl(${Math.floor(Math.random() * 360)}, 70%, 50%)`,
-  }));
+  });
+  const [isCreatingUser, setIsCreatingUser] = useState(false);
 
   // Queries
   const session = useQuery(
@@ -89,10 +97,29 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
   const clearSessionLiveStrokes = useMutation(api.liveStrokes.clearSessionLiveStrokes);
   const upsertViewerState = useMutation(api.viewerAcks.upsertViewerState);
   const removeViewerState = useMutation(api.viewerAcks.removeViewerState);
-  const getViewerState = useQuery(api.viewerAcks.getViewerState, sessionId ? { sessionId, viewerId: currentUser.id } : "skip");
-
+  const getViewerState = useQuery(api.viewerAcks.getViewerState, 
+    sessionId && currentUser.id ? { sessionId, viewerId: currentUser.id } : "skip"
+  );
 
   const localLastAckedStrokeOrderRef = useRef<number>(0);
+
+  // Create anonymous user on mount
+  useEffect(() => {
+    if (!isCreatingUser && !currentUser.id) {
+      console.log('🆕 Creating anonymous user:', currentUser.name);
+      setIsCreatingUser(true);
+      createUser({ name: currentUser.name })
+        .then((userId) => {
+          console.log('✅ User created with ID:', userId);
+          setCurrentUser(prev => ({ ...prev, id: userId }));
+          setIsCreatingUser(false);
+        })
+        .catch((error) => {
+          console.error('❌ Failed to create anonymous user:', error);
+          setIsCreatingUser(false);
+        });
+    }
+  }, [createUser, currentUser.name, currentUser.id, isCreatingUser]);
 
   // Effect to initialize lastAckedStrokeOrder from server
   useEffect(() => {
@@ -104,7 +131,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
 
   // Effect to process strokes and update viewer acknowledgement
   useEffect(() => {
-    if (strokes && strokes.length > 0 && sessionId) {
+    if (strokes && strokes.length > 0 && sessionId && currentUser.id) {
       const maxStrokeOrder = strokes.reduce((max, stroke) => Math.max(max, stroke.strokeOrder), 0);
       if (maxStrokeOrder > localLastAckedStrokeOrderRef.current) {
         localLastAckedStrokeOrderRef.current = maxStrokeOrder;
@@ -138,17 +165,18 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     brushSize: number,
     opacity: number = 1
   ) => {
-    if (!sessionId) return;
+    if (!sessionId || !currentUser.id) return;
     
     return await addStroke({
       sessionId,
+      userId: currentUser.id,
       userColor: currentUser.color,
       points,
       brushColor,
       brushSize,
       opacity,
     });
-  }, [sessionId, addStroke, currentUser.color]);
+  }, [sessionId, addStroke, currentUser]);
 
   // Update user presence
   const updateUserPresence = useCallback(async (
@@ -157,10 +185,14 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     isDrawing: boolean,
     currentTool: string
   ) => {
-    if (!sessionId) return;
+    if (!sessionId || !currentUser.id) {
+      console.log('⚠️ Skipping presence update - no session or user ID');
+      return;
+    }
     
     return await updatePresence({
       sessionId,
+      userId: currentUser.id,
       userColor: currentUser.color,
       userName: currentUser.name,
       cursorX,
@@ -198,7 +230,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     brushSize: number,
     opacity: number = 1
   ) => {
-    if (!sessionId) return;
+    if (!sessionId || !currentUser.id) return;
     
     const now = Date.now();
     const timeSinceLastUpdate = now - lastUpdateTimeRef.current;
@@ -209,8 +241,10 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     // If this is the first point or enough time has passed, update immediately
     if (points.length === 1 || timeSinceLastUpdate >= 16) { // ~60 FPS for immediate updates
       lastUpdateTimeRef.current = now;
+      p2pLogger.logConvex('updateLiveStroke', { pointCount: points.length });
       updateLiveStroke({
         sessionId,
+        userId: currentUser.id,
         userColor: currentUser.color,
         userName: currentUser.name,
         points,
@@ -238,8 +272,10 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
       const pending = pendingLiveStrokeRef.current;
       if (pending) {
         lastUpdateTimeRef.current = Date.now();
+        p2pLogger.logConvex('updateLiveStroke (throttled)', { pointCount: pending.points.length });
         updateLiveStroke({
           sessionId,
+          userId: currentUser.id,
           userColor: currentUser.color,
           userName: currentUser.name,
           points: pending.points,
@@ -255,20 +291,22 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
 
   // Clear live stroke (when finishing drawing)
   const clearLiveStrokeForUser = useCallback(async () => {
-    if (!sessionId) return;
+    if (!sessionId || !currentUser.id) return;
     
     return await clearLiveStroke({
       sessionId,
+      userId: currentUser.id,
     });
-  }, [sessionId, clearLiveStroke]);
+  }, [sessionId, currentUser.id, clearLiveStroke]);
 
   // Leave session on unmount and cleanup timeouts
   useEffect(() => {
     const currentSessionId = sessionId; // Capture sessionId for cleanup
     const currentViewerId = currentUser.id; // Capture viewerId for cleanup
+    const currentUserName = currentUser.name; // Capture userName for cleanup
     return () => {
-      if (currentSessionId) {
-        leaveSession({ sessionId: currentSessionId });
+      if (currentSessionId && currentViewerId) {
+        leaveSession({ sessionId: currentSessionId, userId: currentViewerId });
         removeViewerState({ sessionId: currentSessionId, viewerId: currentViewerId });
       }
       // Clean up any pending live stroke updates
@@ -276,7 +314,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
         clearTimeout(liveStrokeUpdateRef.current);
       }
     };
-  }, [sessionId, leaveSession, removeViewerState, currentUser.id]);
+  }, [sessionId, leaveSession, removeViewerState, currentUser.id, currentUser.name]);
 
   // Memoized strokes to prevent re-renders if the array instance changes but content is same.
   // This is particularly for the catch-up, ensuring we only process "new" strokes.
@@ -308,6 +346,6 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     clearLiveStrokeForUser,
     
     // State
-    isLoading: session === undefined,
+    isLoading: session === undefined || isCreatingUser || !currentUser.id,
   };
 }

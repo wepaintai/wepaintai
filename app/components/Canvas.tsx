@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { getStroke } from 'perfect-freehand'
 import { usePaintingSession, type PaintPoint, type Stroke, type UserPresence, type LiveStroke } from '../hooks/usePaintingSession'
+import { useP2PPainting } from '../hooks/useP2PPainting'
 import { Id } from '../../convex/_generated/dataModel'
 
 const average = (a: number, b: number): number => (a + b) / 2;
@@ -118,6 +119,31 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       updateLiveStrokeForUser,
       clearLiveStrokeForUser,
     } = usePaintingSession(sessionId)
+
+    // P2P preview layer
+    const {
+      isConnected: isP2PConnected,
+      connectionMode,
+      remoteStrokes,
+      remoteCursors,
+      sendStrokePoint,
+      sendCursorPosition,
+      clearRemoteStroke,
+      metrics: p2pMetrics,
+    } = useP2PPainting({
+      sessionId,
+      userId: currentUser.id ? currentUser.id.toString() : currentUser.name, // Convert ID to string
+      enabled: !!currentUser.id, // Only enable when user is created
+    })
+    
+    console.log('🎨 Canvas - Current user:', { 
+      id: currentUser.id, 
+      name: currentUser.name,
+      idType: typeof currentUser.id 
+    })
+
+    // Track current stroke ID for P2P
+    const [currentStrokeId, setCurrentStrokeId] = useState<string | null>(null)
 
     // Remove confirmed strokes from pending when they appear in the strokes array
     useEffect(() => {
@@ -270,23 +296,49 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
     const drawUserCursors = useCallback(() => {
       if (!drawingContext || !drawingCanvasRef.current) return
 
-      presence.forEach((user) => {
-        if (user.userName === currentUser.name) return
+      const canvasWidth = drawingCanvasRef.current.width;
+      const canvasHeight = drawingCanvasRef.current.height;
 
-        drawingContext.fillStyle = user.userColor
-        drawingContext.beginPath()
-        drawingContext.arc(user.cursorX, user.cursorY, 5, 0, 2 * Math.PI)
-        drawingContext.fill()
+      // Draw P2P cursors (low latency)
+      if (isP2PConnected) {
+        remoteCursors.forEach((cursor, peerId) => {
+          const x = cursor.x * canvasWidth;
+          const y = cursor.y * canvasHeight;
+          
+          drawingContext.fillStyle = cursor.drawing ? '#FF0000' : '#0000FF';
+          drawingContext.beginPath()
+          drawingContext.arc(x, y, cursor.drawing ? 8 : 5, 0, 2 * Math.PI)
+          drawingContext.fill()
+          
+          // Simple peer label
+          drawingContext.fillStyle = 'white'
+          drawingContext.strokeStyle = cursor.drawing ? '#FF0000' : '#0000FF';
+          drawingContext.lineWidth = 2
+          drawingContext.font = '10px Arial'
+          const label = peerId.substring(0, 8);
+          drawingContext.strokeText(label, x + 10, y - 5)
+          drawingContext.fillText(label, x + 10, y - 5)
+        });
+      } else {
+        // Fallback to Convex cursors
+        presence.forEach((user) => {
+          if (user.userName === currentUser.name) return
 
-        drawingContext.fillStyle = 'white'
-        drawingContext.strokeStyle = user.userColor
-        drawingContext.lineWidth = 2
-        drawingContext.font = '12px Arial'
-        const textWidth = drawingContext.measureText(user.userName).width
-        drawingContext.strokeText(user.userName, user.cursorX - textWidth / 2, user.cursorY - 10)
-        drawingContext.fillText(user.userName, user.cursorX - textWidth / 2, user.cursorY - 10)
-      })
-    }, [drawingContext, presence, currentUser.name])
+          drawingContext.fillStyle = user.userColor
+          drawingContext.beginPath()
+          drawingContext.arc(user.cursorX, user.cursorY, 5, 0, 2 * Math.PI)
+          drawingContext.fill()
+
+          drawingContext.fillStyle = 'white'
+          drawingContext.strokeStyle = user.userColor
+          drawingContext.lineWidth = 2
+          drawingContext.font = '12px Arial'
+          const textWidth = drawingContext.measureText(user.userName).width
+          drawingContext.strokeText(user.userName, user.cursorX - textWidth / 2, user.cursorY - 10)
+          drawingContext.fillText(user.userName, user.cursorX - textWidth / 2, user.cursorY - 10)
+        })
+      }
+    }, [drawingContext, presence, currentUser.name, isP2PConnected, remoteCursors])
     
     // Fallback global listener to ensure drawing stops if pointer capture fails
     useEffect(() => {
@@ -357,23 +409,57 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
         });
       }
       
-      // Draw other users' live strokes
-      liveStrokes.forEach((liveStroke) => {
-        // Don't draw our own live stroke (we handle that above)
-        if (liveStroke.userName === currentUser.name) return;
+      // Draw P2P remote strokes (high priority, low latency)
+      if (isP2PConnected && drawingCanvasRef.current) {
+        const canvasWidth = drawingCanvasRef.current.width;
+        const canvasHeight = drawingCanvasRef.current.height;
         
-        drawSingleStroke(drawingContext, {
-          points: liveStroke.points,
-          color: liveStroke.brushColor,
-          size: liveStroke.brushSize,
-          opacity: liveStroke.opacity,
-          isPending: true,
-          isLive: true, // Other users' live strokes
+        remoteStrokes.forEach((remoteStroke) => {
+          if (remoteStroke.points.length > 0) {
+            // Denormalize points from 0-1 to canvas coordinates
+            const denormalizedPoints = remoteStroke.points.map(p => ({
+              x: p.x * canvasWidth,
+              y: p.y * canvasHeight,
+              pressure: p.pressure
+            }));
+            
+            console.log('🎨 Drawing remote stroke', {
+              strokeId: remoteStroke.strokeId,
+              points: denormalizedPoints.length,
+              firstPoint: denormalizedPoints[0]
+            });
+            
+            drawSingleStroke(drawingContext, {
+              points: denormalizedPoints,
+              color: remoteStroke.color,
+              size: remoteStroke.size,
+              opacity: 0.8, // Slightly transparent for preview
+              isPending: true,
+              isLive: true,
+            });
+          }
         });
-      });
+      }
+      
+      // Draw other users' live strokes (fallback to Convex if P2P fails)
+      if (!isP2PConnected || connectionMode === 'fallback') {
+        liveStrokes.forEach((liveStroke) => {
+          // Don't draw our own live stroke (we handle that above)
+          if (liveStroke.userName === currentUser.name) return;
+          
+          drawSingleStroke(drawingContext, {
+            points: liveStroke.points,
+            color: liveStroke.brushColor,
+            size: liveStroke.brushSize,
+            opacity: liveStroke.opacity,
+            isPending: true,
+            isLive: true, // Other users' live strokes
+          });
+        });
+      }
       
       drawUserCursors();
-    }, [drawingContext, currentStroke, isDrawing, color, size, opacity, liveStrokes, currentUser.name, drawUserCursors]);
+    }, [drawingContext, currentStroke, isDrawing, color, size, opacity, liveStrokes, currentUser.name, drawUserCursors, isP2PConnected, connectionMode, remoteStrokes]);
 
 
     // Get pointer position
@@ -404,6 +490,17 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       const point = getPointerPosition(e)
       setCurrentStroke([point])
       updateUserPresence(point.x, point.y, true, 'brush')
+      
+      // Initialize stroke ID for P2P
+      const strokeId = crypto.randomUUID()
+      setCurrentStrokeId(strokeId)
+      
+      // Send first point via P2P if connected
+      if (isP2PConnected && drawingCanvasRef.current) {
+        const normalizedX = point.x / drawingCanvasRef.current.width
+        const normalizedY = point.y / drawingCanvasRef.current.height
+        sendStrokePoint(strokeId, normalizedX, normalizedY, point.pressure || 0.5)
+      }
     }
 
     // Handle pointer move
@@ -411,6 +508,14 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       if (!isDrawing || !drawingContext || !drawingCanvasRef.current) {
         // Still update presence even if not drawing, for cursor tracking
         const nonDrawingPoint = getPointerPosition(e)
+        
+        // Send cursor via P2P (fast)
+        if (isP2PConnected && drawingCanvasRef.current) {
+          const normalizedX = nonDrawingPoint.x / drawingCanvasRef.current.width;
+          const normalizedY = nonDrawingPoint.y / drawingCanvasRef.current.height;
+          sendCursorPosition(normalizedX, normalizedY, false);
+        }
+        
         updateUserPresence(nonDrawingPoint.x, nonDrawingPoint.y, false, 'brush')
         return
       }
@@ -444,13 +549,40 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
 
       // Update presence with the last point in the batch
       const lastPoint = newPoints[newPoints.length - 1]
+      
+      // Send cursor via P2P (fast)
+      if (isP2PConnected && drawingCanvasRef.current) {
+        const normalizedX = lastPoint.x / drawingCanvasRef.current.width;
+        const normalizedY = lastPoint.y / drawingCanvasRef.current.height;
+        sendCursorPosition(normalizedX, normalizedY, true);
+      }
+      
+      // Update Convex presence (slower, for fallback)
       updateUserPresence(lastPoint.x, lastPoint.y, isDrawing, 'brush')
 
       const newStrokePoints = [...currentStroke, ...newPoints]
       setCurrentStroke(newStrokePoints)
 
+      // Send points via P2P if connected
+      if (isP2PConnected && currentStrokeId && drawingCanvasRef.current) {
+        console.log('📤 Sending via P2P, connected:', isP2PConnected, 'mode:', connectionMode);
+        // Send batch of new points
+        newPoints.forEach(point => {
+          const normalizedX = point.x / drawingCanvasRef.current!.width
+          const normalizedY = point.y / drawingCanvasRef.current!.height
+          sendStrokePoint(currentStrokeId, normalizedX, normalizedY, point.pressure || 0.5)
+        })
+      }
+      
       // Update live stroke for other users to see (throttled in the hook)
-      updateLiveStrokeForUser(newStrokePoints, color, size, opacity)
+      // Only use Convex if P2P is not connected
+      console.log('🔍 P2P Status - Connected:', isP2PConnected, 'Mode:', connectionMode);
+      if (!isP2PConnected || connectionMode === 'fallback') {
+        console.log('📡 Using Convex fallback for live strokes');
+        updateLiveStrokeForUser(newStrokePoints, color, size, opacity)
+      } else {
+        console.log('✅ Using P2P for live strokes');
+      }
 
       // Clear drawing canvas and redraw current stroke and cursors
       drawingContext.clearRect(0, 0, drawingCanvasRef.current.width, drawingCanvasRef.current.height)
@@ -496,7 +628,12 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
         addStrokeToSession(finalStrokePoints, color, size, opacity)
         
         // Clear live stroke for other users
-        clearLiveStrokeForUser()
+        if (!isP2PConnected || connectionMode === 'fallback') {
+          clearLiveStrokeForUser()
+        }
+        
+        // Clear P2P stroke tracking
+        setCurrentStrokeId(null)
         
         // Redraw main canvas to include the new pending stroke immediately
         if (mainContext) {
@@ -504,6 +641,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
         }
       }
       setCurrentStroke([]) // Reset current stroke
+      setCurrentStrokeId(null) // Reset P2P stroke ID
       onStrokeEnd?.()
     }
 
@@ -550,6 +688,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       }
       
       setCurrentStroke([]) // Reset current stroke
+      setCurrentStrokeId(null) // Reset P2P stroke ID
       onStrokeEnd?.()
     }
 

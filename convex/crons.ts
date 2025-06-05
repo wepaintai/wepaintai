@@ -11,4 +11,12 @@ crons.interval(
   {}
 );
 
+// Clean up old WebRTC signals every minute
+crons.interval(
+  "cleanup old webrtc signals",
+  { minutes: 1 },
+  internal.webrtc.cleanupOldSignals,
+  {}
+);
+
 export default crons;
