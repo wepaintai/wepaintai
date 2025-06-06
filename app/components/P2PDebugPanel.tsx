@@ -143,19 +143,19 @@ export function P2PDebugPanel({
 
         {/* Isolation Status */}
         <div className="bg-gray-50 p-2 rounded">
-          <div className="font-semibold mb-1">Isolation Check:</div>
-          {isConnected && connectionMode !== 'fallback' ? (
+          <div className="font-semibold mb-1">P2P Status:</div>
+          {isConnected ? (
             <div className="text-green-600">
-              ✓ P2P Active - Convex bypassed for live strokes
+              ✓ P2P Active - Live strokes via P2P only
             </div>
           ) : (
-            <div className="text-yellow-600">
-              ⚠ Using Convex fallback - P2P not available
+            <div className="text-red-600">
+              ✗ P2P Required - No connection established
             </div>
           )}
-          {convexCallCount > 10 && isConnected && (
-            <div className="text-red-600 mt-1">
-              ⚠ High Convex activity detected during P2P mode!
+          {convexCallCount > 5 && (
+            <div className="text-blue-600 mt-1">
+              ℹ Convex activity: {convexCallCount} calls (completed strokes only)
             </div>
           )}
         </div>
