@@ -339,7 +339,7 @@ export function ToolPanel({
         transition: isDragging ? 'none' : 'transform 0.15s ease-out'
       }}
       role="toolbar"
-      aria-label="ipaint.ai tools"
+      aria-label="wepaint.ai tools"
     >
       <div 
         className="bg-background/95 backdrop-blur-sm border border-border overflow-hidden"
@@ -356,7 +356,7 @@ export function ToolPanel({
           role="button"
         >
           <div className="flex items-center">
-            <span className="text-xs font-medium text-foreground/80">ipaint.ai</span>
+            <span className="text-xs font-medium text-foreground/80">wepaint.ai</span>
           </div>
           <button
             onClick={(e) => {

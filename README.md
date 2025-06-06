@@ -1,6 +1,6 @@
-# iPantAI Core
+# wePaintAI Core
 
-This project is the core of the iPantAI application.
+This project is the core of the wePaintAI application.
 
 ## Development Setup
 

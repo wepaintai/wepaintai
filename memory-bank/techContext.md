@@ -1,4 +1,4 @@
-# iPaintAI - Technical Context
+# wePaintAI - Technical Context
 
 ## Technologies Used
 
@@ -121,7 +121,7 @@ This command will:
 
 ### Project Structure
 ```
-ipaintai/
+wepaintai/
 ├── app/
 │   ├── routes/          # TanStack Start routes
 │   ├── components/      # React components
