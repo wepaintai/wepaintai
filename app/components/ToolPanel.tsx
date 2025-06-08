@@ -11,7 +11,8 @@ import {
   ChevronUp,
   Circle,
   Eye,
-  Pipette
+  Pipette,
+  ImagePlus
 } from 'lucide-react'
 
 // Types
@@ -26,6 +27,9 @@ interface ToolPanelProps {
   onRedo: () => void
   onClear: () => void
   onExport: () => void
+  onImageUpload?: () => void
+  selectedTool?: string
+  onToolChange?: (tool: string) => void
 }
 
 interface Tool {
@@ -49,8 +53,8 @@ interface SliderProps {
 // Tool definitions
 const tools: Tool[] = [
   { id: 'brush', icon: Paintbrush, label: 'Brush', ariaLabel: 'Select brush tool', keyboardShortcut: 'B' },
+  { id: 'upload', icon: ImagePlus, label: 'Upload', ariaLabel: 'Upload image', keyboardShortcut: 'U' },
   { id: 'rotate', icon: RotateCcw, label: 'Rotate', ariaLabel: 'Rotate canvas', keyboardShortcut: 'R' },
-  { id: 'folder', icon: FolderOpen, label: 'Open', ariaLabel: 'Open file', keyboardShortcut: 'O' },
   { id: 'inpaint', icon: Palette, label: 'Inpaint', ariaLabel: 'Inpaint tool', keyboardShortcut: 'I' },
 ]
 
@@ -213,8 +217,12 @@ export function ToolPanel({
   onRedo,
   onClear,
   onExport,
+  onImageUpload,
+  selectedTool: externalSelectedTool,
+  onToolChange,
 }: ToolPanelProps) {
-  const [selectedTool, setSelectedTool] = React.useState('brush')
+  const [internalSelectedTool, setInternalSelectedTool] = React.useState('brush')
+  const selectedTool = externalSelectedTool || internalSelectedTool
   const [isCollapsed, setIsCollapsed] = React.useState(false)
   
   // Drag functionality state
@@ -310,6 +318,22 @@ export function ToolPanel({
     return () => window.removeEventListener('resize', handleResize)
   }, [])
 
+  // Handle tool selection
+  const handleToolSelect = React.useCallback((toolId: string) => {
+    // For upload tool, don't change the selected tool state
+    // It will be handled by the parent component after upload/cancel
+    if (toolId === 'upload' && onImageUpload) {
+      onImageUpload()
+      return
+    }
+    
+    if (onToolChange) {
+      onToolChange(toolId)
+    } else {
+      setInternalSelectedTool(toolId)
+    }
+  }, [onToolChange, onImageUpload])
+
   // Keyboard shortcuts for tools
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -321,13 +345,13 @@ export function ToolPanel({
       const tool = tools.find(t => t.keyboardShortcut === key)
       
       if (tool) {
-        setSelectedTool(tool.id)
+        handleToolSelect(tool.id)
       }
     }
     
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
+  }, [handleToolSelect])
 
   return (
     <div
@@ -389,7 +413,7 @@ export function ToolPanel({
                   <ToolButton
                     tool={tool}
                     isSelected={selectedTool === tool.id}
-                    onClick={() => setSelectedTool(tool.id)}
+                    onClick={() => handleToolSelect(tool.id)}
                   />
                 </div>
               ))}

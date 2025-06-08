@@ -82,6 +82,23 @@ const schema = defineSchema({
   })
   .index("by_session_to", ["sessionId", "toPeerId"])
   .index("by_timestamp", ["timestamp"]),
+
+  // Uploaded images for sessions
+  uploadedImages: defineTable({
+    sessionId: v.id("paintingSessions"),
+    userId: v.optional(v.id("users")),
+    storageId: v.id("_storage"),
+    filename: v.string(),
+    mimeType: v.string(),
+    width: v.number(),
+    height: v.number(),
+    x: v.number(),
+    y: v.number(),
+    scale: v.number(),
+    rotation: v.number(),
+    opacity: v.number(),
+    layerOrder: v.number(),
+  }).index("by_session", ["sessionId", "layerOrder"]),
 });
 
 export default schema;

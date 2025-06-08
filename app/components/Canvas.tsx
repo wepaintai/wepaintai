@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useState, useCallback, forwardRef, useImperat
 import { getStroke } from 'perfect-freehand'
 import { usePaintingSession, type PaintPoint, type Stroke, type UserPresence, type LiveStroke } from '../hooks/usePaintingSession'
 import { useP2PPainting } from '../hooks/useP2PPainting'
+import { useSessionImages } from '../hooks/useSessionImages'
 import { Id } from '../../convex/_generated/dataModel'
 
 const average = (a: number, b: number): number => (a + b) / 2;
@@ -100,13 +101,16 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
   ) => {
     const mainCanvasRef = useRef<HTMLCanvasElement>(null) // For committed strokes
     const drawingCanvasRef = useRef<HTMLCanvasElement>(null) // For live drawing
+    const imageCanvasRef = useRef<HTMLCanvasElement>(null) // For images layer
     const [isDrawing, setIsDrawing] = useState(false)
     const [currentStroke, setCurrentStroke] = useState<Point[]>([])
     const [mainContext, setMainContext] = useState<CanvasRenderingContext2D | null>(null)
     const [drawingContext, setDrawingContext] = useState<CanvasRenderingContext2D | null>(null)
+    const [imageContext, setImageContext] = useState<CanvasRenderingContext2D | null>(null)
     const [lastStrokeOrder, setLastStrokeOrder] = useState(0)
     const [pendingStrokes, setPendingStrokes] = useState<Map<string, LocalStroke>>(new Map())
     const strokeEndedRef = useRef(false) // Flag to prevent duplicate stroke ending
+    const loadedImagesRef = useRef<Map<string, HTMLImageElement>>(new Map())
 
     // Use the painting session hook
     const {
@@ -119,6 +123,14 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       updateLiveStrokeForUser,
       clearLiveStrokeForUser,
     } = usePaintingSession(sessionId)
+
+    // Use the session images hook
+    const { images } = useSessionImages(sessionId)
+    
+    // Log images for debugging
+    React.useEffect(() => {
+      console.log('Canvas - Images in session:', images.length, images)
+    }, [images])
 
     // P2P preview layer
     const {
@@ -137,14 +149,6 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       presence, // Pass presence to get peer colors
     })
     
-    // Log only in development
-    if (process.env.NODE_ENV === 'development') {
-      console.log('🎨 Canvas - Current user:', { 
-        id: currentUser.id, 
-        name: currentUser.name,
-        idType: typeof currentUser.id 
-      })
-    }
 
     // Track current stroke ID for P2P
     const [currentStrokeId, setCurrentStrokeId] = useState<string | null>(null)
@@ -202,11 +206,13 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
     useEffect(() => {
       const mainCanvas = mainCanvasRef.current
       const drawCv = drawingCanvasRef.current // Renamed to avoid conflict
-      if (!mainCanvas || !drawCv) return
+      const imageCanvas = imageCanvasRef.current
+      if (!mainCanvas || !drawCv || !imageCanvas) return
 
       const mainCtx = mainCanvas.getContext('2d')
       const drawingCtx = drawCv.getContext('2d')
-      if (!mainCtx || !drawingCtx) return
+      const imageCtx = imageCanvas.getContext('2d')
+      if (!mainCtx || !drawingCtx || !imageCtx) return
 
       const resizeCanvases = () => {
         const container = mainCanvas.parentElement
@@ -216,6 +222,9 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
           mainCanvas.height = clientHeight
           drawCv.width = clientWidth
           drawCv.height = clientHeight
+          imageCanvas.width = clientWidth
+          imageCanvas.height = clientHeight
+          redrawImageCanvas() // Redraw images on resize
           redrawMainCanvas() // Redraw committed strokes on resize
         }
       }
@@ -223,6 +232,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       resizeCanvases()
       setMainContext(mainCtx)
       setDrawingContext(drawingCtx)
+      setImageContext(imageCtx)
 
       window.addEventListener('resize', resizeCanvases)
       return () => window.removeEventListener('resize', resizeCanvases)
@@ -232,6 +242,11 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
     useEffect(() => {
       redrawMainCanvas()
     }, [strokes]) // Only redraw main canvas when confirmed strokes change
+
+    // Redraw image canvas when images change
+    useEffect(() => {
+      redrawImageCanvas()
+    }, [images])
 
     // Redraw all committed strokes on the main canvas
     const redrawMainCanvas = useCallback(() => {
@@ -260,6 +275,74 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       })
 
     }, [mainContext, strokes, pendingStrokes, smoothing, thinning, streamline, easing, startTaper, startCap, endTaper, endCap, opacity])
+
+    // Draw images on the image canvas
+    const redrawImageCanvas = useCallback(async () => {
+      if (!imageContext || !imageCanvasRef.current) return
+
+      console.log('Redrawing image canvas with', images.length, 'images')
+      imageContext.clearRect(0, 0, imageCanvasRef.current.width, imageCanvasRef.current.height)
+
+      // Draw all images in layer order
+      for (const image of images) {
+        if (!image.url) {
+          console.log('Image missing URL:', image._id)
+          continue
+        }
+
+        console.log('Drawing image:', image._id, 'at', image.x, image.y, 'scale:', image.scale)
+
+        // Check if image is already loaded
+        let img = loadedImagesRef.current.get(image._id)
+        
+        if (!img) {
+          // Load the image
+          console.log('Loading image from URL:', image.url)
+          img = new Image()
+          img.crossOrigin = 'anonymous'
+          
+          try {
+            await new Promise<void>((resolve, reject) => {
+              img!.onload = () => {
+                console.log('Image loaded successfully:', image._id)
+                loadedImagesRef.current.set(image._id, img!)
+                resolve()
+              }
+              img!.onerror = (e) => {
+                console.error('Failed to load image:', image._id, e)
+                reject(e)
+              }
+              img!.src = image.url!
+            })
+          } catch (err) {
+            console.error('Error loading image:', err)
+            continue
+          }
+        }
+
+        // Save context state
+        imageContext.save()
+
+        // Apply transformations
+        imageContext.globalAlpha = image.opacity
+        imageContext.translate(image.x + (image.width * image.scale) / 2, image.y + (image.height * image.scale) / 2)
+        imageContext.rotate((image.rotation * Math.PI) / 180)
+        imageContext.scale(image.scale, image.scale)
+
+        // Draw the image centered
+        imageContext.drawImage(
+          img,
+          -image.width / 2,
+          -image.height / 2,
+          image.width,
+          image.height
+        )
+
+        // Restore context state
+        imageContext.restore()
+        console.log('Image drawn successfully:', image._id)
+      }
+    }, [imageContext, images])
 
     // Draw a single stroke (helper for both canvases)
     const drawSingleStroke = (ctx: CanvasRenderingContext2D, currentLocalStroke: LocalStroke) => {
@@ -707,6 +790,9 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
         if (drawingContext && drawingCanvasRef.current) {
           drawingContext.clearRect(0, 0, drawingCanvasRef.current.width, drawingCanvasRef.current.height)
         }
+        if (imageContext && imageCanvasRef.current) {
+          imageContext.clearRect(0, 0, imageCanvasRef.current.width, imageCanvasRef.current.height)
+        }
         setPendingStrokes(new Map())
         // Note: Session clearing is handled by the parent component via clearSession mutation
       },
@@ -717,14 +803,19 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
         // Return image data from the main canvas which has all committed strokes
         return mainCanvasRef.current?.toDataURL('image/png')
       },
-    }), [mainContext, drawingContext])
+    }), [mainContext, drawingContext, imageContext])
 
     return (
       <>
         <canvas
+          ref={imageCanvasRef}
+          className="absolute inset-0 w-full h-full"
+          style={{ zIndex: 0 }} // Image canvas at the bottom
+        />
+        <canvas
           ref={mainCanvasRef}
           className="absolute inset-0 w-full h-full border border-gray-300"
-          style={{ zIndex: 0 }} // Main canvas at the bottom
+          style={{ zIndex: 1 }} // Main canvas for strokes
         />
         <canvas
           ref={drawingCanvasRef}
@@ -733,7 +824,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerLeave={handlePointerLeave}
-          style={{ touchAction: 'none', zIndex: 1 }} // Drawing canvas on top
+          style={{ touchAction: 'none', zIndex: 2 }} // Drawing canvas on top
         />
       </>
     )

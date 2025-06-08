@@ -14,6 +14,7 @@ import type {
   FunctionReference,
 } from "convex/server";
 import type * as crons from "../crons.js";
+import type * as images from "../images.js";
 import type * as liveStrokes from "../liveStrokes.js";
 import type * as paintingSessions from "../paintingSessions.js";
 import type * as presence from "../presence.js";
@@ -32,6 +33,7 @@ import type * as webrtc from "../webrtc.js";
  */
 declare const fullApi: ApiFromModules<{
   crons: typeof crons;
+  images: typeof images;
   liveStrokes: typeof liveStrokes;
   paintingSessions: typeof paintingSessions;
   presence: typeof presence;

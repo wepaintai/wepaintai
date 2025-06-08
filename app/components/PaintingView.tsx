@@ -5,6 +5,7 @@ import { AdminPanel } from './AdminPanel' // Import AdminPanel
 import { SessionInfo } from './SessionInfo'
 import { P2PStatus } from './P2PStatus'
 import { P2PDebugPanel } from './P2PDebugPanel'
+import { ImageUploadModal } from './ImageUploadModal'
 import { usePaintingSession } from '../hooks/usePaintingSession'
 import { useP2PPainting } from '../hooks/useP2PPainting'
 import { shouldShowAdminFeatures } from '../utils/environment'
@@ -32,6 +33,8 @@ export function PaintingView() {
   const [history, setHistory] = useState<string[]>([])
   const [historyIndex, setHistoryIndex] = useState(-1)
   const [sessionId, setSessionId] = useState<Id<"paintingSessions"> | null>(null)
+  const [showImageUpload, setShowImageUpload] = useState(false)
+  const [selectedTool, setSelectedTool] = useState('brush')
   // Check if admin features should be shown based on environment
   const adminFeaturesEnabled = shouldShowAdminFeatures()
   const [isAdminPanelVisible, setIsAdminPanelVisible] = useState(adminFeaturesEnabled)
@@ -138,6 +141,23 @@ export function PaintingView() {
     setIsAdminPanelVisible(prev => !prev)
   }, [])
 
+  const handleImageUpload = useCallback(() => {
+    setShowImageUpload(true)
+  }, [])
+
+  const handleImageUploaded = useCallback((imageId: Id<"uploadedImages">) => {
+    console.log('Image uploaded:', imageId)
+    setShowImageUpload(false)
+    setSelectedTool('brush') // Switch back to brush tool
+  }, [])
+
+  const handleToolChange = useCallback((tool: string) => {
+    setSelectedTool(tool)
+    if (tool === 'upload') {
+      handleImageUpload()
+    }
+  }, [handleImageUpload])
+
   // Add keyboard listener for toggling admin panel (e.g., Ctrl+Shift+A) - only when admin features are enabled
   useEffect(() => {
     if (!adminFeaturesEnabled) return
@@ -224,7 +244,21 @@ export function PaintingView() {
         onRedo={handleRedo}
         onClear={handleClear}
         onExport={handleExport}
+        onImageUpload={handleImageUpload}
+        selectedTool={selectedTool}
+        onToolChange={handleToolChange}
       />
+      {showImageUpload && (
+        <ImageUploadModal
+          sessionId={sessionId}
+          userId={currentUser.id}
+          onImageUploaded={handleImageUploaded}
+          onClose={() => {
+            setShowImageUpload(false)
+            setSelectedTool('brush')
+          }}
+        />
+      )}
       {/* Admin Panel - only rendered when admin features are enabled */}
       {adminFeaturesEnabled && (
         <AdminPanel
