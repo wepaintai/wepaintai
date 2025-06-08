@@ -257,6 +257,8 @@ export function PaintingView() {
             setShowImageUpload(false)
             setSelectedTool('brush')
           }}
+          canvasWidth={canvasRef.current?.getDimensions().width}
+          canvasHeight={canvasRef.current?.getDimensions().height}
         />
       )}
       {/* Admin Panel - only rendered when admin features are enabled */}

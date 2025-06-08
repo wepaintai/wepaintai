@@ -9,12 +9,21 @@ interface ImageUploadModalProps {
   userId?: Id<"users"> | null
   onImageUploaded?: (imageId: Id<"uploadedImages">) => void
   onClose: () => void
+  canvasWidth?: number
+  canvasHeight?: number
 }
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB
 const ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp']
 
-export function ImageUploadModal({ sessionId, userId, onImageUploaded, onClose }: ImageUploadModalProps) {
+export function ImageUploadModal({ 
+  sessionId, 
+  userId, 
+  onImageUploaded, 
+  onClose,
+  canvasWidth = 800,
+  canvasHeight = 600
+}: ImageUploadModalProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isUploading, setIsUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -94,6 +103,63 @@ export function ImageUploadModal({ sessionId, userId, onImageUploaded, onClose }
     })
   }
 
+  const resizeImageToFitCanvas = async (
+    file: File, 
+    originalWidth: number, 
+    originalHeight: number
+  ): Promise<{ blob: Blob; width: number; height: number }> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image()
+      const url = URL.createObjectURL(file)
+      
+      img.onload = async () => {
+        URL.revokeObjectURL(url)
+        
+        // Calculate scale to fit within canvas
+        const scaleX = canvasWidth / originalWidth
+        const scaleY = canvasHeight / originalHeight
+        const scale = Math.min(scaleX, scaleY, 1) // Never scale up, only down
+        
+        const newWidth = Math.floor(originalWidth * scale)
+        const newHeight = Math.floor(originalHeight * scale)
+        
+        // Create temporary canvas for resizing
+        const canvas = document.createElement('canvas')
+        canvas.width = newWidth
+        canvas.height = newHeight
+        
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          reject(new Error('Failed to get canvas context'))
+          return
+        }
+        
+        // Draw resized image
+        ctx.drawImage(img, 0, 0, newWidth, newHeight)
+        
+        // Convert to blob
+        canvas.toBlob(
+          (blob) => {
+            if (blob) {
+              resolve({ blob, width: newWidth, height: newHeight })
+            } else {
+              reject(new Error('Failed to create blob'))
+            }
+          },
+          file.type,
+          0.9 // Quality for JPEG/WebP
+        )
+      }
+      
+      img.onerror = () => {
+        URL.revokeObjectURL(url)
+        reject(new Error('Failed to load image for resizing'))
+      }
+      
+      img.src = url
+    })
+  }
+
   const handleUpload = async () => {
     if (!selectedFile || !sessionId) return
     
@@ -103,8 +169,25 @@ export function ImageUploadModal({ sessionId, userId, onImageUploaded, onClose }
     try {
       // Get image dimensions
       console.log('Getting image dimensions...')
-      const dimensions = await getImageDimensions(selectedFile)
-      console.log('Image dimensions:', dimensions)
+      const originalDimensions = await getImageDimensions(selectedFile)
+      console.log('Original image dimensions:', originalDimensions)
+      console.log('Canvas dimensions:', canvasWidth, 'x', canvasHeight)
+      
+      // Check if image needs resizing
+      let fileToUpload: File | Blob = selectedFile
+      let finalDimensions = originalDimensions
+      
+      if (originalDimensions.width > canvasWidth || originalDimensions.height > canvasHeight) {
+        console.log('Image exceeds canvas bounds, resizing...')
+        const resized = await resizeImageToFitCanvas(
+          selectedFile, 
+          originalDimensions.width, 
+          originalDimensions.height
+        )
+        fileToUpload = resized.blob
+        finalDimensions = { width: resized.width, height: resized.height }
+        console.log('Resized dimensions:', finalDimensions)
+      }
       
       // Generate upload URL
       console.log('Generating upload URL...')
@@ -116,7 +199,7 @@ export function ImageUploadModal({ sessionId, userId, onImageUploaded, onClose }
       const response = await fetch(uploadUrl, {
         method: 'POST',
         headers: { 'Content-Type': selectedFile.type },
-        body: selectedFile,
+        body: fileToUpload,
       })
 
       if (!response.ok) {
@@ -127,6 +210,10 @@ export function ImageUploadModal({ sessionId, userId, onImageUploaded, onClose }
       const { storageId } = await response.json()
       console.log('File uploaded, storage ID:', storageId)
 
+      // Calculate centered position
+      const x = Math.max(0, (canvasWidth - finalDimensions.width) / 2)
+      const y = Math.max(0, (canvasHeight - finalDimensions.height) / 2)
+
       // Create image record
       console.log('Creating image record in database...')
       const imageId = await uploadImage({
@@ -135,10 +222,10 @@ export function ImageUploadModal({ sessionId, userId, onImageUploaded, onClose }
         storageId,
         filename: selectedFile.name,
         mimeType: selectedFile.type,
-        width: dimensions.width,
-        height: dimensions.height,
-        x: 100, // Default position
-        y: 100,
+        width: finalDimensions.width,
+        height: finalDimensions.height,
+        x, // Centered position
+        y,
       })
       console.log('Image record created:', imageId)
 

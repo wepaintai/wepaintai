@@ -77,6 +77,7 @@ export interface CanvasRef {
   clear: () => void
   undo: () => void
   getImageData: () => string | undefined
+  getDimensions: () => { width: number; height: number }
 }
 
 export const Canvas = forwardRef<CanvasRef, CanvasProps>(
@@ -766,6 +767,13 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       getImageData: () => {
         // Return image data from the main canvas which has all committed strokes
         return mainCanvasRef.current?.toDataURL('image/png')
+      },
+      getDimensions: () => {
+        // Return current canvas dimensions
+        return {
+          width: mainCanvasRef.current?.width || 800,
+          height: mainCanvasRef.current?.height || 600
+        }
       },
     }), [mainContext, drawingContext, imageContext])
 
