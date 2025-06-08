@@ -128,7 +128,7 @@ export function PaintingView() {
     const imageData = canvasRef.current?.getImageData()
     if (imageData) {
       const link = document.createElement('a')
-      link.download = `ipaintai-${Date.now()}.png`
+      link.download = `wepaintai-${Date.now()}.png`
       link.href = imageData
       link.click()
     }

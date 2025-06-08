@@ -39,7 +39,7 @@ export const Route = createRootRoute({
         content: 'width=device-width, initial-scale=1',
       },
       {
-        title: 'iPaintAI - AI-Powered Painting App',
+        title: 'wePaintAI - AI-Powered Painting App',
       },
     ],
     links: [
