@@ -10,17 +10,17 @@ interface P2PStatusProps {
 
 export function P2PStatus({ isConnected, connectionMode, metrics, className = '' }: P2PStatusProps) {
   const getStatusColor = () => {
-    if (!isConnected) return 'bg-gray-500';
+    if (!isConnected) return 'bg-red-500'; // Red when not connected (no fallback)
     if (connectionMode === 'mesh') return 'bg-green-500';
     if (connectionMode === 'sfu') return 'bg-blue-500';
-    return 'bg-yellow-500';
+    return 'bg-gray-500';
   };
 
   const getStatusText = () => {
-    if (!isConnected) return 'Disconnected';
+    if (!isConnected) return 'P2P Required';
     if (connectionMode === 'mesh') return 'P2P Direct';
     if (connectionMode === 'sfu') return 'P2P Relay';
-    return 'Fallback Mode';
+    return 'P2P Only';
   };
 
   return (

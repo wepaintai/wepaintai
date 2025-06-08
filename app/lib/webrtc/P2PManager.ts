@@ -94,8 +94,8 @@ export class P2PManager {
       console.log('✅ P2P: Initialization complete');
     } catch (error) {
       console.error('❌ P2P: Failed to initialize:', error);
-      this.mode = 'fallback';
-      this.onModeChanged?.('fallback');
+      // No fallback - P2P is required
+      throw error;
     }
   }
 

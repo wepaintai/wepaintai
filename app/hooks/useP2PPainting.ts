@@ -152,7 +152,8 @@ export function useP2PPainting({
     // Initialize connection
     manager.init().catch(error => {
       console.error('Failed to initialize P2P:', error);
-      setConnectionMode('fallback');
+      // No fallback - P2P is required
+      setIsConnected(false);
     });
 
     // Start metrics collection

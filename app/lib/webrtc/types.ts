@@ -40,7 +40,7 @@ export interface P2PMetrics {
   connectedPeers: number;
 }
 
-export type ConnectionMode = 'mesh' | 'sfu' | 'fallback';
+export type ConnectionMode = 'mesh' | 'sfu' | 'disconnected';
 
 export interface RemoteStroke {
   peerId: string;

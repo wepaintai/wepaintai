@@ -415,25 +415,8 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
           drawingContext.strokeText(peerName, x - textWidth / 2, y - 15)
           drawingContext.fillText(peerName, x - textWidth / 2, y - 15)
         });
-      } else {
-        // Fallback to Convex cursors
-        presence.forEach((user) => {
-          if (user.userName === currentUser.name) return
-
-          drawingContext.fillStyle = user.userColor
-          drawingContext.beginPath()
-          drawingContext.arc(user.cursorX, user.cursorY, 5, 0, 2 * Math.PI)
-          drawingContext.fill()
-
-          drawingContext.fillStyle = 'white'
-          drawingContext.strokeStyle = user.userColor
-          drawingContext.lineWidth = 2
-          drawingContext.font = '12px Arial'
-          const textWidth = drawingContext.measureText(user.userName).width
-          drawingContext.strokeText(user.userName, user.cursorX - textWidth / 2, user.cursorY - 10)
-          drawingContext.fillText(user.userName, user.cursorX - textWidth / 2, user.cursorY - 10)
-        })
       }
+      // No Convex cursor fallback - P2P only
     }, [drawingContext, presence, currentUser.name, isP2PConnected, remoteCursors])
     
     // Fallback global listener to ensure drawing stops if pointer capture fails
@@ -533,22 +516,8 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
         });
       }
       
-      // Draw other users' live strokes (fallback to Convex if P2P fails)
-      if (!isP2PConnected || connectionMode === 'fallback') {
-        liveStrokes.forEach((liveStroke) => {
-          // Don't draw our own live stroke (we handle that above)
-          if (liveStroke.userName === currentUser.name) return;
-          
-          drawSingleStroke(drawingContext, {
-            points: liveStroke.points,
-            color: liveStroke.brushColor,
-            size: liveStroke.brushSize,
-            opacity: liveStroke.opacity,
-            isPending: true,
-            isLive: true, // Other users' live strokes
-          });
-        });
-      }
+      // P2P only - no Convex fallback for live strokes
+      // Remote strokes are drawn above via P2P remoteStrokes
       
       drawUserCursors();
     }, [drawingContext, currentStroke, isDrawing, color, size, opacity, liveStrokes, currentUser.name, drawUserCursors, isP2PConnected, connectionMode, remoteStrokes]);
@@ -668,10 +637,8 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       
       // Update live stroke for other users to see (throttled in the hook)
       // Only use Convex if P2P is not connected
-      // Use P2P if connected, otherwise fall back to Convex
-      if (!isP2PConnected || connectionMode === 'fallback') {
-        updateLiveStrokeForUser(newStrokePoints, color, size, opacity)
-      }
+      // Only use P2P for live strokes, no Convex fallback
+      // updateLiveStrokeForUser is now disabled
 
       // Clear drawing canvas and redraw current stroke and cursors
       drawingContext.clearRect(0, 0, drawingCanvasRef.current.width, drawingCanvasRef.current.height)
@@ -698,7 +665,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       drawingContext.clearRect(0, 0, drawingCanvasRef.current.width, drawingCanvasRef.current.height) // Clear drawing canvas
 
       const point = getPointerPosition(e) // Get final point
-      updateUserPresence(point.x, point.y, false, 'brush')
+      // P2P only - no Convex presence update
       
       const finalStrokePoints = [...currentStroke, point] // Add final point to current stroke
 
@@ -716,10 +683,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
         
         addStrokeToSession(finalStrokePoints, color, size, opacity)
         
-        // Clear live stroke for other users
-        if (!isP2PConnected || connectionMode === 'fallback') {
-          clearLiveStrokeForUser()
-        }
+        // P2P only - no need to clear Convex live strokes
         
         // Clear P2P stroke tracking
         setCurrentStrokeId(null)
@@ -750,7 +714,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       
       // Get the final point at the edge of the canvas
       const point = getPointerPosition(e)
-      updateUserPresence(point.x, point.y, false, 'brush')
+      // P2P only - no Convex presence update
       
       // Add final point to current stroke
       const finalStrokePoints = [...currentStroke, point]
