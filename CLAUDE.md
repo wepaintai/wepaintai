@@ -63,6 +63,10 @@ Note: No test or lint commands are currently configured.
 - `VITE_INTERNAL_HIDE_ADMIN_PANEL`: Hide debug panel in production
 - Frontend env vars must be prefixed with `VITE_`
 
+#### Convex Backend Environment Variables
+Set these in the Convex dashboard (Settings > Environment Variables):
+- `REPLICATE_API_TOKEN`: Your Replicate API token for AI image generation
+
 ### Development Notes
 - Use `pnpm dev` for local development with free local backend
 - The admin panel (bottom-left debug info) is hidden in production

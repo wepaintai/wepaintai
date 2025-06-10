@@ -12,7 +12,8 @@ import {
   Circle,
   Eye,
   Pipette,
-  ImagePlus
+  ImagePlus,
+  Sparkles
 } from 'lucide-react'
 
 // Types
@@ -28,6 +29,7 @@ interface ToolPanelProps {
   onClear: () => void
   onExport: () => void
   onImageUpload?: () => void
+  onAIGenerate?: () => void
   selectedTool?: string
   onToolChange?: (tool: string) => void
 }
@@ -54,6 +56,7 @@ interface SliderProps {
 const tools: Tool[] = [
   { id: 'brush', icon: Paintbrush, label: 'Brush', ariaLabel: 'Select brush tool', keyboardShortcut: 'B' },
   { id: 'upload', icon: ImagePlus, label: 'Upload', ariaLabel: 'Upload image', keyboardShortcut: 'U' },
+  { id: 'ai', icon: Sparkles, label: 'AI', ariaLabel: 'AI Generation', keyboardShortcut: 'G' },
   { id: 'rotate', icon: RotateCcw, label: 'Rotate', ariaLabel: 'Rotate canvas', keyboardShortcut: 'R' },
   { id: 'inpaint', icon: Palette, label: 'Inpaint', ariaLabel: 'Inpaint tool', keyboardShortcut: 'I' },
 ]
@@ -218,6 +221,7 @@ export function ToolPanel({
   onClear,
   onExport,
   onImageUpload,
+  onAIGenerate,
   selectedTool: externalSelectedTool,
   onToolChange,
 }: ToolPanelProps) {
@@ -327,12 +331,18 @@ export function ToolPanel({
       return
     }
     
+    // For AI tool, trigger AI generation
+    if (toolId === 'ai' && onAIGenerate) {
+      onAIGenerate()
+      return
+    }
+    
     if (onToolChange) {
       onToolChange(toolId)
     } else {
       setInternalSelectedTool(toolId)
     }
-  }, [onToolChange, onImageUpload])
+  }, [onToolChange, onImageUpload, onAIGenerate])
 
   // Keyboard shortcuts for tools
   React.useEffect(() => {

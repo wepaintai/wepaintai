@@ -46,27 +46,87 @@ export const uploadImage = mutation({
   },
 });
 
-// Get all images for a session
+// Add an AI-generated image record (stores URL directly)
+export const addAIGeneratedImage = mutation({
+  args: {
+    sessionId: v.id("paintingSessions"),
+    imageUrl: v.string(),
+    width: v.number(),
+    height: v.number(),
+  },
+  handler: async (ctx, args) => {
+    // Get the current max layer order for this session
+    const existingImages = await ctx.db
+      .query("uploadedImages")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+    
+    const maxLayerOrder = existingImages.reduce((max, img) => 
+      Math.max(max, img.layerOrder), -1
+    );
+
+    // Create the AI-generated image record
+    const imageId = await ctx.db.insert("aiGeneratedImages", {
+      sessionId: args.sessionId,
+      imageUrl: args.imageUrl,
+      width: args.width,
+      height: args.height,
+      x: 400 - args.width / 2, // Center horizontally (assuming 800px canvas)
+      y: 300 - args.height / 2, // Center vertically (assuming 600px canvas)
+      scale: 1,
+      rotation: 0,
+      opacity: 1,
+      layerOrder: maxLayerOrder + 1,
+      createdAt: Date.now(),
+    });
+
+    return imageId;
+  },
+});
+
+// Get all images for a session (both uploaded and AI-generated)
 export const getSessionImages = query({
   args: { sessionId: v.id("paintingSessions") },
   handler: async (ctx, args) => {
-    const images = await ctx.db
+    // Get uploaded images
+    const uploadedImages = await ctx.db
       .query("uploadedImages")
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
       .collect();
 
-    // Get storage URLs for each image
-    const imagesWithUrls = await Promise.all(
-      images.map(async (image) => {
+    // Get storage URLs for uploaded images
+    const uploadedWithUrls = await Promise.all(
+      uploadedImages.map(async (image) => {
         const url = await ctx.storage.getUrl(image.storageId);
         return {
           ...image,
           url,
+          type: "uploaded" as const,
         };
       })
     );
 
-    return imagesWithUrls.sort((a, b) => a.layerOrder - b.layerOrder);
+    // Get AI-generated images
+    const aiImages = await ctx.db
+      .query("aiGeneratedImages")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+
+    // AI images already have URLs
+    const aiWithType = aiImages.map(image => ({
+      ...image,
+      url: image.imageUrl,
+      type: "ai-generated" as const,
+      // Map to match uploaded image structure
+      storageId: null as any,
+      filename: "ai-generated.png",
+      mimeType: "image/png",
+      userId: undefined,
+    }));
+
+    // Combine and sort by layer order
+    const allImages = [...uploadedWithUrls, ...aiWithType];
+    return allImages.sort((a, b) => a.layerOrder - b.layerOrder);
   },
 });
 

@@ -6,11 +6,14 @@ import { SessionInfo } from './SessionInfo'
 import { P2PStatus } from './P2PStatus'
 import { P2PDebugPanel } from './P2PDebugPanel'
 import { ImageUploadModal } from './ImageUploadModal'
+import { AIGenerationModal } from './AIGenerationModal'
 import { usePaintingSession } from '../hooks/usePaintingSession'
 import { useP2PPainting } from '../hooks/useP2PPainting'
 import { shouldShowAdminFeatures } from '../utils/environment'
 import { Id } from '../../convex/_generated/dataModel'
 import { initP2PLogger } from '../lib/p2p-logger'
+import { useMutation } from 'convex/react'
+import { api } from '../../convex/_generated/api'
 
 export function PaintingView() {
   const canvasRef = useRef<CanvasRef>(null)
@@ -34,12 +37,14 @@ export function PaintingView() {
   const [historyIndex, setHistoryIndex] = useState(-1)
   const [sessionId, setSessionId] = useState<Id<"paintingSessions"> | null>(null)
   const [showImageUpload, setShowImageUpload] = useState(false)
+  const [showAIGeneration, setShowAIGeneration] = useState(false)
   const [selectedTool, setSelectedTool] = useState('brush')
   // Check if admin features should be shown based on environment
   const adminFeaturesEnabled = shouldShowAdminFeatures()
   const [isAdminPanelVisible, setIsAdminPanelVisible] = useState(adminFeaturesEnabled)
 
   const { createNewSession, presence, currentUser, isLoading, clearSession } = usePaintingSession(sessionId)
+  const addAIGeneratedImage = useMutation(api.images.addAIGeneratedImage)
   
   // P2P connection status
   const { 
@@ -151,6 +156,50 @@ export function PaintingView() {
     setSelectedTool('brush') // Switch back to brush tool
   }, [])
 
+  const handleAIGenerate = useCallback(() => {
+    setShowAIGeneration(true)
+  }, [])
+
+  const handleAIGenerationComplete = useCallback(async (imageUrl: string) => {
+    if (!sessionId) return
+    
+    // Add the generated image to the canvas
+    console.log('handleAIGenerationComplete called with URL:', imageUrl)
+    console.log('URL type:', typeof imageUrl)
+    console.log('URL length:', imageUrl.length)
+    
+    // Create an image element to get dimensions
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    
+    img.onload = async () => {
+      try {
+        // Add the AI-generated image to Convex
+        await addAIGeneratedImage({
+          sessionId,
+          imageUrl,
+          width: img.width,
+          height: img.height,
+        })
+        
+        console.log('AI-generated image added to canvas')
+        setShowAIGeneration(false)
+        setSelectedTool('brush')
+      } catch (error) {
+        console.error('Failed to add AI-generated image:', error)
+      }
+    }
+    
+    img.onerror = (e) => {
+      console.error('Failed to load generated image from URL:', imageUrl)
+      console.error('Error event:', e)
+      setShowAIGeneration(false)
+      setSelectedTool('brush')
+    }
+    
+    img.src = imageUrl
+  }, [sessionId, addAIGeneratedImage])
+
   const handleToolChange = useCallback((tool: string) => {
     setSelectedTool(tool)
     if (tool === 'upload') {
@@ -245,6 +294,7 @@ export function PaintingView() {
         onClear={handleClear}
         onExport={handleExport}
         onImageUpload={handleImageUpload}
+        onAIGenerate={handleAIGenerate}
         selectedTool={selectedTool}
         onToolChange={handleToolChange}
       />
@@ -261,6 +311,23 @@ export function PaintingView() {
           canvasHeight={canvasRef.current?.getDimensions().height}
         />
       )}
+      {showAIGeneration && sessionId && (() => {
+        const canvasData = canvasRef.current?.getImageData() || '';
+        console.log('Canvas data for AI generation:', canvasData.substring(0, 100) + '...');
+        console.log('Canvas data length:', canvasData.length);
+        return (
+          <AIGenerationModal
+            isOpen={showAIGeneration}
+            onClose={() => {
+              setShowAIGeneration(false)
+              setSelectedTool('brush')
+            }}
+            sessionId={sessionId}
+            canvasDataUrl={canvasData}
+            onGenerationComplete={handleAIGenerationComplete}
+          />
+        );
+      })()}
       {/* Admin Panel - only rendered when admin features are enabled */}
       {adminFeaturesEnabled && (
         <AdminPanel

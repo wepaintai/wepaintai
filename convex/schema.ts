@@ -99,6 +99,46 @@ const schema = defineSchema({
     opacity: v.number(),
     layerOrder: v.number(),
   }).index("by_session", ["sessionId", "layerOrder"]),
+
+  // AI generation requests and results
+  aiGenerations: defineTable({
+    sessionId: v.id("paintingSessions"),
+    userId: v.optional(v.string()), // User identity subject
+    prompt: v.optional(v.string()), // Made optional to handle existing data
+    status: v.union(v.literal("pending"), v.literal("processing"), v.literal("completed"), v.literal("failed")),
+    error: v.optional(v.string()),
+    errorType: v.optional(v.string()), // Added missing field
+    resultImageUrl: v.optional(v.string()),
+    replicateId: v.optional(v.string()),
+    createdAt: v.number(),
+    // Fields from existing data
+    canvasSnapshotId: v.optional(v.id("_storage")),
+    canvasHash: v.optional(v.string()), // Added missing field
+    generatedImageId: v.optional(v.id("_storage")), // Added missing field
+    completedAt: v.optional(v.number()),
+    processingStartedAt: v.optional(v.number()),
+    processingDuration: v.optional(v.number()), // Added missing field
+    strokeCount: v.optional(v.number()),
+    metadata: v.optional(v.object({
+      strength: v.optional(v.number()),
+      style: v.optional(v.string()),
+    })),
+  }).index("by_session", ["sessionId"]),
+
+  // AI-generated images (stores URLs directly)
+  aiGeneratedImages: defineTable({
+    sessionId: v.id("paintingSessions"),
+    imageUrl: v.string(),
+    width: v.number(),
+    height: v.number(),
+    x: v.number(),
+    y: v.number(),
+    scale: v.number(),
+    rotation: v.number(),
+    opacity: v.number(),
+    layerOrder: v.number(),
+    createdAt: v.number(),
+  }).index("by_session", ["sessionId", "layerOrder"]),
 });
 
 export default schema;

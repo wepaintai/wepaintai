@@ -13,6 +13,7 @@ import type {
   FilterApi,
   FunctionReference,
 } from "convex/server";
+import type * as aiGeneration from "../aiGeneration.js";
 import type * as crons from "../crons.js";
 import type * as images from "../images.js";
 import type * as liveStrokes from "../liveStrokes.js";
@@ -32,6 +33,7 @@ import type * as webrtc from "../webrtc.js";
  * ```
  */
 declare const fullApi: ApiFromModules<{
+  aiGeneration: typeof aiGeneration;
   crons: typeof crons;
   images: typeof images;
   liveStrokes: typeof liveStrokes;
