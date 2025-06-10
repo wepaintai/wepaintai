@@ -72,3 +72,36 @@ Set these in the Convex dashboard (Settings > Environment Variables):
 - The admin panel (bottom-left debug info) is hidden in production
 - When modifying Convex schema, the backend will auto-migrate
 - Production database access (`pnpm dev:prod-db`) should be used carefully
+
+### AI Image Generation
+- Uses Replicate's Flux Kontext Pro model for AI image editing
+- The model takes the canvas content as input along with a text prompt
+- Known issue: Replicate sometimes returns URLs as character arrays instead of strings
+  - The code handles this by detecting and joining character arrays
+- Images are stored in Convex storage for reliable serving
+- Safety tolerance is limited to 2 when using input images
+- Content moderation can sometimes flag benign content - users should try different prompts
+
+### Debugging Tips
+- For noisy Convex logs, use the `[AI-GEN]` prefix to filter AI generation logs
+- Check both development and production deployments - they use different URLs
+- Production logs: https://dashboard.convex.dev/t/travis-irby/ipaintai-core/graceful-blackbird-369/logs
+- Development logs: https://dashboard.convex.dev/d/polished-flamingo-936
+
+## AI Generation Implementation Details
+
+The AI generation feature (`/convex/aiGeneration.ts`) integrates with Replicate's Flux Kontext Pro model. Key implementation notes:
+
+1. **Replicate API Quirk**: The model sometimes returns the output URL as an array of single characters (e.g., `["h", "t", "t", "p", "s", ":", "/", "/", ...]`) instead of a string. The code handles this by:
+   - Detecting arrays with many single-character strings
+   - Joining them to form the complete URL
+   - Falling back to direct URL usage if storage fails
+
+2. **Image Storage**: Generated images are downloaded and stored in Convex storage to ensure reliable serving and avoid CORS issues.
+
+3. **Error Handling**: 
+   - Content moderation can flag benign content (error E005)
+   - Single character URLs (just "h") indicate the Replicate bug
+   - Proper error messages guide users to try different prompts
+
+4. **Canvas Integration**: The canvas content is captured as a base64 PNG and sent along with the text prompt to the AI model.
