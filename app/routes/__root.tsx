@@ -6,6 +6,7 @@ import {
 } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
 import { ConvexClientProvider } from '../lib/convex'
+import { PasswordProtection } from '../components/PasswordProtection'
 import appCss from '../styles/app.css?url'
 
 function NotFoundComponent() {
@@ -57,7 +58,9 @@ function RootComponent() {
   return (
     <ConvexClientProvider>
       <RootDocument>
-        <Outlet />
+        <PasswordProtection>
+          <Outlet />
+        </PasswordProtection>
       </RootDocument>
     </ConvexClientProvider>
   )
