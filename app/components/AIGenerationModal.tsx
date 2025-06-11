@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { X, Sparkles, Loader2 } from 'lucide-react'
+import { X, Sparkles, Loader2, Palette, Camera, Smile, Grid3X3 } from 'lucide-react'
 import { useAction } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import type { Id } from '../../convex/_generated/dataModel'
@@ -113,10 +113,51 @@ export function AIGenerationModal({
           </div>
         </div>
 
+        {/* Style presets */}
+        <div className="mb-4">
+          <label className="block text-sm font-medium mb-2">
+            Quick styles:
+          </label>
+          <div className="grid grid-cols-4 gap-2 mb-3">
+            <button
+              onClick={() => setPrompt('transform this into a watercolor painting with soft blended colors and fluid brushstrokes')}
+              className="flex flex-col items-center gap-1 p-3 bg-secondary hover:bg-secondary/80 border border-border rounded-md transition-colors"
+              disabled={isGenerating}
+            >
+              <Palette className="w-6 h-6" />
+              <span className="text-xs">Watercolor</span>
+            </button>
+            <button
+              onClick={() => setPrompt('transform this into a photorealistic image with natural lighting and detailed textures')}
+              className="flex flex-col items-center gap-1 p-3 bg-secondary hover:bg-secondary/80 border border-border rounded-md transition-colors"
+              disabled={isGenerating}
+            >
+              <Camera className="w-6 h-6" />
+              <span className="text-xs">Photo Real</span>
+            </button>
+            <button
+              onClick={() => setPrompt('transform this into a cartoon style illustration with bold colors and clean lines')}
+              className="flex flex-col items-center gap-1 p-3 bg-secondary hover:bg-secondary/80 border border-border rounded-md transition-colors"
+              disabled={isGenerating}
+            >
+              <Smile className="w-6 h-6" />
+              <span className="text-xs">Cartoon</span>
+            </button>
+            <button
+              onClick={() => setPrompt('transform this into pixel art with a retro 8-bit video game aesthetic')}
+              className="flex flex-col items-center gap-1 p-3 bg-secondary hover:bg-secondary/80 border border-border rounded-md transition-colors"
+              disabled={isGenerating}
+            >
+              <Grid3X3 className="w-6 h-6" />
+              <span className="text-xs">Pixel Art</span>
+            </button>
+          </div>
+        </div>
+
         {/* Prompt input */}
         <div className="mb-4">
           <label htmlFor="prompt" className="block text-sm font-medium mb-2">
-            Describe how you want to transform the image:
+            Or describe your own transformation:
           </label>
           <textarea
             id="prompt"
