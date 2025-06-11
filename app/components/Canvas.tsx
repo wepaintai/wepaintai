@@ -282,6 +282,17 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       if (!imageContext || !imageCanvasRef.current) return
 
       console.log('Redrawing image canvas with', images.length, 'images')
+      console.log('Images details:', images.map(img => ({
+        id: img._id,
+        type: (img as any).type,
+        url: img.url?.substring(0, 50) + '...',
+        opacity: img.opacity,
+        x: img.x,
+        y: img.y,
+        width: img.width,
+        height: img.height,
+        scale: img.scale
+      })))
       imageContext.clearRect(0, 0, imageCanvasRef.current.width, imageCanvasRef.current.height)
 
       // Draw all images in layer order
@@ -291,7 +302,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
           continue
         }
 
-        console.log('Drawing image:', image._id, 'at', image.x, image.y, 'scale:', image.scale)
+        console.log('Drawing image:', image._id, 'type:', (image as any).type, 'at', image.x, image.y, 'scale:', image.scale, 'opacity:', image.opacity)
 
         // Check if image is already loaded
         let img = loadedImagesRef.current.get(image._id)
@@ -765,8 +776,101 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
         // TODO: Implement undo for session
       },
       getImageData: () => {
-        // Return image data from the main canvas which has all committed strokes
-        return mainCanvasRef.current?.toDataURL('image/png')
+        // Combine all canvas layers (images + strokes) into a single image
+        console.log('[Canvas] getImageData called')
+        console.log('[Canvas] Main canvas exists:', !!mainCanvasRef.current)
+        console.log('[Canvas] Image canvas exists:', !!imageCanvasRef.current)
+        console.log('[Canvas] Number of images:', images.length)
+        console.log('[Canvas] Number of strokes:', strokes.length)
+        console.log('[Canvas] Pending strokes:', pendingStrokes.size)
+        
+        if (!mainCanvasRef.current) {
+          console.log('[Canvas] ERROR: Main canvas ref is null!')
+          return ''
+        }
+        
+        // Check if canvases have actual dimensions
+        console.log('[Canvas] Main canvas dimensions:', mainCanvasRef.current.width, 'x', mainCanvasRef.current.height)
+        
+        // Create a temporary canvas to combine all layers
+        const tempCanvas = document.createElement('canvas')
+        tempCanvas.width = mainCanvasRef.current.width
+        tempCanvas.height = mainCanvasRef.current.height
+        const tempContext = tempCanvas.getContext('2d')
+        
+        if (!tempContext) {
+          console.log('[Canvas] Failed to get temp context')
+          return mainCanvasRef.current.toDataURL('image/png')
+        }
+        
+        // Draw white background
+        tempContext.fillStyle = 'white'
+        tempContext.fillRect(0, 0, tempCanvas.width, tempCanvas.height)
+        
+        // Draw main canvas (strokes) first
+        tempContext.drawImage(mainCanvasRef.current, 0, 0)
+        console.log('[Canvas] Drew strokes layer')
+        
+        // Draw image layer (AI images) on top
+        if (imageCanvasRef.current) {
+          tempContext.drawImage(imageCanvasRef.current, 0, 0)
+          console.log('[Canvas] Drew image layer (AI images) on top')
+        }
+        
+        // Check if the canvas is actually empty
+        const imageData = tempContext.getImageData(0, 0, tempCanvas.width, tempCanvas.height)
+        const pixels = imageData.data
+        let hasContent = false
+        for (let i = 0; i < pixels.length; i += 4) {
+          // Check if any pixel is not white (255, 255, 255)
+          if (pixels[i] !== 255 || pixels[i + 1] !== 255 || pixels[i + 2] !== 255) {
+            hasContent = true
+            break
+          }
+        }
+        console.log('[Canvas] Canvas has content:', hasContent)
+        
+        // Get initial data URL
+        let dataUrl = tempCanvas.toDataURL('image/png')
+        console.log('[Canvas] Initial data URL length:', dataUrl.length)
+        
+        // If the data URL is too large (> 800KB to be safe with Convex limits), resize it
+        if (dataUrl.length > 800000) {
+          console.log('[Canvas] Data URL too large, resizing...')
+          
+          // Calculate scale factor to reduce size
+          const scaleFactor = Math.sqrt(800000 / dataUrl.length)
+          const newWidth = Math.floor(tempCanvas.width * scaleFactor)
+          const newHeight = Math.floor(tempCanvas.height * scaleFactor)
+          
+          console.log('[Canvas] Resizing from', tempCanvas.width, 'x', tempCanvas.height, 'to', newWidth, 'x', newHeight)
+          
+          // Create a smaller canvas
+          const smallCanvas = document.createElement('canvas')
+          smallCanvas.width = newWidth
+          smallCanvas.height = newHeight
+          const smallContext = smallCanvas.getContext('2d')
+          
+          if (smallContext) {
+            // Draw the combined canvas onto the smaller canvas
+            smallContext.drawImage(tempCanvas, 0, 0, newWidth, newHeight)
+            
+            // Try different quality settings to get under the limit
+            let quality = 0.9
+            dataUrl = smallCanvas.toDataURL('image/jpeg', quality)
+            
+            while (dataUrl.length > 800000 && quality > 0.1) {
+              quality -= 0.1
+              dataUrl = smallCanvas.toDataURL('image/jpeg', quality)
+              console.log('[Canvas] Trying quality:', quality, 'size:', dataUrl.length)
+            }
+          }
+        }
+        
+        console.log('[Canvas] Final data URL length:', dataUrl.length)
+        console.log('[Canvas] First 100 chars of dataUrl:', dataUrl.substring(0, 100))
+        
+        return dataUrl
       },
       getDimensions: () => {
         // Return current canvas dimensions
@@ -780,14 +884,14 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
     return (
       <>
         <canvas
-          ref={imageCanvasRef}
-          className="absolute inset-0 w-full h-full"
-          style={{ zIndex: 0 }} // Image canvas at the bottom
-        />
-        <canvas
           ref={mainCanvasRef}
           className="absolute inset-0 w-full h-full border border-gray-300"
-          style={{ zIndex: 1 }} // Main canvas for strokes
+          style={{ zIndex: 0 }} // Main canvas for strokes at the bottom
+        />
+        <canvas
+          ref={imageCanvasRef}
+          className="absolute inset-0 w-full h-full"
+          style={{ zIndex: 1 }} // Image canvas (AI images) in the middle
         />
         <canvas
           ref={drawingCanvasRef}

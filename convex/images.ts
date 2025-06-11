@@ -53,6 +53,8 @@ export const addAIGeneratedImage = mutation({
     imageUrl: v.string(),
     width: v.number(),
     height: v.number(),
+    canvasWidth: v.optional(v.number()),
+    canvasHeight: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     // Get the current max layer order for this session
@@ -65,15 +67,36 @@ export const addAIGeneratedImage = mutation({
       Math.max(max, img.layerOrder), -1
     );
 
-    // Create the AI-generated image record
+    // Get canvas dimensions from the painting session if not provided
+    let canvasWidth = args.canvasWidth || 800;
+    let canvasHeight = args.canvasHeight || 600;
+    
+    const session = await ctx.db.get(args.sessionId);
+    if (session) {
+      canvasWidth = args.canvasWidth || session.canvasWidth;
+      canvasHeight = args.canvasHeight || session.canvasHeight;
+    }
+
+    // Calculate scale to fit the AI image within canvas while maintaining aspect ratio
+    const scaleX = canvasWidth / args.width;
+    const scaleY = canvasHeight / args.height;
+    const scale = Math.min(scaleX, scaleY); // Use min to fit within canvas
+    
+    // Calculate position to center the image if it doesn't fill the entire canvas
+    const scaledWidth = args.width * scale;
+    const scaledHeight = args.height * scale;
+    const x = (canvasWidth - scaledWidth) / 2;
+    const y = (canvasHeight - scaledHeight) / 2;
+    
+    // Store the original AI image dimensions and calculate scale/position
     const imageId = await ctx.db.insert("aiGeneratedImages", {
       sessionId: args.sessionId,
       imageUrl: args.imageUrl,
-      width: args.width,
-      height: args.height,
-      x: 400 - args.width / 2, // Center horizontally (assuming 800px canvas)
-      y: 300 - args.height / 2, // Center vertically (assuming 600px canvas)
-      scale: 1,
+      width: args.width, // Store actual image width
+      height: args.height, // Store actual image height
+      x: x, // Center horizontally if needed
+      y: y, // Center vertically if needed
+      scale: scale, // Scale to fit canvas
       rotation: 0,
       opacity: 1,
       layerOrder: maxLayerOrder + 1,
@@ -115,6 +138,7 @@ export const getSessionImages = query({
     // AI images already have URLs
     const aiWithType = aiImages.map(image => ({
       ...image,
+      _id: image._id as any, // Keep the original AI image ID
       url: image.imageUrl,
       type: "ai-generated" as const,
       // Map to match uploaded image structure
@@ -133,7 +157,32 @@ export const getSessionImages = query({
 // Update image transform (position, scale, rotation)
 export const updateImageTransform = mutation({
   args: {
-    imageId: v.id("uploadedImages"),
+    imageId: v.union(v.id("uploadedImages"), v.id("aiGeneratedImages")),
+    x: v.optional(v.number()),
+    y: v.optional(v.number()),
+    scale: v.optional(v.number()),
+    rotation: v.optional(v.number()),
+    opacity: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const { imageId, ...updates } = args;
+    
+    // Only update provided fields
+    const updateFields: any = {};
+    if (updates.x !== undefined) updateFields.x = updates.x;
+    if (updates.y !== undefined) updateFields.y = updates.y;
+    if (updates.scale !== undefined) updateFields.scale = updates.scale;
+    if (updates.rotation !== undefined) updateFields.rotation = updates.rotation;
+    if (updates.opacity !== undefined) updateFields.opacity = updates.opacity;
+
+    await ctx.db.patch(imageId, updateFields);
+  },
+});
+
+// Update AI-generated image transform (position, scale, rotation, opacity)
+export const updateAIImageTransform = mutation({
+  args: {
+    imageId: v.id("aiGeneratedImages"),
     x: v.optional(v.number()),
     y: v.optional(v.number()),
     scale: v.optional(v.number()),

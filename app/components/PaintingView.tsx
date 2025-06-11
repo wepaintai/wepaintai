@@ -9,6 +9,7 @@ import { ImageUploadModal } from './ImageUploadModal'
 import { AIGenerationModal } from './AIGenerationModal'
 import { usePaintingSession } from '../hooks/usePaintingSession'
 import { useP2PPainting } from '../hooks/useP2PPainting'
+import { useSessionImages } from '../hooks/useSessionImages'
 import { shouldShowAdminFeatures } from '../utils/environment'
 import { Id } from '../../convex/_generated/dataModel'
 import { initP2PLogger } from '../lib/p2p-logger'
@@ -39,12 +40,20 @@ export function PaintingView() {
   const [showImageUpload, setShowImageUpload] = useState(false)
   const [showAIGeneration, setShowAIGeneration] = useState(false)
   const [selectedTool, setSelectedTool] = useState('brush')
+  const [aiImageOpacity, setAIImageOpacity] = useState(1)
+  const [showAIImage, setShowAIImage] = useState(true)
+  const [hasInitializedAIOpacity, setHasInitializedAIOpacity] = useState(false)
   // Check if admin features should be shown based on environment
   const adminFeaturesEnabled = shouldShowAdminFeatures()
   const [isAdminPanelVisible, setIsAdminPanelVisible] = useState(adminFeaturesEnabled)
 
   const { createNewSession, presence, currentUser, isLoading, clearSession } = usePaintingSession(sessionId)
   const addAIGeneratedImage = useMutation(api.images.addAIGeneratedImage)
+  const updateAIImageTransform = useMutation(api.images.updateAIImageTransform)
+  
+  // Get images to find AI-generated ones
+  const { images } = useSessionImages(sessionId)
+  const aiGeneratedImages = images.filter(img => (img as any).type === 'ai-generated')
   
   // P2P connection status
   const { 
@@ -64,6 +73,35 @@ export function PaintingView() {
       initP2PLogger();
     }
   }, []);
+
+  // Update AI image opacity when toggle changes
+  useEffect(() => {
+    // Skip the first run to avoid setting opacity to 0 on initial load
+    if (!hasInitializedAIOpacity && aiGeneratedImages.length > 0) {
+      setHasInitializedAIOpacity(true)
+      return
+    }
+    
+    const updateOpacity = async () => {
+      for (const aiImage of aiGeneratedImages) {
+        try {
+          // Check if it's an AI-generated image and use the appropriate mutation
+          if ((aiImage as any).type === 'ai-generated') {
+            await updateAIImageTransform({
+              imageId: aiImage._id as Id<"aiGeneratedImages">,
+              opacity: showAIImage ? aiImageOpacity : 0
+            })
+          }
+        } catch (error) {
+          console.error('Failed to update AI image opacity:', error, aiImage)
+        }
+      }
+    }
+    
+    if (aiGeneratedImages.length > 0 && hasInitializedAIOpacity) {
+      updateOpacity()
+    }
+  }, [showAIImage, aiImageOpacity, aiGeneratedImages, updateAIImageTransform, hasInitializedAIOpacity]);
 
   // Create a new session or join existing one on mount
   useEffect(() => {
@@ -174,12 +212,17 @@ export function PaintingView() {
     
     img.onload = async () => {
       try {
+        // Get canvas dimensions
+        const canvasDimensions = canvasRef.current?.getDimensions() || { width: 800, height: 600 }
+        
         // Add the AI-generated image to Convex
         await addAIGeneratedImage({
           sessionId,
           imageUrl,
           width: img.width,
           height: img.height,
+          canvasWidth: canvasDimensions.width,
+          canvasHeight: canvasDimensions.height,
         })
         
         console.log('AI-generated image added to canvas')
@@ -225,6 +268,31 @@ export function PaintingView() {
 
   return (
     <div className="relative w-full h-full bg-gray-50">
+      {/* AI Image Toggle - shown when there are AI images */}
+      {aiGeneratedImages.length > 0 && (
+        <div className="absolute top-2 right-40 z-50 flex items-center gap-2">
+          <button 
+            onClick={() => setShowAIImage(!showAIImage)} 
+            className="bg-purple-500 hover:bg-purple-700 text-white font-bold py-1 px-2 rounded text-xs"
+            title="Toggle AI image visibility"
+          >
+            {showAIImage ? 'Hide' : 'Show'} AI
+          </button>
+          {showAIImage && (
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.1"
+              value={aiImageOpacity}
+              onChange={(e) => setAIImageOpacity(parseFloat(e.target.value))}
+              className="w-20 h-4"
+              title={`AI image opacity: ${Math.round(aiImageOpacity * 100)}%`}
+            />
+          )}
+        </div>
+      )}
+
       {/* Button to toggle Admin Panel - only shown when admin features are enabled */}
       {adminFeaturesEnabled && (
         <button 
@@ -312,9 +380,24 @@ export function PaintingView() {
         />
       )}
       {showAIGeneration && sessionId && (() => {
+        // Capture canvas data when modal is shown
         const canvasData = canvasRef.current?.getImageData() || '';
-        console.log('Canvas data for AI generation:', canvasData.substring(0, 100) + '...');
-        console.log('Canvas data length:', canvasData.length);
+        console.log('[PaintingView] Canvas ref exists:', !!canvasRef.current);
+        console.log('[PaintingView] Canvas data for AI generation:', canvasData.substring(0, 100) + '...');
+        console.log('[PaintingView] Canvas data length:', canvasData.length);
+        console.log('[PaintingView] Canvas data is empty:', canvasData === '' || canvasData.length === 0);
+        
+        // If canvas data is empty, try to get it again after a short delay
+        if (!canvasData || canvasData.length === 0) {
+          console.error('[PaintingView] ERROR: Canvas data is empty!');
+          setTimeout(() => {
+            const retryData = canvasRef.current?.getImageData() || '';
+            console.log('[PaintingView] Retry canvas data length:', retryData.length);
+          }, 100);
+        }
+        
+        const canvasDimensions = canvasRef.current?.getDimensions() || { width: 800, height: 600 };
+        
         return (
           <AIGenerationModal
             isOpen={showAIGeneration}
@@ -324,6 +407,8 @@ export function PaintingView() {
             }}
             sessionId={sessionId}
             canvasDataUrl={canvasData}
+            canvasWidth={canvasDimensions.width}
+            canvasHeight={canvasDimensions.height}
             onGenerationComplete={handleAIGenerationComplete}
           />
         );

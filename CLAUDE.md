@@ -76,11 +76,16 @@ Set these in the Convex dashboard (Settings > Environment Variables):
 ### AI Image Generation
 - Uses Replicate's Flux Kontext Pro model for AI image editing
 - The model takes the canvas content as input along with a text prompt
+- Weight parameter controls canvas influence (0-1 in UI, mapped to 0-2 for Replicate API)
+  - UI slider: 0 = ignore canvas, 1 = maximum canvas preservation
+  - Default weight: 0.85 (translates to 1.7 in Replicate)
 - Known issue: Replicate sometimes returns URLs as character arrays instead of strings
   - The code handles this by detecting and joining character arrays
 - Images are stored in Convex storage for reliable serving
 - Safety tolerance is limited to 2 when using input images
 - Content moderation can sometimes flag benign content - users should try different prompts
+- API parameter naming: Uses `input_image` (not `image`) for the canvas URL
+- Production Convex URL: `https://graceful-blackbird-369.convex.cloud`
 
 ### Debugging Tips
 - For noisy Convex logs, use the `[AI-GEN]` prefix to filter AI generation logs
@@ -105,3 +110,9 @@ The AI generation feature (`/convex/aiGeneration.ts`) integrates with Replicate'
    - Proper error messages guide users to try different prompts
 
 4. **Canvas Integration**: The canvas content is captured as a base64 PNG and sent along with the text prompt to the AI model.
+
+5. **Weight Parameter**: The UI presents a 0-1 slider that gets multiplied by 2 before sending to Replicate:
+   - 0.0 → 0.0 (AI ignores canvas completely)
+   - 0.5 → 1.0 (balanced influence)
+   - 0.85 → 1.7 (default - strong canvas preservation)
+   - 1.0 → 2.0 (maximum canvas preservation)

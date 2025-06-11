@@ -9,6 +9,8 @@ interface AIGenerationModalProps {
   onClose: () => void
   sessionId: Id<'paintingSessions'>
   canvasDataUrl: string
+  canvasWidth?: number
+  canvasHeight?: number
   onGenerationComplete: (imageUrl: string) => void
 }
 
@@ -17,9 +19,12 @@ export function AIGenerationModal({
   onClose,
   sessionId,
   canvasDataUrl,
+  canvasWidth,
+  canvasHeight,
   onGenerationComplete
 }: AIGenerationModalProps) {
   const [prompt, setPrompt] = useState('')
+  const [weight, setWeight] = useState(0.85)
   const [isGenerating, setIsGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   
@@ -45,6 +50,9 @@ export function AIGenerationModal({
         sessionId,
         prompt: prompt.trim(),
         imageData: canvasDataUrl,
+        weight: weight,
+        canvasWidth: canvasWidth,
+        canvasHeight: canvasHeight,
       })
 
       console.log('AI Generation result:', result)
@@ -119,6 +127,28 @@ export function AIGenerationModal({
             rows={3}
             disabled={isGenerating}
           />
+        </div>
+
+        {/* Weight slider */}
+        <div className="mb-4">
+          <label htmlFor="weight" className="block text-sm font-medium mb-2">
+            Canvas influence: {weight.toFixed(2)}
+          </label>
+          <input
+            id="weight"
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            value={weight}
+            onChange={(e) => setWeight(parseFloat(e.target.value))}
+            disabled={isGenerating}
+            className="w-full"
+          />
+          <div className="flex justify-between text-xs text-muted-foreground mt-1">
+            <span>0 (ignore canvas)</span>
+            <span>1 (preserve canvas)</span>
+          </div>
         </div>
 
         {/* Error message */}
