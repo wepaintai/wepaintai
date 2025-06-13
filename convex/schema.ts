@@ -139,6 +139,23 @@ const schema = defineSchema({
     layerOrder: v.number(),
     createdAt: v.number(),
   }).index("by_session", ["sessionId", "layerOrder"]),
+
+  // Deleted strokes for undo/redo functionality
+  deletedStrokes: defineTable({
+    sessionId: v.id("paintingSessions"),
+    userId: v.optional(v.id("users")),
+    userColor: v.string(),
+    points: v.array(v.object({
+      x: v.number(),
+      y: v.number(),
+      pressure: v.optional(v.number()),
+    })),
+    brushColor: v.string(),
+    brushSize: v.number(),
+    opacity: v.number(),
+    strokeOrder: v.number(),
+    deletedAt: v.number(),
+  }).index("by_session_deleted", ["sessionId", "deletedAt"]),
 });
 
 export default schema;

@@ -773,7 +773,8 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
         // Note: Session clearing is handled by the parent component via clearSession mutation
       },
       undo: () => {
-        // TODO: Implement undo for session
+        // Undo is now handled at the session level in PaintingView
+        console.warn('Canvas.undo() is deprecated. Use session-level undo instead.')
       },
       getImageData: () => {
         // Combine all canvas layers (images + strokes) into a single image

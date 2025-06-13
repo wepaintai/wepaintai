@@ -47,7 +47,7 @@ export function PaintingView() {
   const adminFeaturesEnabled = shouldShowAdminFeatures()
   const [isAdminPanelVisible, setIsAdminPanelVisible] = useState(adminFeaturesEnabled)
 
-  const { createNewSession, presence, currentUser, isLoading, clearSession } = usePaintingSession(sessionId)
+  const { createNewSession, presence, currentUser, isLoading, clearSession, undoLastStroke, redoLastStroke } = usePaintingSession(sessionId)
   const addAIGeneratedImage = useMutation(api.images.addAIGeneratedImage)
   const updateAIImageTransform = useMutation(api.images.updateAIImageTransform)
   
@@ -140,19 +140,19 @@ export function PaintingView() {
     }
   }
 
-  const handleUndo = () => {
-    if (historyIndex > 0) {
-      setHistoryIndex(historyIndex - 1)
-      // TODO: Implement restore from history
-    } else {
-      canvasRef.current?.undo()
+  const handleUndo = async () => {
+    try {
+      await undoLastStroke()
+    } catch (error) {
+      console.error('Failed to undo stroke:', error)
     }
   }
 
-  const handleRedo = () => {
-    if (historyIndex < history.length - 1) {
-      setHistoryIndex(historyIndex + 1)
-      // TODO: Implement restore from history
+  const handleRedo = async () => {
+    try {
+      await redoLastStroke()
+    } catch (error) {
+      console.error('Failed to redo stroke:', error)
     }
   }
 

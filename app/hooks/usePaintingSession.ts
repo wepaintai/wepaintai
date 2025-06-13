@@ -90,6 +90,8 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
   const createSession = useMutation(api.paintingSessions.createSession);
   const addStroke = useMutation(api.strokes.addStroke);
   const clearSessionMutation = useMutation(api.strokes.clearSession);
+  const removeLastStroke = useMutation(api.strokes.removeLastStroke);
+  const restoreLastDeletedStroke = useMutation(api.strokes.restoreLastDeletedStroke);
   const updatePresence = useMutation(api.presence.updatePresence);
   const leaveSession = useMutation(api.presence.leaveSession);
   const updateLiveStroke = useMutation(api.liveStrokes.updateLiveStroke);
@@ -212,6 +214,20 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
       clearSessionLiveStrokes({ sessionId })
     ]);
   }, [sessionId, clearSessionMutation, clearSessionLiveStrokes]);
+
+  // Undo the last stroke
+  const undoLastStroke = useCallback(async () => {
+    if (!sessionId) return false;
+    
+    return await removeLastStroke({ sessionId });
+  }, [sessionId, removeLastStroke]);
+
+  // Redo the last undone stroke
+  const redoLastStroke = useCallback(async () => {
+    if (!sessionId) return false;
+    
+    return await restoreLastDeletedStroke({ sessionId });
+  }, [sessionId, restoreLastDeletedStroke]);
 
   // Throttle live stroke updates to reduce lag
   const liveStrokeUpdateRef = useRef<NodeJS.Timeout | null>(null);
@@ -342,6 +358,8 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     addStrokeToSession,
     updateUserPresence,
     clearSession,
+    undoLastStroke,
+    redoLastStroke,
     updateLiveStrokeForUser,
     clearLiveStrokeForUser,
     

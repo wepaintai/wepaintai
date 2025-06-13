@@ -115,6 +115,105 @@ export const getStrokesAfter = query({
 });
 
 /**
+ * Remove the last stroke from a painting session (undo)
+ */
+export const removeLastStroke = mutation({
+  args: {
+    sessionId: v.id("paintingSessions"),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    // Get the session to verify it exists
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) {
+      throw new Error("Session not found");
+    }
+
+    // Get all strokes for this session, sorted by strokeOrder
+    const strokes = await ctx.db
+      .query("strokes")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+
+    if (strokes.length === 0) {
+      return false; // No strokes to remove
+    }
+
+    // Find the stroke with the highest strokeOrder
+    const lastStroke = strokes.reduce((latest, stroke) => 
+      stroke.strokeOrder > latest.strokeOrder ? stroke : latest
+    );
+
+    // Save the stroke to deletedStrokes before deleting
+    await ctx.db.insert("deletedStrokes", {
+      sessionId: lastStroke.sessionId,
+      userId: lastStroke.userId,
+      userColor: lastStroke.userColor,
+      points: lastStroke.points,
+      brushColor: lastStroke.brushColor,
+      brushSize: lastStroke.brushSize,
+      opacity: lastStroke.opacity,
+      strokeOrder: lastStroke.strokeOrder,
+      deletedAt: Date.now(),
+    });
+
+    // Delete the last stroke
+    await ctx.db.delete(lastStroke._id);
+
+    return true;
+  },
+});
+
+/**
+ * Restore the last deleted stroke (redo)
+ */
+export const restoreLastDeletedStroke = mutation({
+  args: {
+    sessionId: v.id("paintingSessions"),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    // Get the session to verify it exists
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) {
+      throw new Error("Session not found");
+    }
+
+    // Get all deleted strokes for this session, sorted by deletedAt
+    const deletedStrokes = await ctx.db
+      .query("deletedStrokes")
+      .withIndex("by_session_deleted", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+
+    if (deletedStrokes.length === 0) {
+      return false; // No deleted strokes to restore
+    }
+
+    // Find the most recently deleted stroke
+    const lastDeletedStroke = deletedStrokes.reduce((latest, stroke) => 
+      stroke.deletedAt > latest.deletedAt ? stroke : latest
+    );
+
+    // Restore the stroke to the strokes table
+    await ctx.db.insert("strokes", {
+      sessionId: lastDeletedStroke.sessionId,
+      userId: lastDeletedStroke.userId,
+      userColor: lastDeletedStroke.userColor,
+      points: lastDeletedStroke.points,
+      brushColor: lastDeletedStroke.brushColor,
+      brushSize: lastDeletedStroke.brushSize,
+      opacity: lastDeletedStroke.opacity,
+      strokeOrder: lastDeletedStroke.strokeOrder,
+    });
+
+    // Remove from deleted strokes
+    await ctx.db.delete(lastDeletedStroke._id);
+
+    return true;
+  },
+});
+
+/**
  * Clear all strokes from a painting session
  */
 export const clearSession = mutation({
@@ -138,6 +237,17 @@ export const clearSession = mutation({
     // Delete all strokes
     for (const stroke of strokes) {
       await ctx.db.delete(stroke._id);
+    }
+
+    // Get all deleted strokes for this session
+    const deletedStrokes = await ctx.db
+      .query("deletedStrokes")
+      .withIndex("by_session_deleted", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+
+    // Delete all deleted strokes
+    for (const deletedStroke of deletedStrokes) {
+      await ctx.db.delete(deletedStroke._id);
     }
 
     // Reset the stroke counter

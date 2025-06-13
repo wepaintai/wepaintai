@@ -14,14 +14,24 @@ export function PasswordProtection({ children }: PasswordProtectionProps) {
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(true)
 
+  // Check if password protection is enabled via environment variable
+  const isPasswordProtectionEnabled = import.meta.env.VITE_PASSWORD_PROTECTION_ENABLED === 'true'
+
   useEffect(() => {
+    // If password protection is disabled, authenticate immediately
+    if (!isPasswordProtectionEnabled) {
+      setIsAuthenticated(true)
+      setIsLoading(false)
+      return
+    }
+
     // Check if user is already authenticated
     const authStatus = sessionStorage.getItem(AUTH_STORAGE_KEY)
     if (authStatus === 'authenticated') {
       setIsAuthenticated(true)
     }
     setIsLoading(false)
-  }, [])
+  }, [isPasswordProtectionEnabled])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()

@@ -61,6 +61,7 @@ Note: No test or lint commands are currently configured.
 ### Environment Variables
 - `VITE_CONVEX_URL`: Backend URL (auto-set by dev commands)
 - `VITE_INTERNAL_HIDE_ADMIN_PANEL`: Hide debug panel in production
+- `VITE_PASSWORD_PROTECTION_ENABLED`: Enable/disable password protection (set to 'true' for production, 'false' for local dev)
 - Frontend env vars must be prefixed with `VITE_`
 
 #### Convex Backend Environment Variables
