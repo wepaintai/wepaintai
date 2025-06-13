@@ -7,6 +7,7 @@ import {
 import type { ReactNode } from 'react'
 import { ConvexClientProvider } from '../lib/convex'
 import { PasswordProtection } from '../components/PasswordProtection'
+import { Analytics } from '@vercel/analytics/react'
 import appCss from '../styles/app.css?url'
 
 function NotFoundComponent() {
@@ -75,6 +76,7 @@ function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
       <body>
         {children}
         <Scripts />
+        <Analytics />
       </body>
     </html>
   )
