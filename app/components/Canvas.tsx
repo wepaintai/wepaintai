@@ -203,51 +203,40 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       return () => clearInterval(cleanup)
     }, [])
 
-    // Initialize canvases
-    useEffect(() => {
-      const mainCanvas = mainCanvasRef.current
-      const drawCv = drawingCanvasRef.current // Renamed to avoid conflict
-      const imageCanvas = imageCanvasRef.current
-      if (!mainCanvas || !drawCv || !imageCanvas) return
+    // Draw a single stroke (helper for both canvases)
+    const drawSingleStroke = (ctx: CanvasRenderingContext2D, currentLocalStroke: LocalStroke) => {
+      if (currentLocalStroke.points.length === 0) return
 
-      const mainCtx = mainCanvas.getContext('2d')
-      const drawingCtx = drawCv.getContext('2d')
-      const imageCtx = imageCanvas.getContext('2d')
-      if (!mainCtx || !drawingCtx || !imageCtx) return
-
-      const resizeCanvases = () => {
-        const container = mainCanvas.parentElement
-        if (container) {
-          const { clientWidth, clientHeight } = container
-          mainCanvas.width = clientWidth
-          mainCanvas.height = clientHeight
-          drawCv.width = clientWidth
-          drawCv.height = clientHeight
-          imageCanvas.width = clientWidth
-          imageCanvas.height = clientHeight
-          redrawImageCanvas() // Redraw images on resize
-          redrawMainCanvas() // Redraw committed strokes on resize
-        }
+      const options = {
+        size: currentLocalStroke.size,
+        smoothing,
+        thinning,
+        streamline,
+        easing,
+        start: {
+          taper: startTaper,
+          cap: startCap,
+        },
+        end: {
+          taper: endTaper,
+          cap: endCap,
+        },
+        last: !currentLocalStroke.isLive, // Use `last: false` only for live strokes being drawn
       }
+      const outlinePoints = getStroke(currentLocalStroke.points, options)
 
-      resizeCanvases()
-      setMainContext(mainCtx)
-      setDrawingContext(drawingCtx)
-      setImageContext(imageCtx)
+      const pathData = getSvgPathFromStroke(outlinePoints)
 
-      window.addEventListener('resize', resizeCanvases)
-      return () => window.removeEventListener('resize', resizeCanvases)
-    }, [])
+      if (pathData === '') return // If pathData is empty, nothing to draw
 
-    // Redraw main canvas when committed strokes change
-    useEffect(() => {
-      redrawMainCanvas()
-    }, [strokes]) // Only redraw main canvas when confirmed strokes change
+      ctx.fillStyle = currentLocalStroke.color
+      ctx.globalAlpha = currentLocalStroke.opacity !== undefined ? currentLocalStroke.opacity : opacity
 
-    // Redraw image canvas when images change
-    useEffect(() => {
-      redrawImageCanvas()
-    }, [images])
+      const myPath = new Path2D(pathData)
+      ctx.fill(myPath)
+      
+      ctx.globalAlpha = 1 // Reset globalAlpha
+    }
 
     // Redraw all committed strokes on the main canvas
     const redrawMainCanvas = useCallback(() => {
@@ -275,7 +264,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
         drawSingleStroke(mainContext, pendingS)
       })
 
-    }, [mainContext, strokes, pendingStrokes, smoothing, thinning, streamline, easing, startTaper, startCap, endTaper, endCap, opacity])
+    }, [mainContext, strokes, pendingStrokes, smoothing, thinning, streamline, easing, startTaper, startCap, endTaper, endCap, opacity, drawSingleStroke])
 
     // Draw images on the image canvas
     const redrawImageCanvas = useCallback(async () => {
@@ -356,40 +345,70 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       }
     }, [imageContext, images])
 
-    // Draw a single stroke (helper for both canvases)
-    const drawSingleStroke = (ctx: CanvasRenderingContext2D, currentLocalStroke: LocalStroke) => {
-      if (currentLocalStroke.points.length === 0) return
+    // Initialize canvases
+    useEffect(() => {
+      const mainCanvas = mainCanvasRef.current
+      const drawCv = drawingCanvasRef.current // Renamed to avoid conflict
+      const imageCanvas = imageCanvasRef.current
+      if (!mainCanvas || !drawCv || !imageCanvas) return
 
-      const options = {
-        size: currentLocalStroke.size,
-        smoothing,
-        thinning,
-        streamline,
-        easing,
-        start: {
-          taper: startTaper,
-          cap: startCap,
-        },
-        end: {
-          taper: endTaper,
-          cap: endCap,
-        },
-        last: !currentLocalStroke.isLive, // Use `last: false` only for live strokes being drawn
+      const mainCtx = mainCanvas.getContext('2d')
+      const drawingCtx = drawCv.getContext('2d')
+      const imageCtx = imageCanvas.getContext('2d')
+      if (!mainCtx || !drawingCtx || !imageCtx) return
+
+      // Initial setup
+      const container = mainCanvas.parentElement
+      if (container) {
+        const { clientWidth, clientHeight } = container
+        mainCanvas.width = clientWidth
+        mainCanvas.height = clientHeight
+        drawCv.width = clientWidth
+        drawCv.height = clientHeight
+        imageCanvas.width = clientWidth
+        imageCanvas.height = clientHeight
       }
-      const outlinePoints = getStroke(currentLocalStroke.points, options)
 
-      const pathData = getSvgPathFromStroke(outlinePoints)
+      setMainContext(mainCtx)
+      setDrawingContext(drawingCtx)
+      setImageContext(imageCtx)
+    }, [])
 
-      if (pathData === '') return // If pathData is empty, nothing to draw
+    // Handle window resize separately to ensure it uses current redraw functions
+    useEffect(() => {
+      const resizeCanvases = () => {
+        const mainCanvas = mainCanvasRef.current
+        const drawCv = drawingCanvasRef.current
+        const imageCanvas = imageCanvasRef.current
+        if (!mainCanvas || !drawCv || !imageCanvas) return
 
-      ctx.fillStyle = currentLocalStroke.color
-      ctx.globalAlpha = currentLocalStroke.opacity !== undefined ? currentLocalStroke.opacity : opacity
+        const container = mainCanvas.parentElement
+        if (container) {
+          const { clientWidth, clientHeight } = container
+          mainCanvas.width = clientWidth
+          mainCanvas.height = clientHeight
+          drawCv.width = clientWidth
+          drawCv.height = clientHeight
+          imageCanvas.width = clientWidth
+          imageCanvas.height = clientHeight
+          redrawImageCanvas() // Redraw images on resize
+          redrawMainCanvas() // Redraw committed strokes on resize
+        }
+      }
 
-      const myPath = new Path2D(pathData)
-      ctx.fill(myPath)
-      
-      ctx.globalAlpha = 1 // Reset globalAlpha
-    }
+      window.addEventListener('resize', resizeCanvases)
+      return () => window.removeEventListener('resize', resizeCanvases)
+    }, [redrawMainCanvas, redrawImageCanvas])
+
+    // Redraw main canvas when committed strokes change
+    useEffect(() => {
+      redrawMainCanvas()
+    }, [strokes, redrawMainCanvas]) // Only redraw main canvas when confirmed strokes change
+
+    // Redraw image canvas when images change
+    useEffect(() => {
+      redrawImageCanvas()
+    }, [images, redrawImageCanvas])
 
     // Draw user cursors on the drawing canvas
     const drawUserCursors = useCallback(() => {

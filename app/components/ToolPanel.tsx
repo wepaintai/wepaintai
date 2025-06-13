@@ -505,7 +505,7 @@ export function ToolPanel({
                 <ActionButton icon={X} label="Clear Canvas" onClick={onClear} />
               </div>
               <div>
-                <ActionButton icon={Save} label="Export" onClick={onExport} isPrimary />
+                <ActionButton icon={Save} label="Export" onClick={onExport} />
               </div>
             </div>
           </div>
