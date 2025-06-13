@@ -1,7 +1,6 @@
 import React from 'react'
 import {
   Paintbrush,
-  RotateCcw,
   FolderOpen,
   Save,
   Palette,
@@ -13,7 +12,8 @@ import {
   Eye,
   Pipette,
   ImagePlus,
-  Sparkles
+  Sparkles,
+  MoreVertical
 } from 'lucide-react'
 
 // Types
@@ -57,7 +57,6 @@ const tools: Tool[] = [
   { id: 'brush', icon: Paintbrush, label: 'Brush', ariaLabel: 'Select brush tool', keyboardShortcut: 'B' },
   { id: 'upload', icon: ImagePlus, label: 'Upload', ariaLabel: 'Upload image', keyboardShortcut: 'U' },
   { id: 'ai', icon: Sparkles, label: 'AI', ariaLabel: 'AI Generation', keyboardShortcut: 'G' },
-  { id: 'rotate', icon: RotateCcw, label: 'Rotate', ariaLabel: 'Rotate canvas', keyboardShortcut: 'R' },
   { id: 'inpaint', icon: Palette, label: 'Inpaint', ariaLabel: 'Inpaint tool', keyboardShortcut: 'I' },
 ]
 
@@ -228,12 +227,15 @@ export function ToolPanel({
   const [internalSelectedTool, setInternalSelectedTool] = React.useState('brush')
   const selectedTool = externalSelectedTool || internalSelectedTool
   const [isCollapsed, setIsCollapsed] = React.useState(false)
+  const [showMenu, setShowMenu] = React.useState(false)
+  const [menuPosition, setMenuPosition] = React.useState({ x: 0, y: 0 })
   
   // Drag functionality state
   const [isDragging, setIsDragging] = React.useState(false)
   const [position, setPosition] = React.useState({ x: 24, y: 200 })
   const [dragOffset, setDragOffset] = React.useState({ x: 0, y: 0 })
   const panelRef = React.useRef<HTMLDivElement>(null)
+  const menuRef = React.useRef<HTMLDivElement>(null)
 
   // Initialize position based on window size after component mounts
   React.useEffect(() => {
@@ -363,6 +365,28 @@ export function ToolPanel({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [handleToolSelect])
 
+  // Handle menu toggle
+  const handleMenuToggle = React.useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    const rect = e.currentTarget.getBoundingClientRect()
+    setMenuPosition({ x: rect.right - rect.left, y: rect.bottom - rect.top })
+    setShowMenu(!showMenu)
+  }, [showMenu])
+
+  // Close menu on outside click
+  React.useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowMenu(false)
+      }
+    }
+
+    if (showMenu) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showMenu])
+
   return (
     <div
       ref={panelRef}
@@ -389,8 +413,17 @@ export function ToolPanel({
           aria-label="Drag to move panel"
           role="button"
         >
-          <div className="flex items-center">
+          <div className="flex items-center gap-1">
             <span className="text-xs font-medium text-white/80">wepaint.ai</span>
+            <button
+              onClick={handleMenuToggle}
+              onMouseDown={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
+              className="p-0.5 hover:bg-white/20 rounded transition-colors"
+              aria-label="More options"
+            >
+              <MoreVertical className="w-3.5 h-3.5 text-white/60" />
+            </button>
           </div>
           <button
             onClick={(e) => {
@@ -478,6 +511,57 @@ export function ToolPanel({
           </div>
         )}
       </div>
+      
+      {/* Context Menu */}
+      {showMenu && (
+        <div
+          ref={menuRef}
+          className="absolute bg-black/90 backdrop-blur-md border border-white/20 rounded-md shadow-xl py-1 min-w-[150px]"
+          style={{
+            left: `${menuPosition.x}px`,
+            top: `${menuPosition.y}px`
+          }}
+        >
+          <button
+            className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors"
+            onClick={() => {
+              setShowMenu(false)
+              // Add about/help functionality here
+              alert('wepaint.ai - Collaborative painting app')
+            }}
+          >
+            About
+          </button>
+          <button
+            className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors"
+            onClick={() => {
+              setShowMenu(false)
+              window.open('https://github.com/your-repo', '_blank')
+            }}
+          >
+            GitHub
+          </button>
+          <div className="border-t border-white/20 my-1" />
+          <button
+            className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors"
+            onClick={() => {
+              setShowMenu(false)
+              // Add settings functionality here
+            }}
+          >
+            Settings
+          </button>
+          <button
+            className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors"
+            onClick={() => {
+              setShowMenu(false)
+              // Add keyboard shortcuts modal here
+            }}
+          >
+            Keyboard Shortcuts
+          </button>
+        </div>
+      )}
     </div>
   )
 }
