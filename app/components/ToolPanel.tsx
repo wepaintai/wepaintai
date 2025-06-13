@@ -68,10 +68,10 @@ const Slider = React.memo(({ value, min, max, onChange, icon: Icon, label, color
   
   return (
     <div className="flex items-center gap-2 mb-3" role="group" aria-labelledby={`${label.toLowerCase()}-slider-label`}>
-      <Icon className="w-4 h-4 text-muted-foreground flex-shrink-0" aria-hidden="true" />
+      <Icon className="w-4 h-4 text-white/60 flex-shrink-0" aria-hidden="true" />
       <div className="relative flex-1 h-6 flex items-center">
         <div 
-          className="h-1 w-full bg-secondary rounded-full overflow-hidden"
+          className="h-1 w-full bg-white/20 rounded-full overflow-hidden"
           role="presentation"
         >
           <div
@@ -120,10 +120,10 @@ const ToolButton = React.memo(({
   <button
     key={tool.id}
     onClick={onClick}
-    className={`w-8 h-8 flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-primary ${
+    className={`w-8 h-8 flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-blue-400 ${
       isSelected 
-        ? 'bg-gray-200 text-gray-900' 
-        : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
+        ? 'bg-blue-500 text-white' 
+        : 'bg-white/10 text-white hover:bg-white/20'
     }`}
     title={`${tool.label}${tool.keyboardShortcut ? ` (${tool.keyboardShortcut})` : ''}`}
     aria-label={tool.ariaLabel}
@@ -149,10 +149,10 @@ const ActionButton = React.memo(({
 }) => (
   <button
     onClick={onClick}
-    className={`w-8 h-8 flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-primary ${
+    className={`w-8 h-8 flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-blue-400 ${
       isPrimary 
-        ? 'bg-primary text-primary-foreground hover:bg-primary/90' 
-        : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
+        ? 'bg-blue-500 text-white hover:bg-blue-600' 
+        : 'bg-white/10 text-white hover:bg-white/20'
     }`}
     title={label}
     aria-label={label}
@@ -183,10 +183,10 @@ const ColorMixer = React.memo(({
   
   return (
     <div className="flex items-center gap-2 mb-3" role="group" aria-labelledby="color-mixer-label">
-      <Pipette className="w-4 h-4 text-muted-foreground flex-shrink-0" aria-hidden="true" />
+      <Pipette className="w-4 h-4 text-white/60 flex-shrink-0" aria-hidden="true" />
       <button
         onClick={handleColorClick}
-        className="flex-1 h-6 border border-border rounded transition-all duration-100 hover:border-primary focus:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+        className="flex-1 h-6 border border-white/20 rounded transition-all duration-100 hover:border-blue-400 focus:outline-none focus-visible:ring-1 focus-visible:ring-blue-400"
         style={{ backgroundColor: color }}
         title="Click to change color"
         aria-label="Current brush color, click to change"
@@ -376,12 +376,12 @@ export function ToolPanel({
       aria-label="wepaint.ai tools"
     >
       <div 
-        className="bg-background/95 backdrop-blur-sm border border-border overflow-hidden"
+        className="bg-black/90 backdrop-blur-md border border-white/20 overflow-hidden"
         style={{ width: '180px' }}
       >
         {/* Header - Draggable */}
         <div
-          className={`flex items-center justify-between px-2 py-1.5 border-b border-border ${
+          className={`flex items-center justify-between px-2 py-1.5 border-b border-white/20 ${
             isDragging ? 'cursor-grabbing' : 'cursor-grab'
           }`}
           onMouseDown={handleDragStart}
@@ -390,7 +390,7 @@ export function ToolPanel({
           role="button"
         >
           <div className="flex items-center">
-            <span className="text-xs font-medium text-foreground/80">wepaint.ai</span>
+            <span className="text-xs font-medium text-white/80">wepaint.ai</span>
           </div>
           <button
             onClick={(e) => {
@@ -399,12 +399,12 @@ export function ToolPanel({
             }}
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
-            className="p-1 hover:bg-secondary/80 transition-colors"
+            className="p-1 hover:bg-white/20 transition-colors"
             aria-expanded={!isCollapsed}
             aria-label={isCollapsed ? "Expand tools panel" : "Collapse tools panel"}
           >
             <ChevronUp 
-              className={`w-3.5 h-3.5 text-muted-foreground transition-transform ${
+              className={`w-3.5 h-3.5 text-white/60 transition-transform ${
                 isCollapsed ? '' : 'rotate-180'
               }`} 
             />
@@ -414,11 +414,11 @@ export function ToolPanel({
         {!isCollapsed && (
           <div className="p-2">
             {/* Tool Selection */}
-            <div className="grid grid-cols-4 border-b border-border mb-3">
+            <div className="grid grid-cols-4 border-b border-white/20 mb-3">
               {tools.map((tool, index) => (
                 <div 
                   key={tool.id} 
-                  className={`${index < tools.length - 1 ? 'border-r border-border' : ''}`}
+                  className={`${index < tools.length - 1 ? 'border-r border-white/20' : ''}`}
                 >
                   <ToolButton
                     tool={tool}
@@ -430,7 +430,7 @@ export function ToolPanel({
             </div>
 
             {/* Color Mixer */}
-            <div className="border-b border-border mb-3 pb-3">
+            <div className="border-b border-white/20 mb-3 pb-3">
               <ColorMixer
                 color={color}
                 onColorChange={onColorChange}
@@ -438,7 +438,7 @@ export function ToolPanel({
             </div>
 
             {/* Sliders */}
-            <div className="border-b border-border mb-3 pb-3">
+            <div className="border-b border-white/20 mb-3 pb-3">
               <Slider
                 value={size}
                 min={1}
@@ -462,13 +462,13 @@ export function ToolPanel({
 
             {/* Action Buttons */}
             <div className="grid grid-cols-4">
-              <div className="border-r border-border">
+              <div className="border-r border-white/20">
                 <ActionButton icon={Undo2} label="Undo" onClick={onUndo} />
               </div>
-              <div className="border-r border-border">
+              <div className="border-r border-white/20">
                 <ActionButton icon={Redo2} label="Redo" onClick={onRedo} />
               </div>
-              <div className="border-r border-border">
+              <div className="border-r border-white/20">
                 <ActionButton icon={X} label="Clear Canvas" onClick={onClear} />
               </div>
               <div>

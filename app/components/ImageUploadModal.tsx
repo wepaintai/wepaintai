@@ -252,13 +252,13 @@ export function ImageUploadModal({
   }, [onClose, isUploading])
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-background p-6 rounded-lg shadow-lg max-w-md w-full mx-4">
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+      <div className="bg-black/90 backdrop-blur-md border border-white/20 p-6 rounded-lg shadow-lg max-w-md w-full mx-4">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold">Upload Image</h3>
+          <h3 className="text-lg font-semibold text-white">Upload Image</h3>
           <button
             onClick={onClose}
-            className="p-1 hover:bg-accent rounded-sm transition-colors"
+            className="p-1 hover:bg-white/20 rounded-sm transition-colors text-white/70 hover:text-white"
             aria-label="Close"
           >
             <X className="w-4 h-4" />
@@ -283,16 +283,16 @@ export function ImageUploadModal({
               w-full p-8 border-2 border-dashed rounded-lg cursor-pointer
               transition-colors duration-200
               ${isDragging 
-                ? 'border-primary bg-primary/5' 
-                : 'border-border hover:border-primary/50'
+                ? 'border-blue-400 bg-blue-400/10' 
+                : 'border-white/20 hover:border-blue-400/50'
               }
             `}
           >
-            <Upload className="w-8 h-8 mx-auto mb-3 text-muted-foreground" />
-            <p className="text-sm text-center text-muted-foreground">
+            <Upload className="w-8 h-8 mx-auto mb-3 text-white/60" />
+            <p className="text-sm text-center text-white/70">
               Click to select or drag and drop
             </p>
-            <p className="text-xs text-center text-muted-foreground mt-2">
+            <p className="text-xs text-center text-white/60 mt-2">
               PNG, JPG, GIF, WebP • Max 5MB
             </p>
           </div>
@@ -303,13 +303,13 @@ export function ImageUploadModal({
                 <img 
                   src={preview} 
                   alt="Preview" 
-                  className="w-full h-48 object-contain rounded bg-accent"
+                  className="w-full h-48 object-contain rounded bg-white/10"
                 />
               </div>
             )}
             <div className="space-y-1">
-              <p className="text-sm font-medium truncate">{selectedFile.name}</p>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-sm font-medium truncate text-white">{selectedFile.name}</p>
+              <p className="text-xs text-white/60">
                 {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
               </p>
             </div>
@@ -318,7 +318,7 @@ export function ImageUploadModal({
               <button
                 onClick={handleUpload}
                 disabled={isUploading}
-                className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                className="flex-1 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50 transition-colors"
               >
                 {isUploading ? 'Uploading...' : 'Upload'}
               </button>
@@ -329,7 +329,7 @@ export function ImageUploadModal({
                   setError(null)
                 }}
                 disabled={isUploading}
-                className="px-4 py-2 border border-border rounded hover:bg-accent transition-colors"
+                className="px-4 py-2 border border-white/20 text-white rounded hover:bg-white/10 transition-colors"
               >
                 Change
               </button>
@@ -338,8 +338,8 @@ export function ImageUploadModal({
         )}
         
         {error && (
-          <div className="mt-4 p-3 bg-destructive/10 border border-destructive/20 rounded">
-            <p className="text-sm text-destructive">{error}</p>
+          <div className="mt-4 p-3 bg-red-500/20 border border-red-500/40 rounded">
+            <p className="text-sm text-red-400">{error}</p>
           </div>
         )}
       </div>

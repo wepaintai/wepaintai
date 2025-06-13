@@ -85,11 +85,11 @@ export function AIGenerationModal({
       />
       
       {/* Modal */}
-      <div className="relative bg-background border border-border rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
+      <div className="relative bg-black/90 backdrop-blur-md border border-white/20 rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
         {/* Close button */}
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 text-muted-foreground hover:text-foreground transition-colors"
+          className="absolute top-4 right-4 text-white/70 hover:text-white transition-colors"
           disabled={isGenerating}
         >
           <X className="w-5 h-5" />
@@ -97,14 +97,14 @@ export function AIGenerationModal({
 
         {/* Header */}
         <div className="flex items-center gap-2 mb-4">
-          <Sparkles className="w-5 h-5 text-primary" />
-          <h2 className="text-lg font-semibold">AI Generation</h2>
+          <Sparkles className="w-5 h-5 text-blue-400" />
+          <h2 className="text-lg font-semibold text-white">AI Generation</h2>
         </div>
 
         {/* Preview */}
         <div className="mb-4">
-          <p className="text-sm text-muted-foreground mb-2">Current canvas:</p>
-          <div className="relative w-full h-32 bg-secondary rounded border border-border overflow-hidden">
+          <p className="text-sm text-white/70 mb-2">Current canvas:</p>
+          <div className="relative w-full h-32 bg-white/10 rounded border border-white/20 overflow-hidden">
             <img 
               src={canvasDataUrl} 
               alt="Canvas preview" 
@@ -115,13 +115,13 @@ export function AIGenerationModal({
 
         {/* Style presets */}
         <div className="mb-4">
-          <label className="block text-sm font-medium mb-2">
+          <label className="block text-sm font-medium text-white mb-2">
             Quick styles:
           </label>
           <div className="grid grid-cols-4 gap-2 mb-3">
             <button
               onClick={() => setPrompt('transform this into a watercolor painting with soft blended colors and fluid brushstrokes')}
-              className="flex flex-col items-center gap-1 p-3 bg-secondary hover:bg-secondary/80 border border-border rounded-md transition-colors"
+              className="flex flex-col items-center gap-1 p-3 bg-white/10 hover:bg-white/20 border border-white/20 rounded-md transition-colors text-white"
               disabled={isGenerating}
             >
               <Palette className="w-6 h-6" />
@@ -129,7 +129,7 @@ export function AIGenerationModal({
             </button>
             <button
               onClick={() => setPrompt('transform this into a photorealistic image with natural lighting and detailed textures')}
-              className="flex flex-col items-center gap-1 p-3 bg-secondary hover:bg-secondary/80 border border-border rounded-md transition-colors"
+              className="flex flex-col items-center gap-1 p-3 bg-white/10 hover:bg-white/20 border border-white/20 rounded-md transition-colors text-white"
               disabled={isGenerating}
             >
               <Camera className="w-6 h-6" />
@@ -137,7 +137,7 @@ export function AIGenerationModal({
             </button>
             <button
               onClick={() => setPrompt('transform this into a cartoon style illustration with bold colors and clean lines')}
-              className="flex flex-col items-center gap-1 p-3 bg-secondary hover:bg-secondary/80 border border-border rounded-md transition-colors"
+              className="flex flex-col items-center gap-1 p-3 bg-white/10 hover:bg-white/20 border border-white/20 rounded-md transition-colors text-white"
               disabled={isGenerating}
             >
               <Smile className="w-6 h-6" />
@@ -145,7 +145,7 @@ export function AIGenerationModal({
             </button>
             <button
               onClick={() => setPrompt('transform this into pixel art with a retro 8-bit video game aesthetic')}
-              className="flex flex-col items-center gap-1 p-3 bg-secondary hover:bg-secondary/80 border border-border rounded-md transition-colors"
+              className="flex flex-col items-center gap-1 p-3 bg-white/10 hover:bg-white/20 border border-white/20 rounded-md transition-colors text-white"
               disabled={isGenerating}
             >
               <Grid3X3 className="w-6 h-6" />
@@ -156,7 +156,7 @@ export function AIGenerationModal({
 
         {/* Prompt input */}
         <div className="mb-4">
-          <label htmlFor="prompt" className="block text-sm font-medium mb-2">
+          <label htmlFor="prompt" className="block text-sm font-medium text-white mb-2">
             Or describe your own transformation:
           </label>
           <textarea
@@ -164,7 +164,7 @@ export function AIGenerationModal({
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             placeholder="e.g., 'make it look like a watercolor painting' or 'add a sunset background'"
-            className="w-full px-3 py-2 bg-secondary border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary resize-none"
+            className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none text-white placeholder-white/50"
             rows={3}
             disabled={isGenerating}
           />
@@ -172,7 +172,7 @@ export function AIGenerationModal({
 
         {/* Weight slider */}
         <div className="mb-4">
-          <label htmlFor="weight" className="block text-sm font-medium mb-2">
+          <label htmlFor="weight" className="block text-sm font-medium text-white mb-2">
             Canvas influence: {weight.toFixed(2)}
           </label>
           <input
@@ -184,9 +184,9 @@ export function AIGenerationModal({
             value={weight}
             onChange={(e) => setWeight(parseFloat(e.target.value))}
             disabled={isGenerating}
-            className="w-full"
+            className="ai-modal-slider"
           />
-          <div className="flex justify-between text-xs text-muted-foreground mt-1">
+          <div className="flex justify-between text-xs text-white/60 mt-1">
             <span>0 (ignore canvas)</span>
             <span>1 (preserve canvas)</span>
           </div>
@@ -194,8 +194,8 @@ export function AIGenerationModal({
 
         {/* Error message */}
         {error && (
-          <div className="mb-4 p-3 bg-destructive/10 border border-destructive/20 rounded-md">
-            <p className="text-sm text-destructive">{error}</p>
+          <div className="mb-4 p-3 bg-red-500/20 border border-red-500/40 rounded-md">
+            <p className="text-sm text-red-400">{error}</p>
           </div>
         )}
 
@@ -204,14 +204,14 @@ export function AIGenerationModal({
           <button
             onClick={onClose}
             disabled={isGenerating}
-            className="px-4 py-2 text-sm font-medium text-foreground bg-secondary hover:bg-secondary/80 rounded-md transition-colors disabled:opacity-50"
+            className="px-4 py-2 text-sm font-medium text-white bg-white/10 hover:bg-white/20 rounded-md transition-colors disabled:opacity-50"
           >
             Cancel
           </button>
           <button
             onClick={handleGenerate}
             disabled={isGenerating || !prompt.trim()}
-            className="px-4 py-2 text-sm font-medium text-primary-foreground bg-primary hover:bg-primary/90 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            className="px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           >
             {isGenerating ? (
               <>

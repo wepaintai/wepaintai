@@ -273,7 +273,7 @@ export function PaintingView() {
         <div className="absolute top-2 right-40 z-50 flex items-center gap-2">
           <button 
             onClick={() => setShowAIImage(!showAIImage)} 
-            className="bg-purple-500 hover:bg-purple-700 text-white font-bold py-1 px-2 rounded text-xs"
+            className="bg-black/90 backdrop-blur-md border border-white/20 hover:bg-black/80 text-white font-bold py-1 px-2 rounded text-xs"
             title="Toggle AI image visibility"
           >
             {showAIImage ? 'Hide' : 'Show'} AI
@@ -286,7 +286,7 @@ export function PaintingView() {
               step="0.1"
               value={aiImageOpacity}
               onChange={(e) => setAIImageOpacity(parseFloat(e.target.value))}
-              className="w-20 h-4"
+              className="ai-opacity-slider"
               title={`AI image opacity: ${Math.round(aiImageOpacity * 100)}%`}
             />
           )}
@@ -297,7 +297,7 @@ export function PaintingView() {
       {adminFeaturesEnabled && (
         <button 
           onClick={toggleAdminPanel} 
-          className="absolute top-2 right-28 z-50 bg-blue-500 hover:bg-blue-700 text-white font-bold py-1 px-2 rounded text-xs"
+          className="absolute top-2 right-28 z-50 bg-black/90 backdrop-blur-md border border-white/20 hover:bg-black/80 text-white font-bold py-1 px-2 rounded text-xs"
           title="Toggle Admin Panel (Ctrl+Shift+A)"
         >
           {isAdminPanelVisible ? 'Hide' : 'Show'} Admin
@@ -330,19 +330,23 @@ export function PaintingView() {
           </div>
         </div>
       )}
-      <SessionInfo
-        sessionId={sessionId}
-        userCount={presence.length + 1}
-        currentUser={currentUser}
-      />
-      <P2PStatus
-        isConnected={isP2PConnected}
-        connectionMode={connectionMode}
-        metrics={p2pMetrics}
-        className="absolute bottom-2 left-2 z-10"
-      />
-      {/* Debug panel - only in development */}
-      {process.env.NODE_ENV === 'development' && (
+      {adminFeaturesEnabled && (
+        <SessionInfo
+          sessionId={sessionId}
+          userCount={presence.length + 1}
+          currentUser={currentUser}
+        />
+      )}
+      {adminFeaturesEnabled && (
+        <P2PStatus
+          isConnected={isP2PConnected}
+          connectionMode={connectionMode}
+          metrics={p2pMetrics}
+          className="absolute bottom-2 left-2 z-10"
+        />
+      )}
+      {/* Debug panel - only in development and when admin features are enabled */}
+      {process.env.NODE_ENV === 'development' && adminFeaturesEnabled && (
         <P2PDebugPanel
           isConnected={isP2PConnected}
           connectionMode={connectionMode}
