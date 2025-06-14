@@ -114,3 +114,24 @@ export const removeViewerState = mutation({
     return null;
   },
 });
+
+/**
+ * Clear all viewer states for a session (useful when clearing the canvas)
+ */
+export const clearSessionViewerStates = mutation({
+  args: {
+    sessionId: v.id("paintingSessions"),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const viewerStates = await ctx.db
+      .query("viewerStates")
+      .withIndex("by_session_viewer", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+
+    for (const viewerState of viewerStates) {
+      await ctx.db.delete(viewerState._id);
+    }
+    return null;
+  },
+});

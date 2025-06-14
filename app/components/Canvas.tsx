@@ -789,6 +789,11 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
           imageContext.clearRect(0, 0, imageCanvasRef.current.width, imageCanvasRef.current.height)
         }
         setPendingStrokes(new Map())
+        setCurrentStroke([])
+        setIsDrawing(false)
+        strokeEndedRef.current = false
+        // Clear loaded images cache to force reload
+        loadedImagesRef.current.clear()
         // Note: Session clearing is handled by the parent component via clearSession mutation
       },
       undo: () => {

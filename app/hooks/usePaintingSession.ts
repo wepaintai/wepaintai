@@ -213,7 +213,19 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
       clearSessionMutation({ sessionId }),
       clearSessionLiveStrokes({ sessionId })
     ]);
-  }, [sessionId, clearSessionMutation, clearSessionLiveStrokes]);
+    
+    // Reset local acknowledgment state
+    localLastAckedStrokeOrderRef.current = 0;
+    
+    // Update viewer state to reflect cleared session
+    if (currentUser.id) {
+      await upsertViewerState({
+        sessionId,
+        viewerId: currentUser.id,
+        lastAckedStrokeOrder: 0,
+      });
+    }
+  }, [sessionId, clearSessionMutation, clearSessionLiveStrokes, currentUser.id, upsertViewerState]);
 
   // Undo the last stroke
   const undoLastStroke = useCallback(async () => {
