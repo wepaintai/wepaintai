@@ -170,12 +170,6 @@ const ColorMixer = React.memo(({
   color: string, 
   onColorChange: (color: string) => void 
 }) => {
-  const colorInputRef = React.useRef<HTMLInputElement>(null)
-  
-  const handleColorClick = () => {
-    colorInputRef.current?.click()
-  }
-  
   const handleColorChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onColorChange(e.target.value)
   }
@@ -183,23 +177,22 @@ const ColorMixer = React.memo(({
   return (
     <div className="flex items-center gap-2 mb-3" role="group" aria-labelledby="color-mixer-label">
       <Pipette className="w-4 h-4 text-white/60 flex-shrink-0" aria-hidden="true" />
-      <button
-        onClick={handleColorClick}
-        className="flex-1 h-6 border border-white/20 rounded transition-all duration-100 hover:border-blue-400 focus:outline-none focus-visible:ring-1 focus-visible:ring-blue-400"
-        style={{ backgroundColor: color }}
-        title="Click to change color"
-        aria-label="Current brush color, click to change"
-      >
-        <span className="sr-only">Current color: {color}</span>
-      </button>
-      <input
-        ref={colorInputRef}
-        type="color"
-        value={color}
-        onChange={handleColorChange}
-        className="sr-only"
-        aria-label="Color picker"
-      />
+      <div className="flex-1 relative">
+        <div
+          className="w-full h-6 border border-white/20 rounded transition-all duration-100 hover:border-blue-400"
+          style={{ backgroundColor: color }}
+          title="Click to change color"
+        >
+          <span className="sr-only">Current color: {color}</span>
+        </div>
+        <input
+          type="color"
+          value={color}
+          onChange={handleColorChange}
+          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+          aria-label="Color picker"
+        />
+      </div>
       <span id="color-mixer-label" className="sr-only">Color mixer</span>
     </div>
   )

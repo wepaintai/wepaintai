@@ -1,34 +1,34 @@
 {
   "/Users/travisirby/Documents/GitHub/ipaintai-core/app/styles/app.css": {
-    "file": "assets/app-D3oyAGc5.css",
+    "file": "assets/app-CDEWpoFa.css",
     "src": "/Users/travisirby/Documents/GitHub/ipaintai-core/app/styles/app.css"
   },
-  "_client-YlfALujF.js": {
-    "file": "assets/client-YlfALujF.js",
+  "_client-wkiQ-CGV.js": {
+    "file": "assets/client-wkiQ-CGV.js",
     "name": "client",
     "dynamicImports": [
       "app/routes/index.tsx?tsr-split=component"
     ],
     "assets": [
-      "assets/app-D3oyAGc5.css"
+      "assets/app-CDEWpoFa.css"
     ]
   },
   "app/routes/index.tsx?tsr-split=component": {
-    "file": "assets/index-BI5CjtRL.js",
+    "file": "assets/index-D29y7j3t.js",
     "name": "index",
     "src": "app/routes/index.tsx?tsr-split=component",
     "isDynamicEntry": true,
     "imports": [
-      "_client-YlfALujF.js"
+      "_client-wkiQ-CGV.js"
     ]
   },
   "virtual:$vinxi/handler/client": {
-    "file": "assets/client-BAhKewJm.js",
+    "file": "assets/client-1UtBDBJl.js",
     "name": "client",
     "src": "virtual:$vinxi/handler/client",
     "isEntry": true,
     "imports": [
-      "_client-YlfALujF.js"
+      "_client-wkiQ-CGV.js"
     ]
   }
 }

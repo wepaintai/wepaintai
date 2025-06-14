@@ -1,10 +1,10 @@
 {
   "/Users/travisirby/Documents/GitHub/ipaintai-core/app/styles/app.css": {
-    "file": "assets/app-D3oyAGc5.css",
+    "file": "assets/app-CDEWpoFa.css",
     "src": "/Users/travisirby/Documents/GitHub/ipaintai-core/app/styles/app.css"
   },
   "app/routes/index.tsx?tsr-split=component": {
-    "file": "assets/index-CPBHqSQU.js",
+    "file": "assets/index-Bl03ddeB.js",
     "name": "index",
     "src": "app/routes/index.tsx?tsr-split=component",
     "isDynamicEntry": true
@@ -18,7 +18,7 @@
       "app/routes/index.tsx?tsr-split=component"
     ],
     "assets": [
-      "assets/app-D3oyAGc5.css"
+      "assets/app-CDEWpoFa.css"
     ]
   }
 }
