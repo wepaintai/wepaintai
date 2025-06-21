@@ -13,8 +13,10 @@ import {
   Pipette,
   ImagePlus,
   Sparkles,
-  MoreVertical
+  MoreVertical,
+  User
 } from 'lucide-react'
+import { AuthModal } from './AuthModal'
 
 // Types
 interface ToolPanelProps {
@@ -221,6 +223,7 @@ export function ToolPanel({
   const selectedTool = externalSelectedTool || internalSelectedTool
   const [isCollapsed, setIsCollapsed] = React.useState(false)
   const [showMenu, setShowMenu] = React.useState(false)
+  const [showAuthModal, setShowAuthModal] = React.useState(false)
   const [menuPosition, setMenuPosition] = React.useState({ x: 0, y: 0 })
   
   // Drag functionality state
@@ -516,6 +519,17 @@ export function ToolPanel({
           }}
         >
           <button
+            className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors flex items-center gap-2"
+            onClick={() => {
+              setShowMenu(false)
+              setShowAuthModal(true)
+            }}
+          >
+            <User className="w-4 h-4" />
+            Account
+          </button>
+          <div className="border-t border-white/20 my-1" />
+          <button
             className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors"
             onClick={() => {
               setShowMenu(false)
@@ -555,6 +569,12 @@ export function ToolPanel({
           </button>
         </div>
       )}
+      
+      {/* Auth Modal */}
+      <AuthModal 
+        isOpen={showAuthModal} 
+        onClose={() => setShowAuthModal(false)} 
+      />
     </div>
   )
 }
