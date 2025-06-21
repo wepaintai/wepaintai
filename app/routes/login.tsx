@@ -30,6 +30,11 @@ function LoginComponent() {
           name,
         })
         console.log('Signup result:', result)
+        
+        if (result.error) {
+          throw new Error(result.error.message || 'Signup failed')
+        }
+        
         // If we get here, signup was successful
         window.location.href = '/'
       } else {
@@ -39,12 +44,30 @@ function LoginComponent() {
           password,
         })
         console.log('Signin result:', result)
+        
+        if (result.error) {
+          throw new Error(result.error.message || 'Invalid email or password')
+        }
+        
         // If we get here, signin was successful
         window.location.href = '/'
       }
     } catch (err: any) {
       console.error('Login error:', err)
-      setError(err.message || 'Authentication failed')
+      // Better error messages for common cases
+      let errorMessage = 'Authentication failed'
+      
+      if (err.message?.includes('Invalid email or password')) {
+        errorMessage = 'Invalid email or password. Please check your credentials.'
+      } else if (err.message?.includes('User not found')) {
+        errorMessage = 'No account found with this email address.'
+      } else if (err.message?.includes('already exists')) {
+        errorMessage = 'An account with this email already exists.'
+      } else if (err.message) {
+        errorMessage = err.message
+      }
+      
+      setError(errorMessage)
       setLoading(false)
     }
   }
