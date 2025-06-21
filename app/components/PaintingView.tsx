@@ -7,6 +7,7 @@ import { P2PStatus } from './P2PStatus'
 import { P2PDebugPanel } from './P2PDebugPanel'
 import { ImageUploadModal } from './ImageUploadModal'
 import { AIGenerationModal } from './AIGenerationModal'
+import { UserProfile } from './UserProfile'
 import { usePaintingSession } from '../hooks/usePaintingSession'
 import { useP2PPainting } from '../hooks/useP2PPainting'
 import { useSessionImages } from '../hooks/useSessionImages'
@@ -440,6 +441,9 @@ export function PaintingView() {
           onEndCapChange={setEndCap}
         />
       )}
+      
+      {/* User profile display */}
+      <UserProfile />
     </div>
   )
 }

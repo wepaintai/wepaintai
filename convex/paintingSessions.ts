@@ -1,5 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { Id } from "./_generated/dataModel";
 
 /**
  * Create a new painting session
@@ -13,8 +14,13 @@ export const createSession = mutation({
   },
   returns: v.id("paintingSessions"),
   handler: async (ctx, args) => {
+    // Get the authenticated user ID if available
+    const identity = await ctx.auth.getUserIdentity();
+    const userId = identity?.subject as Id<"users"> | undefined;
+    
     const sessionId = await ctx.db.insert("paintingSessions", {
       name: args.name,
+      createdBy: userId,
       isPublic: args.isPublic ?? true,
       canvasWidth: args.canvasWidth,
       canvasHeight: args.canvasHeight,
