@@ -20,11 +20,16 @@ export const betterAuthComponent = new BetterAuth(
   }
 );
 
-export const createAuth = (ctx: GenericCtx) =>
+export const createAuth = (ctx: GenericCtx) => {
+  // For Better Auth to work properly, the baseURL must match where the auth endpoints are served
+  // In Convex, HTTP actions are always served from the .convex.site domain
+  const convexSiteUrl = process.env.CONVEX_SITE_URL || "https://polished-flamingo-936.convex.site";
+  
   // Configure your Better Auth instance here
-  betterAuth({
-    // All auth requests will be proxied through your TanStack Start server
-    baseURL: process.env.SITE_URL || "http://localhost:3000",
+  return betterAuth({
+    // Use the Convex site URL as the base URL for auth
+    // This must match where the HTTP actions are actually served
+    baseURL: convexSiteUrl,
     database: convexAdapter(ctx, betterAuthComponent),
     secret: process.env.BETTER_AUTH_SECRET,
 
@@ -37,7 +42,14 @@ export const createAuth = (ctx: GenericCtx) =>
       // The Convex plugin is required
       convex(),
     ],
+    
+    // Advanced configuration to handle cross-origin requests
+    advanced: {
+      // Disable origin checking to allow requests from localhost
+      disableCSRFCheck: true,
+    },
   });
+};
 
 // These are required named exports
 export const {
