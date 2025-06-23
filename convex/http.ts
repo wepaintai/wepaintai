@@ -4,145 +4,135 @@ import { betterAuthComponent, createAuth } from './auth'
 
 const http = httpRouter()
 
-// Define allowed origins for CORS
-const ALLOWED_ORIGINS = [
-  "http://localhost:3000",
-  "http://localhost:3001", // Alternative port when 3000 is busy
-  "http://localhost:5173", // Vite default port
-  "https://ipaintai.com",
-  "https://www.ipaintai.com",
-  // Add production URLs here when needed
-];
-
-// Helper function to get allowed origin from request
-function getAllowedOrigin(request: Request): string {
-  const origin = request.headers.get("Origin");
+// Get allowed origins from Better Auth configuration
+const getAllowedOrigins = async (request: Request): Promise<string[]> => {
+  // Get the auth instance configuration
+  const auth = createAuth({} as any);
   
-  // If no origin header or origin is in allowed list, use it
-  if (origin && ALLOWED_ORIGINS.includes(origin)) {
-    return origin;
-  }
+  // Start with the base URL and trusted origins from auth config
+  const origins: string[] = [
+    auth.options.baseURL,
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:5173",
+    "https://ipaintai.com",
+    "https://www.ipaintai.com",
+  ];
   
-  // Check if we have a CLIENT_ORIGIN env var set in Convex dashboard
+  // Add CLIENT_ORIGIN from env if set
   if (process.env.CLIENT_ORIGIN) {
-    return process.env.CLIENT_ORIGIN;
+    origins.push(process.env.CLIENT_ORIGIN);
   }
   
-  // Default to localhost for development
-  return "http://localhost:3000";
-}
-
-// Handle preflight OPTIONS requests for all auth routes
-// Handle both /auth/ and /api/auth/ prefixes
-const handlePreflight = httpAction(async (_, request) => {
-  // Make sure the necessary headers are present
-  // for this to be a valid pre-flight request
-  const headers = request.headers;
-  if (
-    headers.get("Origin") !== null &&
-    headers.get("Access-Control-Request-Method") !== null &&
-    headers.get("Access-Control-Request-Headers") !== null
-  ) {
-    const allowedOrigin = getAllowedOrigin(request);
-    console.log("[CORS] Preflight request from:", headers.get("Origin"), "-> allowed:", allowedOrigin);
-    
-    return new Response(null, {
-      status: 200,
-      headers: new Headers({
-        "Access-Control-Allow-Origin": allowedOrigin,
-        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
-        "Access-Control-Allow-Credentials": "true",
-        "Access-Control-Max-Age": "86400",
-        "Vary": "Origin",
-      }),
-    });
-  } else {
-    return new Response();
+  // Allow any localhost origin in development
+  const requestOrigin = request.headers.get('Origin');
+  if (requestOrigin?.startsWith("http://localhost:")) {
+    origins.push(requestOrigin);
   }
-});
-
-// Register preflight handlers for both possible auth route prefixes
-http.route({
-  pathPrefix: "/auth/",
-  method: "OPTIONS",
-  handler: handlePreflight,
-});
-
-http.route({
-  pathPrefix: "/api/auth/",
-  method: "OPTIONS",
-  handler: handlePreflight,
-});
-
-// Create a wrapper that adds CORS headers to Better Auth responses
-const createAuthWithCORS = (ctx: any) => {
-  const authHandler = createAuth(ctx);
   
-  // Return the auth handler object with wrapped handler function
-  return {
-    ...authHandler,
-    handler: async (request: Request) => {
-      const allowedOrigin = getAllowedOrigin(request);
-      const requestOrigin = request.headers.get("Origin");
-      
-      console.log("[AUTH] Request from origin:", requestOrigin, "-> allowed:", allowedOrigin);
-      console.log("[AUTH] Request URL:", request.url);
-      console.log("[AUTH] Request method:", request.method);
-      
-      // For null origin (could be from file:// or certain browser contexts), 
-      // we'll allow it but log a warning
-      if (requestOrigin === "null") {
-        console.warn("[AUTH] Received request with null origin - this may be from a file:// URL or certain browser contexts");
-      }
-      
-      try {
-        // Call the original auth handler
-        const response = await authHandler.handler(request);
-        
-        // Clone the response to modify headers
-        const newHeaders = new Headers(response.headers);
-        
-        // Add CORS headers following Convex documentation pattern
-        newHeaders.set("Access-Control-Allow-Origin", allowedOrigin);
-        newHeaders.set("Access-Control-Allow-Credentials", "true");
-        newHeaders.set("Vary", "Origin");
-        
-        console.log("[AUTH] Response status:", response.status);
-        // Log specific headers for debugging
-        console.log("[AUTH] Response headers:", {
-          'access-control-allow-origin': newHeaders.get('access-control-allow-origin'),
-          'access-control-allow-credentials': newHeaders.get('access-control-allow-credentials'),
-          'vary': newHeaders.get('vary'),
-          'content-type': newHeaders.get('content-type'),
-        });
-        
-        // Return new response with CORS headers
-        return new Response(response.body, {
-          status: response.status,
-          statusText: response.statusText,
-          headers: newHeaders,
-        });
-      } catch (error) {
-        console.error('[AUTH] Handler error:', error);
-        return new Response(JSON.stringify({ error: 'Internal server error' }), {
-          status: 500,
-          headers: new Headers({
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": allowedOrigin,
-            "Access-Control-Allow-Credentials": "true",
-            "Vary": "Origin",
-          }),
-        });
-      }
-    }
-  };
+  // Remove duplicates and filter out undefined/null
+  return [...new Set(origins.filter(Boolean))];
 };
 
+// Create CORS headers getter
+const getCorsHeaders = async (request: Request) => {
+  const allowedOrigins = await getAllowedOrigins(request);
+  const origin = request.headers.get('Origin');
+  const headers = new Headers();
+  
+  if (origin && allowedOrigins.includes(origin)) {
+    headers.set('Access-Control-Allow-Origin', origin);
+  } else if (origin) {
+    // For development, be more permissive
+    console.log('[CORS] Origin not in allowed list:', origin, 'Allowed:', allowedOrigins);
+    headers.set('Access-Control-Allow-Origin', origin);
+  }
+  
+  headers.set('Access-Control-Allow-Credentials', 'true');
+  headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cookie, Better-Auth-Cookie');
+  headers.set('Access-Control-Expose-Headers', 'Set-Cookie, Set-Better-Auth-Cookie');
+  headers.set('Access-Control-Max-Age', '86400');
+  headers.set('Vary', 'Origin');
+  
+  return headers;
+};
+
+// Handle preflight OPTIONS requests
+const handlePreflight = httpAction(async (_, request) => {
+  const headers = await getCorsHeaders(request);
+  return new Response(null, {
+    status: 200,
+    headers,
+  });
+});
+
+// Create the auth request handler with CORS
+const authRequestHandler = httpAction(async (ctx, request) => {
+  console.log('[AUTH] Incoming request:', {
+    method: request.method,
+    url: request.url,
+    origin: request.headers.get('Origin'),
+    authorization: request.headers.get('Authorization') ? 'Present' : 'Missing',
+    cookie: request.headers.get('Cookie') ? 'Present' : 'Missing',
+  });
+  
+  const auth = createAuth(ctx);
+  const response = await auth.handler(request);
+  
+  console.log('[AUTH] Response:', {
+    status: response.status,
+    statusText: response.statusText,
+    setCookie: response.headers.get('Set-Cookie') ? 'Present' : 'Missing',
+  });
+  
+  // Log response body for token endpoints
+  if (request.url.includes('/convex/token') || request.url.includes('/get-session')) {
+    try {
+      const responseClone = response.clone();
+      const bodyText = await responseClone.text();
+      console.log('[AUTH] Response body preview:', bodyText.substring(0, 200));
+    } catch (e) {
+      console.log('[AUTH] Could not read response body');
+    }
+  }
+  
+  // Add CORS headers to the response
+  const corsHeaders = await getCorsHeaders(request);
+  const newHeaders = new Headers(response.headers);
+  
+  corsHeaders.forEach((value, key) => {
+    newHeaders.set(key, value);
+  });
+  
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: newHeaders,
+  });
+});
+
 // Register Better Auth routes with CORS support
-// Pass allowed origins to the Better Auth component
-betterAuthComponent.registerRoutes(http, createAuthWithCORS, {
-  allowedOrigins: ALLOWED_ORIGINS,
+const path = "/api/auth"; // Better Auth's default path
+
+// Register OPTIONS handlers
+http.route({
+  pathPrefix: `${path}/`,
+  method: "OPTIONS",
+  handler: handlePreflight,
+});
+
+// Register actual auth handlers
+http.route({
+  pathPrefix: `${path}/`,
+  method: "GET",
+  handler: authRequestHandler,
+});
+
+http.route({
+  pathPrefix: `${path}/`,
+  method: "POST",
+  handler: authRequestHandler,
 });
 
 export default http

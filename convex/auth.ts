@@ -4,6 +4,7 @@ import {
   type AuthFunctions,
 } from "@convex-dev/better-auth";
 import { convex } from "@convex-dev/better-auth/plugins";
+import { crossDomain } from "@convex-dev/better-auth/plugins";
 import { betterAuth } from "better-auth";
 import { components, internal } from "./_generated/api";
 import { query, type GenericCtx } from "./_generated/server";
@@ -38,9 +39,23 @@ export const createAuth = (ctx: GenericCtx) => {
       enabled: true,
       requireEmailVerification: false,
     },
+    
+    // Configure trusted origins for CORS
+    trustedOrigins: [
+      "http://localhost:3000",
+      "http://localhost:3001", // Alternative port when 3000 is busy
+      "http://localhost:5173", // Vite default port
+      "https://ipaintai.com",
+      "https://www.ipaintai.com",
+    ],
+    
     plugins: [
       // The Convex plugin is required
       convex(),
+      // Cross-domain plugin for localhost development
+      crossDomain({
+        siteUrl: process.env.CLIENT_ORIGIN || "http://localhost:3000",
+      }),
     ],
     
     // Advanced configuration to handle cross-origin requests
@@ -61,15 +76,27 @@ export const {
   betterAuthComponent.createAuthFunctions<DataModel>({
     // Must create a user and return the user id
     onCreateUser: async (ctx, user) => {
-      return ctx.db.insert("users", {
+      console.log('[onCreateUser] Creating user:', user);
+      const userId = await ctx.db.insert("users", {
         email: user.email,
         name: user.name,
       });
+      console.log('[onCreateUser] Created user with ID:', userId);
+      return userId;
     },
 
     // Delete the user when they are deleted from Better Auth
     onDeleteUser: async (ctx, userId) => {
       await ctx.db.delete(userId as Id<"users">);
+    },
+    
+    // Log when sessions are created
+    onCreateSession: async (ctx, session) => {
+      console.log('[onCreateSession] Creating session:', {
+        userId: session.userId,
+        token: session.token?.substring(0, 10) + '...',
+        expiresAt: new Date(session.expiresAt),
+      });
     },
   });
 
@@ -78,14 +105,26 @@ export const {
 export const getCurrentUser = query({
   args: {},
   handler: async (ctx) => {
+    console.log('[getCurrentUser] Starting...');
+    
+    // Check if we have auth identity
+    const identity = await ctx.auth.getUserIdentity();
+    console.log('[getCurrentUser] Identity:', identity ? { subject: identity.subject, tokenIdentifier: identity.tokenIdentifier } : 'null');
+    
     // Get user data from Better Auth - email, name, image, etc.
     const userMetadata = await betterAuthComponent.getAuthUser(ctx);
+    console.log('[getCurrentUser] User metadata:', userMetadata);
+    
     if (!userMetadata) {
+      console.log('[getCurrentUser] No user metadata found');
       return null;
     }
+    
     // Get user data from your application's database
     // (skip this if you have no fields in your users table schema)
     const user = await ctx.db.get(userMetadata.userId as Id<"users">);
+    console.log('[getCurrentUser] User from DB:', user);
+    
     return {
       ...user,
       ...userMetadata,

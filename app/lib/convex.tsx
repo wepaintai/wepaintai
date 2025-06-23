@@ -13,7 +13,7 @@ export function ConvexClientProvider({ children }: { children: ReactNode }) {
     debugAuthState()
     
     // Monitor auth token changes
-    const checkAuthState = () => {
+    const checkAuthState = async () => {
       const convexUrl = import.meta.env.VITE_CONVEX_URL!
       const urlKey = convexUrl.replace('https://', '').replace('/', '')
       const tokenKey = `__convexAuthJWT_${urlKey}`
@@ -30,6 +30,29 @@ export function ConvexClientProvider({ children }: { children: ReactNode }) {
         }
       } else {
         console.log('[ConvexClientProvider] No auth token found')
+        
+        // Check if we have a better-auth session
+        const sessionData = localStorage.getItem('better-auth_session_data')
+        if (sessionData) {
+          console.log('[ConvexClientProvider] Better-auth session exists, but no Convex token')
+          
+          // Try to manually fetch the Convex token
+          try {
+            const response = await fetch(`${authClient.options.baseURL}/api/auth/convex/token`, {
+              credentials: 'include',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+            })
+            console.log('[ConvexClientProvider] Manual token fetch response:', response.status)
+            if (response.ok) {
+              const data = await response.json()
+              console.log('[ConvexClientProvider] Token data:', data)
+            }
+          } catch (error) {
+            console.error('[ConvexClientProvider] Error fetching token:', error)
+          }
+        }
       }
     }
     
