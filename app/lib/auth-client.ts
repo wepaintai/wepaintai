@@ -13,7 +13,7 @@
  */
 
 import { createAuthClient } from "better-auth/react";
-import { convexClient, crossDomainClient } from "@convex-dev/better-auth/client/plugins";
+import { convexClient } from "@convex-dev/better-auth/client/plugins";
 
 // Get the base URL for auth - handle different environments
 function getAuthBaseURL() {
@@ -127,9 +127,6 @@ export const authClient = createAuthClient({
   baseURL: getAuthBaseURL(),
   plugins: [
     convexClient(),
-    crossDomainClient({
-      siteUrl: typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000',
-    }),
   ],
   fetch: customFetch,
 });

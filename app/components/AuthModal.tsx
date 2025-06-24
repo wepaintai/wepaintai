@@ -33,7 +33,10 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
         if (result.error) {
           setError(result.error.message || 'Login failed')
         } else {
+          // Close modal and let the auth state update naturally
           onClose()
+          // Force a session refresh
+          authClient.getSession()
         }
       } else {
         const result = await authClient.signUp.email({
@@ -45,7 +48,10 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
         if (result.error) {
           setError(result.error.message || 'Signup failed')
         } else {
+          // Close modal and let the auth state update naturally
           onClose()
+          // Force a session refresh
+          authClient.getSession()
         }
       }
     } catch (err) {

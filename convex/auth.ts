@@ -4,7 +4,6 @@ import {
   type AuthFunctions,
 } from "@convex-dev/better-auth";
 import { convex } from "@convex-dev/better-auth/plugins";
-import { crossDomain } from "@convex-dev/better-auth/plugins";
 import { betterAuth } from "better-auth";
 import { components, internal } from "./_generated/api";
 import { query, type GenericCtx } from "./_generated/server";
@@ -52,16 +51,23 @@ export const createAuth = (ctx: GenericCtx) => {
     plugins: [
       // The Convex plugin is required
       convex(),
-      // Cross-domain plugin for localhost development
-      crossDomain({
-        siteUrl: process.env.CLIENT_ORIGIN || "http://localhost:3000",
-      }),
     ],
     
     // Advanced configuration to handle cross-origin requests
     advanced: {
       // Disable origin checking to allow requests from localhost
       disableCSRFCheck: true,
+      // Use insecure cookies for localhost development
+      useSecureCookies: false, // This prevents the __Secure- prefix
+      // Configure cookies for cross-domain access
+      // Note: For localhost development, we need special handling
+      defaultCookieAttributes: {
+        sameSite: "none",
+        secure: true, // Required for SameSite=none
+        partitioned: false, // Don't use partitioned for now as it may cause issues
+        httpOnly: true,
+        path: "/",
+      },
     },
   });
 };
