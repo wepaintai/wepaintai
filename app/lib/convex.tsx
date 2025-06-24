@@ -9,6 +9,38 @@ const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL!, {
 });
 
 
+// Create a wrapper to manually handle auth
+function ConvexAuthWrapper({ children }: { children: ReactNode }) {
+  const { data: session, isPending } = authClient.useSession()
+  
+  useEffect(() => {
+    if (!isPending && session) {
+      console.log('[ConvexAuthWrapper] Session detected, fetching Convex token...')
+      
+      // Fetch and set the token
+      const fetchAccessToken = async () => {
+        try {
+          const result = await authClient.convex?.token()
+          if (result?.data?.token) {
+            console.log('[ConvexAuthWrapper] Got token, returning it')
+            return result.data.token
+          }
+          return null
+        } catch (error) {
+          console.error('[ConvexAuthWrapper] Error fetching token:', error)
+          return null
+        }
+      }
+      
+      // Set the auth function
+      console.log('[ConvexAuthWrapper] Setting auth function on Convex client')
+      convex.setAuth(fetchAccessToken)
+    }
+  }, [session, isPending])
+  
+  return <>{children}</>
+}
+
 export function ConvexClientProvider({ children }: { children: ReactNode }) {
   // Debug: Check auth state on mount
   useEffect(() => {
@@ -37,13 +69,14 @@ export function ConvexClientProvider({ children }: { children: ReactNode }) {
               const tokenData = await tokenResponse.json()
               if (tokenData.token) {
                 console.log('[ConvexClientProvider] Got Convex token, setting auth...')
-                convex.setAuth(tokenData.token)
+                const token = tokenData.token
+                convex.setAuth(async () => token)
                 
                 // Store in localStorage
                 const convexUrl = import.meta.env.VITE_CONVEX_URL!
                 const urlKey = convexUrl.replace('https://', '').replace('/', '')
                 const tokenKey = `__convexAuthJWT_${urlKey}`
-                localStorage.setItem(tokenKey, tokenData.token)
+                localStorage.setItem(tokenKey, token)
                 console.log('[ConvexClientProvider] Token set and stored!')
               }
             }
@@ -93,7 +126,7 @@ export function ConvexClientProvider({ children }: { children: ReactNode }) {
         console.log('[ConvexClientProvider] Auth token present, length:', token.length)
         
         // Set the auth token on the Convex client
-        convex.setAuth(token)
+        convex.setAuth(async () => token)
         console.log('[ConvexClientProvider] Set auth token on Convex client')
         
         // Decode JWT to check expiry (without verification, just for debugging)
@@ -127,11 +160,12 @@ export function ConvexClientProvider({ children }: { children: ReactNode }) {
               // Manually set the auth token if we got one
               if (data.token) {
                 console.log('[ConvexClientProvider] Manually setting Convex auth token')
-                convex.setAuth(data.token)
+                const token = data.token
+                convex.setAuth(async () => token)
                 
                 // Also store in localStorage for persistence
                 const tokenKey = `__convexAuthJWT_${urlKey}`
-                localStorage.setItem(tokenKey, data.token)
+                localStorage.setItem(tokenKey, token)
                 console.log('[ConvexClientProvider] Token stored in localStorage at key:', tokenKey)
               }
             }
@@ -151,7 +185,9 @@ export function ConvexClientProvider({ children }: { children: ReactNode }) {
 
   return (
     <ConvexBetterAuthProvider client={convex} authClient={authClient}>
-      {children}
+      <ConvexAuthWrapper>
+        {children}
+      </ConvexAuthWrapper>
     </ConvexBetterAuthProvider>
   );
 }

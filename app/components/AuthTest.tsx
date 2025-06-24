@@ -9,6 +9,9 @@ export function AuthTest() {
   
   // Test the convex token method
   useEffect(() => {
+    console.log('[AuthTest] authClient.convex exists?', !!authClient.convex)
+    console.log('[AuthTest] authClient methods:', Object.keys(authClient))
+    
     if (session && authClient.convex) {
       console.log('[AuthTest] Testing authClient.convex.token()...')
       authClient.convex.token().then(result => {
@@ -16,6 +19,8 @@ export function AuthTest() {
       }).catch(error => {
         console.error('[AuthTest] Token error:', error)
       })
+    } else if (session) {
+      console.log('[AuthTest] Session exists but authClient.convex is not available')
     }
   }, [session])
   
