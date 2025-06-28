@@ -21,16 +21,23 @@ function getAuthBaseURL() {
   const convexSiteUrl = import.meta.env.VITE_CONVEX_SITE_URL;
   if (convexSiteUrl) {
     console.log('[Auth Client] Using Convex site URL from env:', convexSiteUrl);
-    return convexSiteUrl;
+    return String(convexSiteUrl);
   }
   
   // Derive from Convex URL if site URL not available
-  const convexUrl = import.meta.env.VITE_CONVEX_URL;
+  const convexUrl = String(import.meta.env.VITE_CONVEX_URL || '');
   if (convexUrl) {
-    // Convert .cloud to .site
-    const siteUrl = convexUrl.replace('.cloud', '.site');
-    console.log('[Auth Client] Derived site URL from Convex URL:', siteUrl);
-    return siteUrl;
+    // Handle custom domains (like api.wepaint.ai)
+    if (convexUrl.includes('.convex.cloud')) {
+      // Convert .cloud to .site for standard Convex URLs
+      const siteUrl = convexUrl.replace('.convex.cloud', '.convex.site');
+      console.log('[Auth Client] Derived site URL from Convex URL:', siteUrl);
+      return siteUrl;
+    } else {
+      // For custom domains, use as-is
+      console.log('[Auth Client] Using custom domain as auth URL:', convexUrl);
+      return convexUrl;
+    }
   }
   
   // Default fallback
