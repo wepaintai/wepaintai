@@ -25,6 +25,15 @@ export const createAuth = (ctx: GenericCtx) => {
   // In Convex, HTTP actions are always served from the .convex.site domain
   const convexSiteUrl = process.env.CONVEX_SITE_URL || "https://polished-flamingo-936.convex.site";
   
+  // Determine cookie domain based on SITE_URL environment variable
+  const getCookieDomain = () => {
+    const siteUrl = process.env.SITE_URL || '';
+    if (siteUrl.includes('wepaint.ai')) {
+      return '.wepaint.ai'; // Allow sharing across all wepaint.ai subdomains
+    }
+    return undefined; // Don't set domain for localhost
+  };
+  
   // Configure your Better Auth instance here
   return betterAuth({
     // Use the Convex site URL as the base URL for auth
@@ -46,6 +55,8 @@ export const createAuth = (ctx: GenericCtx) => {
       "http://localhost:5173", // Vite default port
       "https://ipaintai.com",
       "https://www.ipaintai.com",
+      "https://dev.wepaint.ai",
+      "https://wepaint.ai",
     ],
     
     plugins: [
@@ -67,6 +78,9 @@ export const createAuth = (ctx: GenericCtx) => {
         partitioned: false, // Don't use partitioned for now as it may cause issues
         httpOnly: true,
         path: "/",
+        // Set domain dynamically based on environment
+        // This allows cookies to be shared between actions.wepaint.ai and dev.wepaint.ai
+        domain: getCookieDomain(),
       },
     },
   });

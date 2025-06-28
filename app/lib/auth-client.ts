@@ -140,10 +140,29 @@ const customFetch = async (input: RequestInfo | URL, init?: RequestInit): Promis
 export const authClient = createAuthClient({
   baseURL: getAuthBaseURL(),
   plugins: [
-    convexClient(),
+    convexClient({
+      // Ensure the client plugin is properly configured
+      fetch: customFetch,
+    }),
   ],
   fetch: customFetch,
+  // Ensure cookies are used for session storage
+  fetchOptions: {
+    credentials: 'include',
+  },
 });
+
+// Add session debug on client creation
+if (typeof window !== 'undefined') {
+  console.log('[Auth Client] Created with base URL:', getAuthBaseURL());
+  
+  // Check for session immediately
+  authClient.getSession().then(session => {
+    console.log('[Auth Client] Initial session check:', session);
+  }).catch(err => {
+    console.error('[Auth Client] Initial session check error:', err);
+  });
+}
 
 // Debug function to check auth state
 export function debugAuthState() {

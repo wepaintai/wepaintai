@@ -17,6 +17,8 @@ const getAllowedOrigins = async (request: Request): Promise<string[]> => {
     "http://localhost:5173",
     "https://ipaintai.com",
     "https://www.ipaintai.com",
+    "https://dev.wepaint.ai",
+    "https://wepaint.ai",
   ];
   
   // Add CLIENT_ORIGIN from env if set
