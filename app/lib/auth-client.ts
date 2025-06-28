@@ -170,9 +170,21 @@ export const authClient = Object.assign(baseAuthClient, {
         
         if (!response.ok) {
           console.error('[Auth Client] Token fetch failed:', response.status, response.statusText);
-          const text = await response.text();
-          console.error('[Auth Client] Error response:', text);
-          return { data: null, error: { status: response.status, statusText: response.statusText } };
+          let errorDetails;
+          try {
+            const text = await response.text();
+            console.error('[Auth Client] Error response text:', text);
+            // Try to parse as JSON
+            try {
+              errorDetails = JSON.parse(text);
+              console.error('[Auth Client] Error details:', errorDetails);
+            } catch {
+              errorDetails = text;
+            }
+          } catch (e) {
+            console.error('[Auth Client] Could not read error response');
+          }
+          return { data: null, error: { status: response.status, statusText: response.statusText, details: errorDetails } };
         }
         
         const data = await response.json();
