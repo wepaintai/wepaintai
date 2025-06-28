@@ -12,11 +12,14 @@
  *    - Defaults to http://localhost:3000 for development
  */
 
+console.log('[Auth Client] Loading auth-client.ts module...');
+
 import { createAuthClient } from "better-auth/react";
 import { convexClient } from "@convex-dev/better-auth/client/plugins";
 
 // Get the base URL for auth - handle different environments
 function getAuthBaseURL() {
+  console.log('[Auth Client] getAuthBaseURL called');
   // Use the Convex site URL from environment if available (preferred for production)
   const convexSiteUrl = import.meta.env.VITE_CONVEX_SITE_URL;
   if (convexSiteUrl) {
@@ -137,7 +140,7 @@ const customFetch = async (input: RequestInfo | URL, init?: RequestInit): Promis
   }
 };
 
-export const authClient = createAuthClient({
+const baseAuthClient = createAuthClient({
   baseURL: getAuthBaseURL(),
   plugins: [
     convexClient({
@@ -152,12 +155,44 @@ export const authClient = createAuthClient({
   },
 });
 
+// Extend the auth client to add the missing convex.token method
+export const authClient = {
+  ...baseAuthClient,
+  convex: {
+    token: async () => {
+      console.log('[Auth Client] Fetching Convex token...');
+      try {
+        const response = await customFetch(`${getAuthBaseURL()}/api/auth/convex/token`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        
+        if (!response.ok) {
+          console.error('[Auth Client] Token fetch failed:', response.status, response.statusText);
+          const text = await response.text();
+          console.error('[Auth Client] Error response:', text);
+          return { data: null, error: { status: response.status, statusText: response.statusText } };
+        }
+        
+        const data = await response.json();
+        console.log('[Auth Client] Token received:', data);
+        return { data, error: null };
+      } catch (error) {
+        console.error('[Auth Client] Token fetch error:', error);
+        return { data: null, error };
+      }
+    }
+  }
+};
+
 // Add session debug on client creation
 if (typeof window !== 'undefined') {
   console.log('[Auth Client] Created with base URL:', getAuthBaseURL());
   
   // Check for session immediately
-  authClient.getSession().then(session => {
+  baseAuthClient.getSession().then(session => {
     console.log('[Auth Client] Initial session check:', session);
   }).catch(err => {
     console.error('[Auth Client] Initial session check error:', err);

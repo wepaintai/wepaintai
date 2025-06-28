@@ -3,9 +3,33 @@ import { useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import { authClient, debugAuthState } from '../lib/auth-client'
 
+console.log('[AuthDebug Component] Loading...');
+
 export function AuthDebug() {
+  console.log('[AuthDebug Component] Rendering...');
   const { data: session, isPending: sessionPending } = authClient.useSession()
   const currentUser = useQuery(api.auth.getCurrentUser)
+  
+  // Test direct session fetch
+  React.useEffect(() => {
+    console.log('[AuthDebug] Testing direct session fetch...');
+    fetch('https://actions.wepaint.ai/api/auth/get-session', {
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+      }
+    })
+    .then(res => {
+      console.log('[AuthDebug] Session response status:', res.status);
+      return res.json();
+    })
+    .then(data => {
+      console.log('[AuthDebug] Session response data:', data);
+    })
+    .catch(err => {
+      console.error('[AuthDebug] Session fetch error:', err);
+    });
+  }, [])
   
   // Monitor network requests
   React.useEffect(() => {
