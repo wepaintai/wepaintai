@@ -10,6 +10,7 @@
 
 import type * as aiGeneration from "../aiGeneration.js";
 import type * as auth from "../auth.js";
+import type * as clearAuthData from "../clearAuthData.js";
 import type * as crons from "../crons.js";
 import type * as http from "../http.js";
 import type * as images from "../images.js";
@@ -38,6 +39,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   aiGeneration: typeof aiGeneration;
   auth: typeof auth;
+  clearAuthData: typeof clearAuthData;
   crons: typeof crons;
   http: typeof http;
   images: typeof images;

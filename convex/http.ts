@@ -11,7 +11,7 @@ const getAllowedOrigins = async (request: Request): Promise<string[]> => {
   
   // Start with the base URL and trusted origins from auth config
   const origins: string[] = [
-    auth.options.baseURL,
+    auth.options.baseURL || '',
     "http://localhost:3000",
     "http://localhost:3001",
     "http://localhost:5173",
