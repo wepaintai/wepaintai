@@ -5,6 +5,7 @@ import {
 } from "@convex-dev/better-auth";
 import { convex } from "@convex-dev/better-auth/plugins";
 import { betterAuth } from "better-auth";
+import { jwt } from "better-auth/plugins";
 import { components, internal } from "./_generated/api";
 import { query, type GenericCtx } from "./_generated/server";
 import type { Id, DataModel } from "./_generated/dataModel";
@@ -62,6 +63,13 @@ export const createAuth = (ctx: GenericCtx) => {
     plugins: [
       // The Convex plugin is required
       convex(),
+      // JWT plugin with encryption disabled to avoid decryption errors
+      jwt({
+        jwks: {
+          // Disable private key encryption to fix the decryption error
+          disablePrivateKeyEncryption: true
+        }
+      }),
     ],
     
     // Advanced configuration to handle cross-origin requests
