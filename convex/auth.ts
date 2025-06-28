@@ -63,13 +63,26 @@ export const createAuth = (ctx: GenericCtx) => {
     plugins: [
       // The Convex plugin is required
       convex(),
-      // JWT plugin with encryption disabled to avoid decryption errors
-      jwt({
-        jwks: {
-          // Disable private key encryption to fix the decryption error
-          disablePrivateKeyEncryption: true
-        }
-      }),
+      // JWT plugin commented out temporarily to test basic auth
+      // jwt({
+      //   jwks: {
+      //     // Disable private key encryption to fix the decryption error
+      //     disablePrivateKeyEncryption: true,
+      //     // Auto-generate keys if they don't exist
+      //     autoGenerateKeys: true,
+      //     // Key configuration
+      //     keyPairConfig: {
+      //       // Use RS256 algorithm (RSA signature with SHA-256)
+      //       alg: "RS256",
+      //       // Key size in bits
+      //       modulusLength: 2048,
+      //     }
+      //   },
+      //   // Issuer for the JWT tokens
+      //   issuer: process.env.SITE_URL || "https://dev.wepaint.ai",
+      //   // Disable JWT verification temporarily to allow initialization
+      //   skipJWTVerification: false,
+      // }),
     ],
     
     // Advanced configuration to handle cross-origin requests
