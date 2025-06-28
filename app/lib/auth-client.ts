@@ -156,8 +156,7 @@ const baseAuthClient = createAuthClient({
 });
 
 // Extend the auth client to add the missing convex.token method
-export const authClient = {
-  ...baseAuthClient,
+export const authClient = Object.assign(baseAuthClient, {
   convex: {
     token: async () => {
       console.log('[Auth Client] Fetching Convex token...');
@@ -185,7 +184,7 @@ export const authClient = {
       }
     }
   }
-};
+});
 
 // Add session debug on client creation
 if (typeof window !== 'undefined') {
