@@ -17,7 +17,7 @@ import { convexClient } from "@convex-dev/better-auth/client/plugins";
 
 // Get the base URL for auth - handle different environments
 function getAuthBaseURL() {
-  // Use the Convex site URL from environment if available
+  // Use the Convex site URL from environment if available (preferred for production)
   const convexSiteUrl = import.meta.env.VITE_CONVEX_SITE_URL;
   if (convexSiteUrl) {
     console.log('[Auth Client] Using Convex site URL from env:', convexSiteUrl);
@@ -27,21 +27,28 @@ function getAuthBaseURL() {
   // Derive from Convex URL if site URL not available
   const convexUrl = String(import.meta.env.VITE_CONVEX_URL || '');
   if (convexUrl) {
-    // Handle custom domains (like api.wepaint.ai)
+    // Handle standard Convex cloud URLs
     if (convexUrl.includes('.convex.cloud')) {
       // Convert .cloud to .site for standard Convex URLs
       const siteUrl = convexUrl.replace('.convex.cloud', '.convex.site');
       console.log('[Auth Client] Derived site URL from Convex URL:', siteUrl);
       return siteUrl;
+    } else if (convexUrl === 'https://api.wepaint.ai') {
+      // Production with custom domain: Use the actions subdomain for HTTP endpoints
+      const prodSiteUrl = 'https://actions.wepaint.ai';
+      console.log('[Auth Client] Production custom domain - using actions subdomain for auth:', prodSiteUrl);
+      return prodSiteUrl;
     } else {
-      // For custom domains, use as-is
-      console.log('[Auth Client] Using custom domain as auth URL:', convexUrl);
+      // For other custom domains, log a warning
+      console.warn('[Auth Client] Custom domain detected but no VITE_CONVEX_SITE_URL set:', convexUrl);
+      console.warn('Please set VITE_CONVEX_SITE_URL in your environment variables');
+      // Try to use it anyway
       return convexUrl;
     }
   }
   
-  // Default fallback
-  console.warn('[Auth Client] No Convex URLs in environment, using default');
+  // Default fallback for development
+  console.log('[Auth Client] Using development Convex site URL');
   return "https://polished-flamingo-936.convex.site";
 }
 
