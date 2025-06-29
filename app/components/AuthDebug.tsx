@@ -13,7 +13,7 @@ export function AuthDebug() {
   // Test direct session fetch
   React.useEffect(() => {
     console.log('[AuthDebug] Testing direct session fetch...');
-    fetch('https://polished-flamingo-936.convex.site/api/auth/get-session', {
+    fetch('https://actions.wepaint.ai/api/auth/get-session', {
       credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
