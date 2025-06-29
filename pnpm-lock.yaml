@@ -12,8 +12,8 @@ importers:
         specifier: ^0.0.86
         version: 0.0.86(@auth/core@0.37.4)(convex@1.24.3(react@19.1.0))(react@19.1.0)
       '@convex-dev/better-auth':
-        specifier: ^0.6.1
-        version: 0.6.1(better-auth@1.2.7)(convex@1.24.3(react@19.1.0))(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(typescript@5.8.3)
+        specifier: ^0.6.2
+        version: 0.6.2(better-auth@1.2.7)(convex@1.24.3(react@19.1.0))(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(typescript@5.8.3)
       '@tailwindcss/forms':
         specifier: ^0.5.10
         version: 0.5.10(tailwindcss@4.1.7)
@@ -230,8 +230,8 @@ packages:
       react:
         optional: true
 
-  '@convex-dev/better-auth@0.6.1':
-    resolution: {integrity: sha512-XD2+vsPHFl9hGbGgh/b3sLjZc1tRakCsCPj4cCvIiOAl5bEoyUwtd8fRdXNS6iqY/EXwIms8EETcx+a1VB35VQ==}
+  '@convex-dev/better-auth@0.6.2':
+    resolution: {integrity: sha512-16ehxLCcDc8rtc/Tfyq0TOz2erCQYE5JQhvxMLkpdUmqQU62HHGRY7Tm3TMyfhJFiwa0fP7xk28DSQjTwfowLQ==}
     peerDependencies:
       better-auth: 1.2.7
       convex: ~1.16.5 || >=1.17.0 <1.35.0
@@ -4916,7 +4916,7 @@ snapshots:
     optionalDependencies:
       react: 19.1.0
 
-  '@convex-dev/better-auth@0.6.1(better-auth@1.2.7)(convex@1.24.3(react@19.1.0))(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(typescript@5.8.3)':
+  '@convex-dev/better-auth@0.6.2(better-auth@1.2.7)(convex@1.24.3(react@19.1.0))(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(typescript@5.8.3)':
     dependencies:
       '@better-auth/utils': 0.2.5
       better-auth: 1.2.7
