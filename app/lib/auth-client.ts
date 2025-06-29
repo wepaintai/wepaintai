@@ -155,6 +155,42 @@ const baseAuthClient = createAuthClient({
   },
 });
 
+// Override getSession to use explicit endpoint
+const originalGetSession = baseAuthClient.getSession;
+baseAuthClient.getSession = async () => {
+  console.log('[Auth Client] getSession called - using explicit endpoint');
+  try {
+    const response = await customFetch(`${getAuthBaseURL()}/api/auth/session`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+    
+    if (!response.ok) {
+      console.error('[Auth Client] Session fetch failed:', response.status);
+      return null;
+    }
+    
+    const data = await response.json();
+    console.log('[Auth Client] Session data received:', data);
+    
+    // Return in the format Better Auth expects
+    if (data && (data.user || data.session)) {
+      return {
+        data,
+        error: null
+      };
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('[Auth Client] getSession error:', error);
+    // Try the original method as fallback
+    return originalGetSession();
+  }
+};
+
 // Extend the auth client to add the missing convex.token method
 export const authClient = Object.assign(baseAuthClient, {
   convex: {

@@ -137,4 +137,49 @@ http.route({
   handler: authRequestHandler,
 });
 
+// Add explicit session endpoint for Better Auth client
+const sessionHandler = httpAction(async (ctx, request) => {
+  console.log('[SESSION] Get session request:', {
+    url: request.url,
+    origin: request.headers.get('Origin'),
+    cookie: request.headers.get('Cookie') ? 'Present' : 'Missing',
+  });
+  
+  const auth = createAuth(ctx);
+  
+  // Try to get session from the request
+  const session = await auth.api.getSession({
+    headers: request.headers,
+  });
+  
+  console.log('[SESSION] Session result:', session ? 'Found' : 'Not found');
+  
+  const corsHeaders = await getCorsHeaders(request);
+  
+  if (session) {
+    const responseHeaders = new Headers(corsHeaders);
+    responseHeaders.set('Content-Type', 'application/json');
+    
+    return new Response(JSON.stringify(session), {
+      status: 200,
+      headers: responseHeaders,
+    });
+  }
+  
+  const responseHeaders = new Headers(corsHeaders);
+  responseHeaders.set('Content-Type', 'application/json');
+  
+  return new Response(JSON.stringify({ user: null, session: null }), {
+    status: 200,
+    headers: responseHeaders,
+  });
+});
+
+// Register explicit session endpoint
+http.route({
+  path: `${path}/session`,
+  method: "GET",
+  handler: sessionHandler,
+});
+
 export default http

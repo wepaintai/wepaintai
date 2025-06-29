@@ -2,6 +2,7 @@ import { useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import { authClient } from '../lib/auth-client'
 import { useEffect } from 'react'
+import { debugGetSession, checkSessionEndpoint } from '../lib/auth-client-debug'
 
 export function AuthTest() {
   const user = useQuery(api.auth.getCurrentUser)
@@ -22,6 +23,11 @@ export function AuthTest() {
     } else if (session) {
       console.log('[AuthTest] Session exists but authClient.convex is not available')
     }
+    
+    // Run debug utilities
+    console.log('[AuthTest] Running debug utilities...')
+    debugGetSession().catch(console.error)
+    checkSessionEndpoint().catch(console.error)
   }, [session])
   
   useEffect(() => {
@@ -59,6 +65,24 @@ export function AuthTest() {
           <div>Convex ID: {user.id?.substring(0, 10)}...</div>
         </div>
       )}
+      <div className="mt-3 space-y-2">
+        <button
+          onClick={async () => {
+            console.log('Manual getSession test...');
+            const result = await authClient.getSession();
+            console.log('Manual getSession result:', result);
+          }}
+          className="bg-blue-500 text-white px-2 py-1 rounded text-xs"
+        >
+          Test getSession
+        </button>
+        <button
+          onClick={() => window.location.reload()}
+          className="bg-gray-500 text-white px-2 py-1 rounded text-xs ml-2"
+        >
+          Reload
+        </button>
+      </div>
     </div>
   )
 }
