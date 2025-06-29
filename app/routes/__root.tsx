@@ -16,6 +16,7 @@ import {
   getCookieName,
 } from '@convex-dev/better-auth/react-start'
 import { createAuth } from '../../convex/auth'
+import { AuthSyncWrapper } from '../components/AuthSyncWrapper'
 
 // Simple in-memory cache for auth state
 let authCache: { userId: string | null; token: string | null; timestamp: number } | null = null
@@ -145,11 +146,13 @@ export const Route = createRootRoute({
 function RootComponent() {
   return (
     <ConvexClientProvider>
-      <RootDocument>
-        <PasswordProtection>
-          <Outlet />
-        </PasswordProtection>
-      </RootDocument>
+      <AuthSyncWrapper>
+        <RootDocument>
+          <PasswordProtection>
+            <Outlet />
+          </PasswordProtection>
+        </RootDocument>
+      </AuthSyncWrapper>
     </ConvexClientProvider>
   )
 }
