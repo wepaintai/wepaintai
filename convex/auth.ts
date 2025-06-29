@@ -23,8 +23,8 @@ export const betterAuthComponent = new BetterAuth(
 
 export const createAuth = (ctx: GenericCtx) => {
   // For Better Auth to work properly, the baseURL must match where the auth endpoints are served
-  // In Convex, HTTP actions are always served from the .convex.site domain
-  const convexSiteUrl = process.env.CONVEX_SITE_URL || "https://polished-flamingo-936.convex.site";
+  // Use the custom domain if available, otherwise fall back to .convex.site
+  const convexSiteUrl = process.env.CONVEX_SITE_URL || "https://actions.wepaint.ai";
   
   // Determine cookie domain based on SITE_URL environment variable
   const getCookieDomain = () => {
