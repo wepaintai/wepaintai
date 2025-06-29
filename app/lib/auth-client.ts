@@ -37,9 +37,9 @@ function getAuthBaseURL() {
       console.log('[Auth Client] Derived site URL from Convex URL:', siteUrl);
       return siteUrl;
     } else if (convexUrl === 'https://api.wepaint.ai') {
-      // Production with custom domain: Use the actions subdomain for HTTP endpoints
-      const prodSiteUrl = 'https://actions.wepaint.ai';
-      console.log('[Auth Client] Production custom domain - using actions subdomain for auth:', prodSiteUrl);
+      // Production with custom domain: Use the correct Convex site URL
+      const prodSiteUrl = 'https://graceful-blackbird-369.convex.site';
+      console.log('[Auth Client] Production custom domain - using Convex site URL for auth:', prodSiteUrl);
       return prodSiteUrl;
     } else {
       // For other custom domains, log a warning
