@@ -31,12 +31,10 @@ export async function debugGetSession() {
     // 5. Check cookies
     console.log('5. Document cookies (non-httpOnly only):', document.cookie);
     
-    // 6. Check if session atom exists
-    console.log('6. Checking session atom...');
+    // 6. Check if session hook exists
+    console.log('6. Checking session hook...');
     if (authClient.useSession) {
-      console.log('   useSession atom exists');
-      const sessionAtom = authClient.useSession;
-      console.log('   Current atom value:', sessionAtom.get());
+      console.log('   useSession hook exists (React hook - cannot call outside component)');
     }
     
     // 7. Check Better Auth internal store
@@ -48,7 +46,17 @@ export async function debugGetSession() {
       // Try to find session atom
       const sessionAtom = authClient.$store.atoms['session'] || authClient.$store.atoms['$sessionSignal'];
       if (sessionAtom) {
-        console.log('   Session atom found:', sessionAtom.get());
+        console.log('   Session atom found');
+        try {
+          // Some atoms might have a get method, others might not
+          if (typeof sessionAtom.get === 'function') {
+            console.log('   Session atom value:', sessionAtom.get());
+          } else {
+            console.log('   Session atom exists but no get method');
+          }
+        } catch (e) {
+          console.log('   Could not read session atom:', e.message);
+        }
       }
     }
     
