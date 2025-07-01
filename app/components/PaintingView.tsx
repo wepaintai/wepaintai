@@ -59,6 +59,11 @@ export function PaintingView() {
   // Get strokes for the session
   const strokes = useQuery(api.strokes.getSessionStrokes, sessionId ? { sessionId } : 'skip')
   
+  // Debug strokes
+  useEffect(() => {
+    console.log('[Layers] Strokes:', strokes?.length, strokes)
+  }, [strokes])
+  
   // Get AI generated images separately
   const aiImages = useQuery(api.images.getAIGeneratedImages, sessionId ? { sessionId } : 'skip')
   const updateAIImageTransformMutation = useMutation(api.images.updateAIImageTransform)
@@ -286,10 +291,11 @@ export function PaintingView() {
     
     // Add painting layer (all strokes combined)
     // Always show the painting layer, even if there are no strokes yet
+    const hasStrokes = Array.isArray(strokes) && strokes.length > 0
     allLayers.push({
       id: 'painting-layer',
       type: 'stroke',
-      name: strokes && strokes.length > 0 ? 'Painting' : 'Painting (empty)',
+      name: hasStrokes ? 'Painting' : 'Painting (empty)',
       visible: paintingLayerVisible,
       opacity: 1,
       order: currentOrder++,
