@@ -1,6 +1,6 @@
-import React, { useRef, useState, useEffect, useCallback } from 'react'
+import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react'
 import { Canvas, CanvasRef } from './Canvas'
-import { ToolPanel } from './ToolPanel'
+import { ToolPanel, Layer } from './ToolPanel'
 import { AdminPanel } from './AdminPanel' // Import AdminPanel
 import { SessionInfo } from './SessionInfo'
 import { P2PStatus } from './P2PStatus'
@@ -14,7 +14,7 @@ import { useSessionImages } from '../hooks/useSessionImages'
 import { shouldShowAdminFeatures } from '../utils/environment'
 import { Id } from '../../convex/_generated/dataModel'
 import { initP2PLogger } from '../lib/p2p-logger'
-import { useMutation } from 'convex/react'
+import { useMutation, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 
 export function PaintingView() {
@@ -53,8 +53,17 @@ export function PaintingView() {
   const updateAIImageTransform = useMutation(api.images.updateAIImageTransform)
   
   // Get images to find AI-generated ones
-  const { images } = useSessionImages(sessionId)
+  const { images, updateImageTransform, deleteImage, changeLayerOrder } = useSessionImages(sessionId)
   const aiGeneratedImages = images.filter(img => (img as any).type === 'ai-generated')
+  
+  // Get strokes for the session
+  const strokes = useQuery(api.strokes.getSessionStrokes, sessionId ? { sessionId } : 'skip')
+  
+  // Get AI generated images separately
+  const aiImages = useQuery(api.images.getAIGeneratedImages, sessionId ? { sessionId } : 'skip')
+  const updateAIImageTransformMutation = useMutation(api.images.updateAIImageTransform)
+  const deleteAIImageMutation = useMutation(api.images.deleteAIImage)
+  const updateAIImageLayerOrderMutation = useMutation(api.images.updateAIImageLayerOrder)
   
   // P2P connection status
   const { 
@@ -267,6 +276,162 @@ export function PaintingView() {
     }
   }, [toggleAdminPanel, adminFeaturesEnabled])
 
+  // Track painting layer visibility
+  const [paintingLayerVisible, setPaintingLayerVisible] = useState(true)
+  
+  // Create layers from strokes and images
+  const layers = useMemo<Layer[]>(() => {
+    const allLayers: Layer[] = []
+    let currentOrder = 0
+    
+    // Add painting layer (all strokes combined)
+    // Always show the painting layer, even if there are no strokes yet
+    allLayers.push({
+      id: 'painting-layer',
+      type: 'stroke',
+      name: strokes && strokes.length > 0 ? 'Painting' : 'Painting (empty)',
+      visible: paintingLayerVisible,
+      opacity: 1,
+      order: currentOrder++,
+    })
+    
+    // Add uploaded images
+    const uploadedImages = images.filter(img => !(img as any).type || (img as any).type === 'uploaded')
+    uploadedImages.forEach((img, index) => {
+      allLayers.push({
+        id: img._id,
+        type: 'image',
+        name: `Upload ${index + 1}`,
+        visible: img.opacity > 0,
+        opacity: img.opacity,
+        order: img.layerOrder,
+        thumbnailUrl: img.url,
+      })
+    })
+    
+    // Add AI-generated images
+    if (aiImages) {
+      aiImages.forEach((img, index) => {
+        allLayers.push({
+          id: img._id,
+          type: 'ai-image',
+          name: `AI Image ${index + 1}`,
+          visible: img.opacity > 0,
+          opacity: img.opacity,
+          order: img.layerOrder,
+          thumbnailUrl: img.imageUrl,
+        })
+      })
+    }
+    
+    return allLayers
+  }, [strokes, images, aiImages, paintingLayerVisible])
+
+  // Handle layer operations
+  const handleLayerVisibilityChange = useCallback(async (layerId: string, visible: boolean) => {
+    // Check if it's the painting layer
+    if (layerId === 'painting-layer') {
+      setPaintingLayerVisible(visible)
+      // Force canvas redraw
+      canvasRef.current?.forceRedraw?.()
+      return
+    }
+    
+    // Check if it's an uploaded image
+    const uploadedImage = images.find(img => img._id === layerId)
+    if (uploadedImage) {
+      await updateImageTransform(layerId as Id<"uploadedImages">, {
+        opacity: visible ? 1 : 0
+      })
+      return
+    }
+    
+    // Check if it's an AI image
+    const aiImage = aiImages?.find(img => img._id === layerId)
+    if (aiImage) {
+      await updateAIImageTransformMutation({
+        imageId: layerId as Id<"aiGeneratedImages">,
+        opacity: visible ? 1 : 0
+      })
+    }
+  }, [images, aiImages, updateImageTransform, updateAIImageTransformMutation])
+
+  const handleLayerDelete = useCallback(async (layerId: string) => {
+    // Check if it's the painting layer
+    if (layerId === 'painting-layer') {
+      // Clear all strokes
+      await clearSession()
+      return
+    }
+    
+    // Check if it's an uploaded image
+    const uploadedImage = images.find(img => img._id === layerId)
+    if (uploadedImage) {
+      await deleteImage(layerId as Id<"uploadedImages">)
+      return
+    }
+    
+    // Check if it's an AI image
+    const aiImage = aiImages?.find(img => img._id === layerId)
+    if (aiImage) {
+      await deleteAIImageMutation({ imageId: layerId as Id<"aiGeneratedImages"> })
+    }
+  }, [images, aiImages, clearSession, deleteImage, deleteAIImageMutation])
+
+  const handleLayerReorder = useCallback(async (layerId: string, newOrder: number) => {
+    // Check if it's the painting layer
+    if (layerId === 'painting-layer') {
+      // Painting layer order is fixed for now
+      console.log('Painting layer reordering not yet implemented')
+      return
+    }
+    
+    // Clamp newOrder to valid range
+    const maxOrder = layers.length - 1
+    const clampedOrder = Math.max(0, Math.min(newOrder, maxOrder))
+    
+    // Check if it's an uploaded image
+    const uploadedImage = images.find(img => img._id === layerId)
+    if (uploadedImage) {
+      await changeLayerOrder(layerId as Id<"uploadedImages">, clampedOrder)
+      return
+    }
+    
+    // Check if it's an AI image
+    const aiImage = aiImages?.find(img => img._id === layerId)
+    if (aiImage) {
+      await updateAIImageLayerOrderMutation({
+        imageId: layerId as Id<"aiGeneratedImages">,
+        newLayerOrder: clampedOrder
+      })
+    }
+  }, [layers, images, aiImages, changeLayerOrder, updateAIImageLayerOrderMutation])
+
+  const handleLayerOpacityChange = useCallback(async (layerId: string, opacity: number) => {
+    // Check if it's the painting layer
+    if (layerId === 'painting-layer') {
+      // TODO: Implement painting layer opacity
+      console.log('Painting layer opacity not yet implemented')
+      return
+    }
+    
+    // Check if it's an uploaded image
+    const uploadedImage = images.find(img => img._id === layerId)
+    if (uploadedImage) {
+      await updateImageTransform(layerId as Id<"uploadedImages">, { opacity })
+      return
+    }
+    
+    // Check if it's an AI image
+    const aiImage = aiImages?.find(img => img._id === layerId)
+    if (aiImage) {
+      await updateAIImageTransformMutation({
+        imageId: layerId as Id<"aiGeneratedImages">,
+        opacity
+      })
+    }
+  }, [images, aiImages, updateImageTransform, updateAIImageTransformMutation])
+
   return (
     <div className="relative w-full h-full bg-gray-50">
       {/* AI Image Toggle - shown when there are AI images */}
@@ -312,6 +477,7 @@ export function PaintingView() {
           color={color}
           size={size}
           opacity={opacity}
+          paintingLayerVisible={paintingLayerVisible}
           // perfect-freehand options
           smoothing={smoothing}
           thinning={thinning}
@@ -370,6 +536,11 @@ export function PaintingView() {
         onAIGenerate={handleAIGenerate}
         selectedTool={selectedTool}
         onToolChange={handleToolChange}
+        layers={layers}
+        onLayerVisibilityChange={handleLayerVisibilityChange}
+        onLayerReorder={handleLayerReorder}
+        onLayerDelete={handleLayerDelete}
+        onLayerOpacityChange={handleLayerOpacityChange}
       />
       {showImageUpload && (
         <ImageUploadModal

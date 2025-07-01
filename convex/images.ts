@@ -271,3 +271,76 @@ export const deleteImage = mutation({
 export const generateUploadUrl = mutation(async (ctx) => {
   return await ctx.storage.generateUploadUrl();
 });
+
+// Get AI-generated images for a session
+export const getAIGeneratedImages = query({
+  args: { sessionId: v.id("paintingSessions") },
+  handler: async (ctx, args) => {
+    const aiImages = await ctx.db
+      .query("aiGeneratedImages")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+    
+    return aiImages.sort((a, b) => a.layerOrder - b.layerOrder);
+  },
+});
+
+// Update AI image layer order
+export const updateAIImageLayerOrder = mutation({
+  args: {
+    imageId: v.id("aiGeneratedImages"),
+    newLayerOrder: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const image = await ctx.db.get(args.imageId);
+    if (!image) throw new Error("AI image not found");
+
+    const sessionImages = await ctx.db
+      .query("aiGeneratedImages")
+      .withIndex("by_session", (q) => q.eq("sessionId", image.sessionId))
+      .collect();
+
+    // Reorder other images if necessary
+    const imagesToUpdate = sessionImages.filter(
+      (img) => img._id !== args.imageId && img.layerOrder >= args.newLayerOrder
+    );
+
+    // Shift other images up
+    await Promise.all(
+      imagesToUpdate.map((img) =>
+        ctx.db.patch(img._id, { layerOrder: img.layerOrder + 1 })
+      )
+    );
+
+    // Update the target image
+    await ctx.db.patch(args.imageId, { layerOrder: args.newLayerOrder });
+  },
+});
+
+// Delete an AI-generated image
+export const deleteAIImage = mutation({
+  args: { imageId: v.id("aiGeneratedImages") },
+  handler: async (ctx, args) => {
+    const image = await ctx.db.get(args.imageId);
+    if (!image) throw new Error("AI image not found");
+
+    // Delete the record
+    await ctx.db.delete(args.imageId);
+
+    // Reorder remaining images
+    const remainingImages = await ctx.db
+      .query("aiGeneratedImages")
+      .withIndex("by_session", (q) => q.eq("sessionId", image.sessionId))
+      .collect();
+
+    const imagesToUpdate = remainingImages.filter(
+      (img) => img.layerOrder > image.layerOrder
+    );
+
+    await Promise.all(
+      imagesToUpdate.map((img) =>
+        ctx.db.patch(img._id, { layerOrder: img.layerOrder - 1 })
+      )
+    );
+  },
+});

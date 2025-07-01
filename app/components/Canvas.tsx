@@ -62,6 +62,7 @@ interface CanvasProps {
   size: number // perfect-freehand: size
   opacity: number
   onStrokeEnd?: () => void
+  paintingLayerVisible?: boolean
   // perfect-freehand options
   smoothing?: number
   thinning?: number
@@ -78,6 +79,7 @@ export interface CanvasRef {
   undo: () => void
   getImageData: () => string | undefined
   getDimensions: () => { width: number; height: number }
+  forceRedraw: () => void
 }
 
 export const Canvas = forwardRef<CanvasRef, CanvasProps>(
@@ -88,6 +90,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       size,
       opacity,
       onStrokeEnd,
+      paintingLayerVisible = true,
       // perfect-freehand options
       smoothing = 0.75, // Increased for smoother lines
       thinning = 0.5,  // Default value
@@ -244,6 +247,9 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
 
       mainContext.clearRect(0, 0, mainCanvasRef.current.width, mainCanvasRef.current.height)
 
+      // Check if painting layer is visible
+      if (!paintingLayerVisible) return
+
       // Draw all confirmed strokes from the session
       strokes
         .sort((a, b) => a.strokeOrder - b.strokeOrder)
@@ -252,6 +258,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
             points: s.points,
             color: s.brushColor,
             size: s.brushSize,
+            opacity: s.opacity,
             isPending: false, // Confirmed strokes are not pending
           })
         })
@@ -264,7 +271,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
         drawSingleStroke(mainContext, pendingS)
       })
 
-    }, [mainContext, strokes, pendingStrokes, smoothing, thinning, streamline, easing, startTaper, startCap, endTaper, endCap, opacity, drawSingleStroke])
+    }, [mainContext, strokes, pendingStrokes, paintingLayerVisible, smoothing, thinning, streamline, easing, startTaper, startCap, endTaper, endCap, opacity, drawSingleStroke])
 
     // Draw images on the image canvas
     const redrawImageCanvas = useCallback(async () => {
@@ -904,7 +911,12 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
           height: mainCanvasRef.current?.height || 600
         }
       },
-    }), [mainContext, drawingContext, imageContext])
+      forceRedraw: () => {
+        // Force redraw all canvases
+        redrawMainCanvas()
+        redrawImageCanvas()
+      },
+    }), [mainContext, drawingContext, imageContext, redrawMainCanvas, redrawImageCanvas])
 
     return (
       <>
