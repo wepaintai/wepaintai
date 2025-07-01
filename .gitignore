@@ -15,3 +15,8 @@ Thumbs.db
 
 # Vercel
 .vercel
+
+# Build artifacts
+.vinxi/
+dist/
+.output/

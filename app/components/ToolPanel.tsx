@@ -13,10 +13,27 @@ import {
   Pipette,
   ImagePlus,
   Sparkles,
-  MoreVertical
+  MoreVertical,
+  User,
+  Layers,
+  Settings,
+  EyeOff,
+  Trash2,
+  GripVertical
 } from 'lucide-react'
+import { AuthModal } from './AuthModal'
 
 // Types
+export interface Layer {
+  id: string
+  type: 'stroke' | 'image' | 'ai-image'
+  name: string
+  visible: boolean
+  opacity: number
+  order: number
+  thumbnailUrl?: string
+}
+
 interface ToolPanelProps {
   color: string
   size: number
@@ -32,6 +49,11 @@ interface ToolPanelProps {
   onAIGenerate?: () => void
   selectedTool?: string
   onToolChange?: (tool: string) => void
+  layers?: Layer[]
+  onLayerVisibilityChange?: (layerId: string, visible: boolean) => void
+  onLayerReorder?: (layerId: string, newOrder: number) => void
+  onLayerDelete?: (layerId: string) => void
+  onLayerOpacityChange?: (layerId: string, opacity: number) => void
 }
 
 interface Tool {
@@ -200,6 +222,117 @@ const ColorMixer = React.memo(({
 
 ColorMixer.displayName = 'ColorMixer'
 
+// Tab definitions
+type TabId = 'tools' | 'layers' | 'ai' | 'settings'
+
+interface Tab {
+  id: TabId
+  label: string
+  icon: React.ElementType
+}
+
+const tabs: Tab[] = [
+  { id: 'tools', label: 'Tools', icon: Paintbrush },
+  { id: 'layers', label: 'Layers', icon: Layers },
+  { id: 'ai', label: 'AI', icon: Sparkles },
+  { id: 'settings', label: 'Settings', icon: Settings },
+]
+
+// Layer item component
+const LayerItem = React.memo(({ 
+  layer,
+  onVisibilityChange,
+  onDelete,
+  onReorder,
+  onOpacityChange,
+  totalLayers,
+  isTopLayer = false,
+  isBottomLayer = false
+}: {
+  layer: Layer
+  onVisibilityChange: (visible: boolean) => void
+  onDelete: () => void
+  onReorder: (direction: 'up' | 'down') => void
+  onOpacityChange?: (opacity: number) => void
+  totalLayers: number
+  isTopLayer?: boolean
+  isBottomLayer?: boolean
+}) => {
+  const [showOpacitySlider, setShowOpacitySlider] = React.useState(false)
+  
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-1 p-1 bg-white/5 hover:bg-white/10 rounded transition-colors">
+        <GripVertical className="w-3 h-3 text-white/40 cursor-move" />
+        <button
+          onClick={() => onVisibilityChange(!layer.visible)}
+          className="p-0.5 hover:bg-white/20 rounded transition-colors"
+          aria-label={layer.visible ? 'Hide layer' : 'Show layer'}
+        >
+          {layer.visible ? (
+            <Eye className="w-3.5 h-3.5 text-white/80" />
+          ) : (
+            <EyeOff className="w-3.5 h-3.5 text-white/40" />
+          )}
+        </button>
+        <span className={`flex-1 text-xs truncate ${layer.name.includes('(empty)') ? 'text-white/40' : 'text-white/80'}`}>{layer.name}</span>
+        {layer.type !== 'stroke' && (
+          <button
+            onClick={() => setShowOpacitySlider(!showOpacitySlider)}
+            className="p-0.5 hover:bg-white/20 rounded transition-colors"
+            aria-label="Adjust opacity"
+            title={`Opacity: ${Math.round(layer.opacity * 100)}%`}
+          >
+            <Circle className="w-3 h-3 text-white/60" style={{ opacity: layer.opacity }} />
+          </button>
+        )}
+        <div className="flex items-center gap-0.5">
+          <button
+            onClick={() => onReorder('up')}
+            disabled={isTopLayer}
+            className="p-0.5 hover:bg-white/20 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            aria-label="Move layer up"
+          >
+            <ChevronUp className="w-3 h-3 text-white/60" />
+          </button>
+          <button
+            onClick={() => onReorder('down')}
+            disabled={isBottomLayer}
+            className="p-0.5 hover:bg-white/20 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            aria-label="Move layer down"
+          >
+            <ChevronUp className="w-3 h-3 text-white/60 rotate-180" />
+          </button>
+          <button
+            onClick={onDelete}
+            className="p-0.5 hover:bg-white/20 rounded transition-colors"
+            aria-label="Delete layer"
+          >
+            <Trash2 className="w-3 h-3 text-white/60 hover:text-red-400" />
+          </button>
+        </div>
+      </div>
+      {showOpacitySlider && layer.type !== 'stroke' && onOpacityChange && (
+        <div className="px-2">
+          <input
+            type="range"
+            min="0"
+            max="100"
+            value={layer.opacity * 100}
+            onChange={(e) => onOpacityChange(Number(e.target.value) / 100)}
+            className="w-full h-1 bg-white/20 rounded-full appearance-none cursor-pointer"
+            style={{
+              background: `linear-gradient(to right, hsl(0, 0%, 50%) 0%, hsl(0, 0%, 50%) ${layer.opacity * 100}%, rgba(255, 255, 255, 0.2) ${layer.opacity * 100}%, rgba(255, 255, 255, 0.2) 100%)`
+            }}
+          />
+        </div>
+      )}
+    </div>
+  )
+})
+
+LayerItem.displayName = 'LayerItem'
+
 // Main ToolPanel component
 export function ToolPanel({
   color,
@@ -216,12 +349,19 @@ export function ToolPanel({
   onAIGenerate,
   selectedTool: externalSelectedTool,
   onToolChange,
+  layers = [],
+  onLayerVisibilityChange,
+  onLayerReorder,
+  onLayerDelete,
+  onLayerOpacityChange,
 }: ToolPanelProps) {
   const [internalSelectedTool, setInternalSelectedTool] = React.useState('brush')
   const selectedTool = externalSelectedTool || internalSelectedTool
   const [isCollapsed, setIsCollapsed] = React.useState(false)
   const [showMenu, setShowMenu] = React.useState(false)
+  const [showAuthModal, setShowAuthModal] = React.useState(false)
   const [menuPosition, setMenuPosition] = React.useState({ x: 0, y: 0 })
+  const [activeTab, setActiveTab] = React.useState<TabId>('tools')
   
   // Drag functionality state
   const [isDragging, setIsDragging] = React.useState(false)
@@ -438,68 +578,144 @@ export function ToolPanel({
         </div>
 
         {!isCollapsed && (
-          <div className="p-2">
-            {/* Tool Selection */}
-            <div className="grid grid-cols-4 border-b border-white/20 mb-3">
-              {tools.map((tool, index) => (
-                <div 
-                  key={tool.id} 
-                  className={`${index < tools.length - 1 ? 'border-r border-white/20' : ''}`}
+          <div>
+            {/* Tab Navigation */}
+            <div className="flex border-b border-white/20">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex-1 px-2 py-1.5 text-xs font-medium transition-colors flex items-center justify-center gap-1 ${
+                    activeTab === tab.id
+                      ? 'bg-white/20 text-white'
+                      : 'text-white/60 hover:text-white hover:bg-white/10'
+                  }`}
+                  aria-selected={activeTab === tab.id}
+                  role="tab"
                 >
-                  <ToolButton
-                    tool={tool}
-                    isSelected={selectedTool === tool.id}
-                    onClick={() => handleToolSelect(tool.id)}
-                  />
-                </div>
+                  <tab.icon className="w-3.5 h-3.5" />
+                  {tab.label}
+                </button>
               ))}
             </div>
 
-            {/* Color Mixer */}
-            <div className="border-b border-white/20 mb-3 pb-3">
-              <ColorMixer
-                color={color}
-                onColorChange={onColorChange}
-              />
-            </div>
+            {/* Tab Content */}
+            <div className="p-2">
+              {activeTab === 'tools' && (
+                <>
+                  {/* Tool Selection */}
+                  <div className="grid grid-cols-4 border-b border-white/20 mb-3">
+                    {tools.map((tool, index) => (
+                      <div 
+                        key={tool.id} 
+                        className={`${index < tools.length - 1 ? 'border-r border-white/20' : ''}`}
+                      >
+                        <ToolButton
+                          tool={tool}
+                          isSelected={selectedTool === tool.id}
+                          onClick={() => handleToolSelect(tool.id)}
+                        />
+                      </div>
+                    ))}
+                  </div>
 
-            {/* Sliders */}
-            <div className="border-b border-white/20 mb-3 pb-3">
-              <Slider
-                value={size}
-                min={1}
-                max={100}
-                onChange={onSizeChange}
-                icon={Circle}
-                label="Brush Size"
-                color="hsl(var(--primary))"
-              />
-              
-              <Slider
-                value={opacity * 100}
-                min={0}
-                max={100}
-                onChange={(value) => onOpacityChange(value / 100)}
-                icon={Eye}
-                label="Opacity"
-                color="hsl(0, 0%, 50%)"
-              />
-            </div>
+                  {/* Color Mixer */}
+                  <div className="border-b border-white/20 mb-3 pb-3">
+                    <ColorMixer
+                      color={color}
+                      onColorChange={onColorChange}
+                    />
+                  </div>
 
-            {/* Action Buttons */}
-            <div className="grid grid-cols-4">
-              <div className="border-r border-white/20">
-                <ActionButton icon={Undo2} label="Undo" onClick={onUndo} />
-              </div>
-              <div className="border-r border-white/20">
-                <ActionButton icon={Redo2} label="Redo" onClick={onRedo} />
-              </div>
-              <div className="border-r border-white/20">
-                <ActionButton icon={X} label="Clear Canvas" onClick={onClear} />
-              </div>
-              <div>
-                <ActionButton icon={Save} label="Export" onClick={onExport} />
-              </div>
+                  {/* Sliders */}
+                  <div className="border-b border-white/20 mb-3 pb-3">
+                    <Slider
+                      value={size}
+                      min={1}
+                      max={100}
+                      onChange={onSizeChange}
+                      icon={Circle}
+                      label="Brush Size"
+                      color="hsl(var(--primary))"
+                    />
+                    
+                    <Slider
+                      value={opacity * 100}
+                      min={0}
+                      max={100}
+                      onChange={(value) => onOpacityChange(value / 100)}
+                      icon={Eye}
+                      label="Opacity"
+                      color="hsl(0, 0%, 50%)"
+                    />
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div className="grid grid-cols-4">
+                    <div className="border-r border-white/20">
+                      <ActionButton icon={Undo2} label="Undo" onClick={onUndo} />
+                    </div>
+                    <div className="border-r border-white/20">
+                      <ActionButton icon={Redo2} label="Redo" onClick={onRedo} />
+                    </div>
+                    <div className="border-r border-white/20">
+                      <ActionButton icon={X} label="Clear Canvas" onClick={onClear} />
+                    </div>
+                    <div>
+                      <ActionButton icon={Save} label="Export" onClick={onExport} />
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {activeTab === 'layers' && (
+                <div className="space-y-2">
+                  {layers.length === 0 ? (
+                    <p className="text-xs text-white/60 text-center py-4">No layers yet</p>
+                  ) : (
+                    <>
+                      <div className="text-xs font-medium text-white/80 mb-1">Layers ({layers.length})</div>
+                      <div className="space-y-1 max-h-[300px] overflow-y-auto">
+                        {[...layers].sort((a, b) => b.order - a.order).map((layer, index) => (
+                          <LayerItem
+                            key={layer.id}
+                            layer={layer}
+                            onVisibilityChange={(visible) => onLayerVisibilityChange?.(layer.id, visible)}
+                            onDelete={() => onLayerDelete?.(layer.id)}
+                            onReorder={(direction) => {
+                              const newOrder = direction === 'up' ? layer.order + 1 : layer.order - 1
+                              onLayerReorder?.(layer.id, newOrder)
+                            }}
+                            onOpacityChange={(opacity) => onLayerOpacityChange?.(layer.id, opacity)}
+                            totalLayers={layers.length}
+                            isTopLayer={index === 0}
+                            isBottomLayer={index === layers.length - 1}
+                          />
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {activeTab === 'ai' && (
+                <div className="space-y-2">
+                  <button
+                    onClick={onAIGenerate}
+                    className="w-full py-2 px-3 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                  >
+                    <Sparkles className="w-4 h-4" />
+                    Generate AI Image
+                  </button>
+                  <p className="text-xs text-white/60 text-center">Use AI to transform your canvas</p>
+                </div>
+              )}
+
+              {activeTab === 'settings' && (
+                <div className="space-y-2">
+                  <p className="text-xs text-white/60 text-center py-4">Settings coming soon...</p>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -515,6 +731,17 @@ export function ToolPanel({
             top: `${menuPosition.y}px`
           }}
         >
+          <button
+            className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors flex items-center gap-2"
+            onClick={() => {
+              setShowMenu(false)
+              setShowAuthModal(true)
+            }}
+          >
+            <User className="w-4 h-4" />
+            Account
+          </button>
+          <div className="border-t border-white/20 my-1" />
           <button
             className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors"
             onClick={() => {
@@ -555,6 +782,12 @@ export function ToolPanel({
           </button>
         </div>
       )}
+      
+      {/* Auth Modal */}
+      <AuthModal 
+        isOpen={showAuthModal} 
+        onClose={() => setShowAuthModal(false)} 
+      />
     </div>
   )
 }

@@ -15,15 +15,30 @@ export const uploadImage = mutation({
     y: v.number(),
   },
   handler: async (ctx, args) => {
-    // Get the current max layer order for this session
-    const existingImages = await ctx.db
+    // Get the current max layer order from ALL images (uploaded and AI)
+    const uploadedImages = await ctx.db
       .query("uploadedImages")
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
       .collect();
     
-    const maxLayerOrder = existingImages.reduce((max, img) => 
-      Math.max(max, img.layerOrder), -1
-    );
+    const aiImages = await ctx.db
+      .query("aiGeneratedImages")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+    
+    // Find max layer order across all images
+    let maxLayerOrder = 0; // Start at 0 to be above painting layer (which defaults to 1)
+    
+    uploadedImages.forEach(img => {
+      maxLayerOrder = Math.max(maxLayerOrder, img.layerOrder);
+    });
+    
+    aiImages.forEach(img => {
+      maxLayerOrder = Math.max(maxLayerOrder, img.layerOrder);
+    });
+    
+    // Set new image to top layer (at least 2 to be above default painting layer)
+    const newLayerOrder = Math.max(maxLayerOrder + 1, 2);
 
     // Create the image record
     const imageId = await ctx.db.insert("uploadedImages", {
@@ -39,7 +54,7 @@ export const uploadImage = mutation({
       scale: 1,
       rotation: 0,
       opacity: 1,
-      layerOrder: maxLayerOrder + 1,
+      layerOrder: newLayerOrder,
     });
 
     return imageId;
@@ -57,15 +72,30 @@ export const addAIGeneratedImage = mutation({
     canvasHeight: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    // Get the current max layer order for this session
-    const existingImages = await ctx.db
+    // Get the current max layer order from ALL images (uploaded and AI)
+    const uploadedImages = await ctx.db
       .query("uploadedImages")
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
       .collect();
     
-    const maxLayerOrder = existingImages.reduce((max, img) => 
-      Math.max(max, img.layerOrder), -1
-    );
+    const aiImages = await ctx.db
+      .query("aiGeneratedImages")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+    
+    // Find max layer order across all images
+    let maxLayerOrder = 0; // Start at 0 to be above painting layer (which defaults to 1)
+    
+    uploadedImages.forEach(img => {
+      maxLayerOrder = Math.max(maxLayerOrder, img.layerOrder);
+    });
+    
+    aiImages.forEach(img => {
+      maxLayerOrder = Math.max(maxLayerOrder, img.layerOrder);
+    });
+    
+    // Set new image to top layer (at least 2 to be above default painting layer)
+    const newLayerOrder = Math.max(maxLayerOrder + 1, 2);
 
     // Get canvas dimensions from the painting session if not provided
     let canvasWidth = args.canvasWidth || 800;
@@ -99,7 +129,7 @@ export const addAIGeneratedImage = mutation({
       scale: scale, // Scale to fit canvas
       rotation: 0,
       opacity: 1,
-      layerOrder: maxLayerOrder + 1,
+      layerOrder: newLayerOrder,
       createdAt: Date.now(),
     });
 
@@ -270,4 +300,85 @@ export const deleteImage = mutation({
 // Generate upload URL for client-side upload
 export const generateUploadUrl = mutation(async (ctx) => {
   return await ctx.storage.generateUploadUrl();
+});
+
+// Get AI-generated images for a session
+export const getAIGeneratedImages = query({
+  args: { sessionId: v.id("paintingSessions") },
+  handler: async (ctx, args) => {
+    const aiImages = await ctx.db
+      .query("aiGeneratedImages")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+    
+    return aiImages.sort((a, b) => a.layerOrder - b.layerOrder);
+  },
+});
+
+// Update AI image layer order
+export const updateAIImageLayerOrder = mutation({
+  args: {
+    imageId: v.id("aiGeneratedImages"),
+    newLayerOrder: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const image = await ctx.db.get(args.imageId);
+    if (!image) throw new Error("AI image not found");
+
+    const sessionImages = await ctx.db
+      .query("aiGeneratedImages")
+      .withIndex("by_session", (q) => q.eq("sessionId", image.sessionId))
+      .collect();
+
+    // Reorder other images if necessary
+    const imagesToUpdate = sessionImages.filter(
+      (img) => img._id !== args.imageId && img.layerOrder >= args.newLayerOrder
+    );
+
+    // Shift other images up
+    await Promise.all(
+      imagesToUpdate.map((img) =>
+        ctx.db.patch(img._id, { layerOrder: img.layerOrder + 1 })
+      )
+    );
+
+    // Update the target image
+    await ctx.db.patch(args.imageId, { layerOrder: args.newLayerOrder });
+  },
+});
+
+// Delete an AI-generated image
+export const deleteAIImage = mutation({
+  args: { imageId: v.id("aiGeneratedImages") },
+  handler: async (ctx, args) => {
+    console.log('[deleteAIImage] Attempting to delete AI image:', args.imageId);
+    
+    const image = await ctx.db.get(args.imageId);
+    if (!image) {
+      console.error('[deleteAIImage] AI image not found:', args.imageId);
+      throw new Error("AI image not found");
+    }
+    
+    console.log('[deleteAIImage] Found image to delete:', image);
+
+    // Delete the record
+    await ctx.db.delete(args.imageId);
+    console.log('[deleteAIImage] AI image deleted successfully');
+
+    // Reorder remaining images
+    const remainingImages = await ctx.db
+      .query("aiGeneratedImages")
+      .withIndex("by_session", (q) => q.eq("sessionId", image.sessionId))
+      .collect();
+
+    const imagesToUpdate = remainingImages.filter(
+      (img) => img.layerOrder > image.layerOrder
+    );
+
+    await Promise.all(
+      imagesToUpdate.map((img) =>
+        ctx.db.patch(img._id, { layerOrder: img.layerOrder - 1 })
+      )
+    );
+  },
 });

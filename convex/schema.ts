@@ -58,8 +58,10 @@ const schema = defineSchema({
     .index("by_user_session", ["userId", "sessionId"]),
 
   users: defineTable({
-    name: v.string(),
-    email: v.optional(v.string()),
+    // Fields are optional - Better Auth manages user metadata
+    // Add any application-specific fields here
+    name: v.optional(v.string()), // For existing data compatibility
+    email: v.optional(v.string()), // For existing data compatibility
   }),
 
   viewerStates: defineTable({

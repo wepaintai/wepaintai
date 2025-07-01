@@ -216,9 +216,8 @@ export function ImageUploadModal({
 
       // Create image record
       console.log('Creating image record in database...')
-      const imageId = await uploadImage({
+      const uploadArgs: any = {
         sessionId,
-        userId,
         storageId,
         filename: selectedFile.name,
         mimeType: selectedFile.type,
@@ -226,7 +225,14 @@ export function ImageUploadModal({
         height: finalDimensions.height,
         x, // Centered position
         y,
-      })
+      }
+      
+      // Only include userId if it's defined and not null
+      if (userId) {
+        uploadArgs.userId = userId
+      }
+      
+      const imageId = await uploadImage(uploadArgs)
       console.log('Image record created:', imageId)
 
       onImageUploaded?.(imageId)

@@ -214,6 +214,41 @@ export const restoreLastDeletedStroke = mutation({
 });
 
 /**
+ * Delete a specific stroke
+ */
+export const deleteStroke = mutation({
+  args: {
+    strokeId: v.id("strokes"),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    // Get the stroke to verify it exists
+    const stroke = await ctx.db.get(args.strokeId);
+    if (!stroke) {
+      return false; // Stroke not found
+    }
+
+    // Save the stroke to deletedStrokes before deleting
+    await ctx.db.insert("deletedStrokes", {
+      sessionId: stroke.sessionId,
+      userId: stroke.userId,
+      userColor: stroke.userColor,
+      points: stroke.points,
+      brushColor: stroke.brushColor,
+      brushSize: stroke.brushSize,
+      opacity: stroke.opacity,
+      strokeOrder: stroke.strokeOrder,
+      deletedAt: Date.now(),
+    });
+
+    // Delete the stroke
+    await ctx.db.delete(stroke._id);
+
+    return true;
+  },
+});
+
+/**
  * Clear all strokes from a painting session
  */
 export const clearSession = mutation({

@@ -1,20 +1,97 @@
-import React, { useRef, useState, useEffect, useCallback } from 'react'
+import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react'
 import { Canvas, CanvasRef } from './Canvas'
-import { ToolPanel } from './ToolPanel'
+import { ToolPanel, Layer } from './ToolPanel'
 import { AdminPanel } from './AdminPanel' // Import AdminPanel
 import { SessionInfo } from './SessionInfo'
 import { P2PStatus } from './P2PStatus'
 import { P2PDebugPanel } from './P2PDebugPanel'
 import { ImageUploadModal } from './ImageUploadModal'
 import { AIGenerationModal } from './AIGenerationModal'
+import { UserProfile } from './UserProfile'
 import { usePaintingSession } from '../hooks/usePaintingSession'
 import { useP2PPainting } from '../hooks/useP2PPainting'
 import { useSessionImages } from '../hooks/useSessionImages'
 import { shouldShowAdminFeatures } from '../utils/environment'
 import { Id } from '../../convex/_generated/dataModel'
 import { initP2PLogger } from '../lib/p2p-logger'
-import { useMutation } from 'convex/react'
+import { useMutation, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
+
+// Wrapper component to handle canvas data capture with proper timing
+function AIGenerationModalWrapper({ 
+  sessionId, 
+  canvasRef, 
+  onClose, 
+  onGenerationComplete,
+  layers,
+  strokes 
+}: {
+  sessionId: Id<"paintingSessions">
+  canvasRef: React.RefObject<CanvasRef>
+  onClose: () => void
+  onGenerationComplete: (imageUrl: string) => void
+  layers: Layer[]
+  strokes: any[]
+}) {
+  const [canvasData, setCanvasData] = useState<string>('')
+  const [isLoading, setIsLoading] = useState(true)
+  const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
+  
+  useEffect(() => {
+    // Capture canvas data after a small delay to ensure layers are rendered
+    const captureCanvas = () => {
+      if (canvasRef.current) {
+        console.log('[AIGenerationModalWrapper] About to capture canvas data')
+        console.log('[AIGenerationModalWrapper] Layers available:', layers.length)
+        console.log('[AIGenerationModalWrapper] Strokes available:', strokes?.length || 0)
+        
+        // Force canvas redraw before capturing
+        canvasRef.current.forceRedraw()
+        
+        // Wait a bit after forcing redraw
+        setTimeout(() => {
+          if (canvasRef.current) {
+            const data = canvasRef.current.getImageData() || ''
+            const dims = canvasRef.current.getDimensions() || { width: 800, height: 600 }
+            
+            console.log('[AIGenerationModalWrapper] Canvas data captured after redraw:', data.length)
+            setCanvasData(data)
+            setDimensions(dims)
+            setIsLoading(false)
+            
+            // If still empty, try again after another delay
+            if (!data || data.length === 0) {
+              console.warn('[AIGenerationModalWrapper] Canvas data empty, retrying...')
+              setTimeout(() => {
+                const retryData = canvasRef.current?.getImageData() || ''
+                if (retryData && retryData.length > 0) {
+                  console.log('[AIGenerationModalWrapper] Retry successful:', retryData.length)
+                  setCanvasData(retryData)
+                }
+              }, 500)
+            }
+          }
+        }, 200)
+      }
+    }
+    
+    // Initial delay to let canvas layers render
+    const timer = setTimeout(captureCanvas, 300) // Increased delay
+    return () => clearTimeout(timer)
+  }, [canvasRef])
+  
+  return (
+    <AIGenerationModal
+      isOpen={true}
+      onClose={onClose}
+      sessionId={sessionId}
+      canvasDataUrl={canvasData}
+      canvasWidth={dimensions.width}
+      canvasHeight={dimensions.height}
+      onGenerationComplete={onGenerationComplete}
+    />
+  )
+}
 
 export function PaintingView() {
   const canvasRef = useRef<CanvasRef>(null)
@@ -40,20 +117,46 @@ export function PaintingView() {
   const [showImageUpload, setShowImageUpload] = useState(false)
   const [showAIGeneration, setShowAIGeneration] = useState(false)
   const [selectedTool, setSelectedTool] = useState('brush')
-  const [aiImageOpacity, setAIImageOpacity] = useState(1)
-  const [showAIImage, setShowAIImage] = useState(true)
-  const [hasInitializedAIOpacity, setHasInitializedAIOpacity] = useState(false)
   // Check if admin features should be shown based on environment
   const adminFeaturesEnabled = shouldShowAdminFeatures()
   const [isAdminPanelVisible, setIsAdminPanelVisible] = useState(adminFeaturesEnabled)
 
-  const { createNewSession, presence, currentUser, isLoading, clearSession, undoLastStroke, redoLastStroke } = usePaintingSession(sessionId)
+  const { createNewSession, presence, currentUser, isLoading, clearSession, undoLastStroke, redoLastStroke, strokes } = usePaintingSession(sessionId)
   const addAIGeneratedImage = useMutation(api.images.addAIGeneratedImage)
   const updateAIImageTransform = useMutation(api.images.updateAIImageTransform)
   
   // Get images to find AI-generated ones
-  const { images } = useSessionImages(sessionId)
+  const { images, updateImageTransform, deleteImage, changeLayerOrder } = useSessionImages(sessionId)
   const aiGeneratedImages = images.filter(img => (img as any).type === 'ai-generated')
+  
+  // Debug: Log both image sources
+  useEffect(() => {
+    console.log('[PaintingView] Images from useSessionImages:', images)
+    console.log('[PaintingView] AI images filtered from images:', aiGeneratedImages)
+  }, [images, aiGeneratedImages])
+  
+  // Debug strokes from usePaintingSession
+  useEffect(() => {
+    console.log('[Layers] Strokes from usePaintingSession:', {
+      strokesExist: !!strokes,
+      strokesLength: strokes?.length,
+      strokesIsArray: Array.isArray(strokes),
+      strokesValue: strokes,
+      sessionId,
+      currentUser
+    })
+  }, [strokes, sessionId, currentUser])
+  
+  // Get AI generated images separately
+  const aiImages = useQuery(api.images.getAIGeneratedImages, sessionId ? { sessionId } : 'skip')
+  const updateAIImageTransformMutation = useMutation(api.images.updateAIImageTransform)
+  const deleteAIImageMutation = useMutation(api.images.deleteAIImage)
+  const updateAIImageLayerOrderMutation = useMutation(api.images.updateAIImageLayerOrder)
+  
+  // Debug: Log aiImages from direct query
+  useEffect(() => {
+    console.log('[PaintingView] AI images from direct query:', aiImages)
+  }, [aiImages])
   
   // P2P connection status
   const { 
@@ -74,34 +177,7 @@ export function PaintingView() {
     }
   }, []);
 
-  // Update AI image opacity when toggle changes
-  useEffect(() => {
-    // Skip the first run to avoid setting opacity to 0 on initial load
-    if (!hasInitializedAIOpacity && aiGeneratedImages.length > 0) {
-      setHasInitializedAIOpacity(true)
-      return
-    }
-    
-    const updateOpacity = async () => {
-      for (const aiImage of aiGeneratedImages) {
-        try {
-          // Check if it's an AI-generated image and use the appropriate mutation
-          if ((aiImage as any).type === 'ai-generated') {
-            await updateAIImageTransform({
-              imageId: aiImage._id as Id<"aiGeneratedImages">,
-              opacity: showAIImage ? aiImageOpacity : 0
-            })
-          }
-        } catch (error) {
-          console.error('Failed to update AI image opacity:', error, aiImage)
-        }
-      }
-    }
-    
-    if (aiGeneratedImages.length > 0 && hasInitializedAIOpacity) {
-      updateOpacity()
-    }
-  }, [showAIImage, aiImageOpacity, aiGeneratedImages, updateAIImageTransform, hasInitializedAIOpacity]);
+;
 
   // Create a new session or join existing one on mount
   useEffect(() => {
@@ -266,33 +342,192 @@ export function PaintingView() {
     }
   }, [toggleAdminPanel, adminFeaturesEnabled])
 
+  // Track painting layer visibility and order
+  const [paintingLayerVisible, setPaintingLayerVisible] = useState(true)
+  const [paintingLayerOrder, setPaintingLayerOrder] = useState(1) // Default to 1 so images (starting at 0) appear below
+  
+  // Create layers from strokes and images
+  const layers = useMemo<Layer[]>(() => {
+    const allLayers: Layer[] = []
+    
+    // Add painting layer (all strokes combined)
+    // Always show the painting layer, even if there are no strokes yet
+    const hasStrokes = Array.isArray(strokes) && strokes.length > 0
+    console.log('[Layers] Computing layers:', {
+      strokesInMemo: strokes,
+      strokesLength: strokes?.length,
+      hasStrokes,
+      isArray: Array.isArray(strokes)
+    })
+    allLayers.push({
+      id: 'painting-layer',
+      type: 'stroke',
+      name: hasStrokes ? 'Painting' : 'Painting (empty)',
+      visible: paintingLayerVisible,
+      opacity: 1,
+      order: paintingLayerOrder,
+    })
+    
+    // Add uploaded images
+    const uploadedImages = images.filter(img => !(img as any).type || (img as any).type === 'uploaded')
+    uploadedImages.forEach((img, index) => {
+      allLayers.push({
+        id: img._id,
+        type: 'image',
+        name: `Upload ${index + 1}`,
+        visible: img.opacity > 0,
+        opacity: img.opacity,
+        order: img.layerOrder,
+        thumbnailUrl: img.url,
+      })
+    })
+    
+    // Add AI-generated images
+    if (aiImages) {
+      console.log('[Layers] Adding AI images to layers:', aiImages.length)
+      aiImages.forEach((img, index) => {
+        console.log('[Layers] AI image:', img._id, img)
+        allLayers.push({
+          id: img._id,
+          type: 'ai-image',
+          name: `AI Image ${index + 1}`,
+          visible: img.opacity > 0,
+          opacity: img.opacity,
+          order: img.layerOrder,
+          thumbnailUrl: img.imageUrl,
+        })
+      })
+    }
+    
+    return allLayers
+  }, [strokes, images, aiImages, paintingLayerVisible, paintingLayerOrder])
+
+  // Handle layer operations
+  const handleLayerVisibilityChange = useCallback(async (layerId: string, visible: boolean) => {
+    // Check if it's the painting layer
+    if (layerId === 'painting-layer') {
+      setPaintingLayerVisible(visible)
+      // Force canvas redraw
+      canvasRef.current?.forceRedraw?.()
+      return
+    }
+    
+    // Check if it's an uploaded image
+    const uploadedImage = images.find(img => img._id === layerId)
+    if (uploadedImage) {
+      await updateImageTransform(layerId as Id<"uploadedImages">, {
+        opacity: visible ? 1 : 0
+      })
+      return
+    }
+    
+    // Check if it's an AI image
+    const aiImage = aiImages?.find(img => img._id === layerId)
+    if (aiImage) {
+      await updateAIImageTransformMutation({
+        imageId: layerId as Id<"aiGeneratedImages">,
+        opacity: visible ? 1 : 0
+      })
+    }
+  }, [images, aiImages, updateImageTransform, updateAIImageTransformMutation])
+
+  const handleLayerDelete = useCallback(async (layerId: string) => {
+    console.log('[PaintingView] handleLayerDelete called with layerId:', layerId)
+    
+    // Check if it's the painting layer
+    if (layerId === 'painting-layer') {
+      // Clear all strokes
+      await clearSession()
+      return
+    }
+    
+    // Check if it's an uploaded image (not AI-generated)
+    const uploadedImage = images.find(img => img._id === layerId && (img as any).type !== 'ai-generated')
+    if (uploadedImage) {
+      console.log('[PaintingView] Deleting uploaded image:', layerId)
+      await deleteImage(layerId as Id<"uploadedImages">)
+      return
+    }
+    
+    // Check if it's an AI image (either in aiImages or in images with type 'ai-generated')
+    const aiImageFromQuery = aiImages?.find(img => img._id === layerId)
+    const aiImageFromImages = images.find(img => img._id === layerId && (img as any).type === 'ai-generated')
+    const aiImage = aiImageFromQuery || aiImageFromImages
+    
+    console.log('[PaintingView] AI images from query:', aiImages)
+    console.log('[PaintingView] Found AI image from query:', aiImageFromQuery)
+    console.log('[PaintingView] Found AI image from images:', aiImageFromImages)
+    
+    if (aiImage) {
+      console.log('[PaintingView] Deleting AI image:', layerId)
+      try {
+        await deleteAIImageMutation({ imageId: layerId as Id<"aiGeneratedImages"> })
+        console.log('[PaintingView] AI image deleted successfully')
+      } catch (error) {
+        console.error('[PaintingView] Error deleting AI image:', error)
+      }
+    } else {
+      console.warn('[PaintingView] Layer not found for deletion:', layerId)
+    }
+  }, [images, aiImages, clearSession, deleteImage, deleteAIImageMutation])
+
+  const handleLayerReorder = useCallback(async (layerId: string, newOrder: number) => {
+    // Clamp newOrder to valid range
+    const maxOrder = layers.length - 1
+    const clampedOrder = Math.max(0, Math.min(newOrder, maxOrder))
+    
+    // Check if it's the painting layer
+    if (layerId === 'painting-layer') {
+      setPaintingLayerOrder(clampedOrder)
+      // Force canvas redraw to reflect new layer order
+      canvasRef.current?.forceRedraw?.()
+      return
+    }
+    
+    // Check if it's an uploaded image
+    const uploadedImage = images.find(img => img._id === layerId)
+    if (uploadedImage) {
+      await changeLayerOrder(layerId as Id<"uploadedImages">, clampedOrder)
+      return
+    }
+    
+    // Check if it's an AI image
+    const aiImage = aiImages?.find(img => img._id === layerId)
+    if (aiImage) {
+      await updateAIImageLayerOrderMutation({
+        imageId: layerId as Id<"aiGeneratedImages">,
+        newLayerOrder: clampedOrder
+      })
+    }
+  }, [layers, images, aiImages, changeLayerOrder, updateAIImageLayerOrderMutation])
+
+  const handleLayerOpacityChange = useCallback(async (layerId: string, opacity: number) => {
+    // Check if it's the painting layer
+    if (layerId === 'painting-layer') {
+      // TODO: Implement painting layer opacity
+      console.log('Painting layer opacity not yet implemented')
+      return
+    }
+    
+    // Check if it's an uploaded image
+    const uploadedImage = images.find(img => img._id === layerId)
+    if (uploadedImage) {
+      await updateImageTransform(layerId as Id<"uploadedImages">, { opacity })
+      return
+    }
+    
+    // Check if it's an AI image
+    const aiImage = aiImages?.find(img => img._id === layerId)
+    if (aiImage) {
+      await updateAIImageTransformMutation({
+        imageId: layerId as Id<"aiGeneratedImages">,
+        opacity
+      })
+    }
+  }, [images, aiImages, updateImageTransform, updateAIImageTransformMutation])
+
   return (
     <div className="relative w-full h-full bg-gray-50">
-      {/* AI Image Toggle - shown when there are AI images */}
-      {aiGeneratedImages.length > 0 && (
-        <div className="absolute top-2 right-40 z-50 flex items-center gap-2">
-          <button 
-            onClick={() => setShowAIImage(!showAIImage)} 
-            className="bg-black/90 backdrop-blur-md border border-white/20 hover:bg-black/80 text-white font-bold py-1 px-2 rounded text-xs"
-            title="Toggle AI image visibility"
-          >
-            {showAIImage ? 'Hide' : 'Show'} AI
-          </button>
-          {showAIImage && (
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.1"
-              value={aiImageOpacity}
-              onChange={(e) => setAIImageOpacity(parseFloat(e.target.value))}
-              className="ai-opacity-slider"
-              title={`AI image opacity: ${Math.round(aiImageOpacity * 100)}%`}
-            />
-          )}
-        </div>
-      )}
-
       {/* Button to toggle Admin Panel - only shown when admin features are enabled */}
       {adminFeaturesEnabled && (
         <button 
@@ -311,6 +546,7 @@ export function PaintingView() {
           color={color}
           size={size}
           opacity={opacity}
+          layers={layers}
           // perfect-freehand options
           smoothing={smoothing}
           thinning={thinning}
@@ -369,6 +605,11 @@ export function PaintingView() {
         onAIGenerate={handleAIGenerate}
         selectedTool={selectedTool}
         onToolChange={handleToolChange}
+        layers={layers}
+        onLayerVisibilityChange={handleLayerVisibilityChange}
+        onLayerReorder={handleLayerReorder}
+        onLayerDelete={handleLayerDelete}
+        onLayerOpacityChange={handleLayerOpacityChange}
       />
       {showImageUpload && (
         <ImageUploadModal
@@ -383,40 +624,19 @@ export function PaintingView() {
           canvasHeight={canvasRef.current?.getDimensions().height}
         />
       )}
-      {showAIGeneration && sessionId && (() => {
-        // Capture canvas data when modal is shown
-        const canvasData = canvasRef.current?.getImageData() || '';
-        console.log('[PaintingView] Canvas ref exists:', !!canvasRef.current);
-        console.log('[PaintingView] Canvas data for AI generation:', canvasData.substring(0, 100) + '...');
-        console.log('[PaintingView] Canvas data length:', canvasData.length);
-        console.log('[PaintingView] Canvas data is empty:', canvasData === '' || canvasData.length === 0);
-        
-        // If canvas data is empty, try to get it again after a short delay
-        if (!canvasData || canvasData.length === 0) {
-          console.error('[PaintingView] ERROR: Canvas data is empty!');
-          setTimeout(() => {
-            const retryData = canvasRef.current?.getImageData() || '';
-            console.log('[PaintingView] Retry canvas data length:', retryData.length);
-          }, 100);
-        }
-        
-        const canvasDimensions = canvasRef.current?.getDimensions() || { width: 800, height: 600 };
-        
-        return (
-          <AIGenerationModal
-            isOpen={showAIGeneration}
-            onClose={() => {
-              setShowAIGeneration(false)
-              setSelectedTool('brush')
-            }}
-            sessionId={sessionId}
-            canvasDataUrl={canvasData}
-            canvasWidth={canvasDimensions.width}
-            canvasHeight={canvasDimensions.height}
-            onGenerationComplete={handleAIGenerationComplete}
-          />
-        );
-      })()}
+      {showAIGeneration && sessionId && (
+        <AIGenerationModalWrapper
+          sessionId={sessionId}
+          canvasRef={canvasRef}
+          onClose={() => {
+            setShowAIGeneration(false)
+            setSelectedTool('brush')
+          }}
+          onGenerationComplete={handleAIGenerationComplete}
+          layers={layers}
+          strokes={strokes}
+        />
+      )}
       {/* Admin Panel - only rendered when admin features are enabled */}
       {adminFeaturesEnabled && (
         <AdminPanel
@@ -440,6 +660,9 @@ export function PaintingView() {
           onEndCapChange={setEndCap}
         />
       )}
+      
+      {/* User profile display */}
+      <UserProfile />
     </div>
   )
 }

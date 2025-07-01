@@ -52,18 +52,26 @@ export interface LiveStroke {
 }
 
 export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
-  // Create anonymous user
-  const createUser = useMutation(api.users.createAnonymousUser);
+  // Get current authenticated user from Better Auth
+  const authenticatedUser = useQuery(api.auth.getCurrentUser);
+  
+  // Generate a consistent color based on user ID or use a random one for anonymous users
+  const getUserColor = (userId: string | null) => {
+    if (!userId) return `hsl(${Math.floor(Math.random() * 360)}, 70%, 50%)`;
+    // Generate a consistent color based on user ID
+    const hash = userId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    return `hsl(${hash % 360}, 70%, 50%)`;
+  };
+  
   const [currentUser, setCurrentUser] = useState<{
     id: Id<"users"> | null;
     name: string;
     color: string;
   }>({
     id: null,
-    name: `User ${Math.floor(Math.random() * 1000)}`,
-    color: `hsl(${Math.floor(Math.random() * 360)}, 70%, 50%)`,
+    name: 'Anonymous User',
+    color: getUserColor(null),
   });
-  const [isCreatingUser, setIsCreatingUser] = useState(false);
 
   // Queries
   const session = useQuery(
@@ -99,29 +107,32 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
   const clearSessionLiveStrokes = useMutation(api.liveStrokes.clearSessionLiveStrokes);
   const upsertViewerState = useMutation(api.viewerAcks.upsertViewerState);
   const removeViewerState = useMutation(api.viewerAcks.removeViewerState);
+  
+  // For viewer state, use user ID if authenticated, otherwise use name as viewer ID
+  const viewerId = currentUser.id || currentUser.name;
   const getViewerState = useQuery(api.viewerAcks.getViewerState, 
-    sessionId && currentUser.id ? { sessionId, viewerId: currentUser.id } : "skip"
+    sessionId && viewerId ? { sessionId, viewerId } : "skip"
   );
 
   const localLastAckedStrokeOrderRef = useRef<number>(0);
 
-  // Create anonymous user on mount
+  // Update current user when authenticated user changes
   useEffect(() => {
-    if (!isCreatingUser && !currentUser.id) {
-      console.log('🆕 Creating anonymous user:', currentUser.name);
-      setIsCreatingUser(true);
-      createUser({ name: currentUser.name })
-        .then((userId) => {
-          console.log('✅ User created with ID:', userId);
-          setCurrentUser(prev => ({ ...prev, id: userId }));
-          setIsCreatingUser(false);
-        })
-        .catch((error) => {
-          console.error('❌ Failed to create anonymous user:', error);
-          setIsCreatingUser(false);
-        });
+    if (authenticatedUser) {
+      setCurrentUser({
+        id: authenticatedUser.userId as Id<"users">,
+        name: authenticatedUser.name || authenticatedUser.email || 'User',
+        color: getUserColor(authenticatedUser.userId),
+      });
+    } else {
+      // For anonymous users, we'll use a session-based identifier
+      setCurrentUser({
+        id: null,
+        name: `Guest ${Math.floor(Math.random() * 1000)}`,
+        color: getUserColor(null),
+      });
     }
-  }, [createUser, currentUser.name, currentUser.id, isCreatingUser]);
+  }, [authenticatedUser]);
 
   // Effect to initialize lastAckedStrokeOrder from server
   useEffect(() => {
@@ -167,11 +178,11 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     brushSize: number,
     opacity: number = 1
   ) => {
-    if (!sessionId || !currentUser.id) return;
+    if (!sessionId) return;
     
     return await addStroke({
       sessionId,
-      userId: currentUser.id,
+      userId: currentUser.id || undefined,  // Allow undefined for guest users
       userColor: currentUser.color,
       points,
       brushColor,
@@ -187,14 +198,14 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     isDrawing: boolean,
     currentTool: string
   ) => {
-    if (!sessionId || !currentUser.id) {
-      console.log('⚠️ Skipping presence update - no session or user ID');
+    if (!sessionId) {
+      console.log('⚠️ Skipping presence update - no session');
       return;
     }
     
     return await updatePresence({
       sessionId,
-      userId: currentUser.id,
+      userId: currentUser.id || undefined,  // Allow undefined for guest users
       userColor: currentUser.color,
       userName: currentUser.name,
       cursorX,
@@ -258,7 +269,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     brushSize: number,
     opacity: number = 1
   ) => {
-    if (!sessionId || !currentUser.id) return;
+    if (!sessionId) return;
     
     const now = Date.now();
     const timeSinceLastUpdate = now - lastUpdateTimeRef.current;
@@ -272,7 +283,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
       p2pLogger.logConvex('updateLiveStroke', { pointCount: points.length });
       updateLiveStroke({
         sessionId,
-        userId: currentUser.id,
+        userId: currentUser.id || undefined,
         userColor: currentUser.color,
         userName: currentUser.name,
         points,
@@ -303,7 +314,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
         p2pLogger.logConvex('updateLiveStroke (throttled)', { pointCount: pending.points.length });
         updateLiveStroke({
           sessionId,
-          userId: currentUser.id,
+          userId: currentUser.id || undefined,
           userColor: currentUser.color,
           userName: currentUser.name,
           points: pending.points,
@@ -319,12 +330,15 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
 
   // Clear live stroke (when finishing drawing)
   const clearLiveStrokeForUser = useCallback(async () => {
-    if (!sessionId || !currentUser.id) return;
+    if (!sessionId) return;
     
-    return await clearLiveStroke({
-      sessionId,
-      userId: currentUser.id,
-    });
+    // Only clear if user has an ID (guest users don't have live strokes)
+    if (currentUser.id) {
+      return await clearLiveStroke({
+        sessionId,
+        userId: currentUser.id,
+      });
+    }
   }, [sessionId, currentUser.id, clearLiveStroke]);
 
   // Leave session on unmount and cleanup timeouts
@@ -376,6 +390,6 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     clearLiveStrokeForUser,
     
     // State
-    isLoading: session === undefined || isCreatingUser || !currentUser.id,
+    isLoading: session === undefined || authenticatedUser === undefined,
   };
 }

@@ -71,4 +71,4 @@ This command will:
 
 ## Deployment
 
-Deployments are typically handled via Vercel for the frontend and `npx convex deploy` for the Convex backend functions and schema.
+Deployments are typically handled via Vercel for the frontend and `npx convex deploy` for the Convex backend functions and schema
