@@ -69,6 +69,7 @@ Note: No test or lint commands are currently configured.
 #### Convex Backend Environment Variables
 Set these in the Convex dashboard (Settings > Environment Variables):
 - `REPLICATE_API_TOKEN`: Your Replicate API token for AI image generation
+- `REPLICATE_MODEL_VERSION`: Replicate model version ID (default: `15589a1a9e6b240d246752fc688267b847db4858910cc390794703384b6a5443` for Flux Kontext Pro)
 
 ### Development Notes
 - Use `pnpm dev` for local development with free local backend

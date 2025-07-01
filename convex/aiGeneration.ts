@@ -153,9 +153,12 @@ export const generateImage = action({
         console.log('[AI-GEN] Calculated ratio:', ratio, '-> aspect_ratio:', aspectRatio);
       }
 
+      // Get model version from environment or use default
+      const modelVersion = process.env.REPLICATE_MODEL_VERSION || "15589a1a9e6b240d246752fc688267b847db4858910cc390794703384b6a5443";
+      
       // Create prediction using Replicate API with URL
       const requestBody = {
-        version: "15589a1a9e6b240d246752fc688267b847db4858910cc390794703384b6a5443", // Flux Kontext Pro version
+        version: modelVersion, // Flux Kontext Pro version
         input: {
           prompt: args.prompt,
           input_image: imageUrl, // Use input_image as per Replicate API
