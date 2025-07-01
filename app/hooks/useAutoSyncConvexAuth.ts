@@ -11,10 +11,11 @@ export function useAutoSyncConvexAuth() {
   const { isAuthenticated: hasConvexAuth, isLoading: convexLoading } = useConvexAuth()
   const hasTriggeredRef = useRef(false)
   const checkIntervalRef = useRef<number>()
+  const authDisabled = import.meta.env.VITE_AUTH_DISABLED === 'true'
   
   useEffect(() => {
-    // Don't run on server
-    if (typeof window === 'undefined') return
+    // Don't run on server or when auth is disabled
+    if (typeof window === 'undefined' || authDisabled) return
     
     // Clean up interval on unmount
     return () => {
@@ -25,6 +26,12 @@ export function useAutoSyncConvexAuth() {
   }, [])
   
   useEffect(() => {
+    // Don't run if auth is disabled
+    if (authDisabled) {
+      console.log('[useAutoSyncConvexAuth] Auth is disabled, skipping sync')
+      return
+    }
+    
     // Don't run if Convex is still loading
     if (convexLoading) return
     
@@ -92,5 +99,5 @@ export function useAutoSyncConvexAuth() {
     if (!checkIntervalRef.current) {
       checkIntervalRef.current = window.setInterval(checkAndSync, 2000)
     }
-  }, [hasConvexAuth, convexLoading])
+  }, [hasConvexAuth, convexLoading, authDisabled])
 }
