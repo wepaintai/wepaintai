@@ -15,15 +15,30 @@ export const uploadImage = mutation({
     y: v.number(),
   },
   handler: async (ctx, args) => {
-    // Get the current max layer order for this session
-    const existingImages = await ctx.db
+    // Get the current max layer order from ALL images (uploaded and AI)
+    const uploadedImages = await ctx.db
       .query("uploadedImages")
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
       .collect();
     
-    const maxLayerOrder = existingImages.reduce((max, img) => 
-      Math.max(max, img.layerOrder), -1
-    );
+    const aiImages = await ctx.db
+      .query("aiGeneratedImages")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+    
+    // Find max layer order across all images
+    let maxLayerOrder = 0; // Start at 0 to be above painting layer (which defaults to 1)
+    
+    uploadedImages.forEach(img => {
+      maxLayerOrder = Math.max(maxLayerOrder, img.layerOrder);
+    });
+    
+    aiImages.forEach(img => {
+      maxLayerOrder = Math.max(maxLayerOrder, img.layerOrder);
+    });
+    
+    // Set new image to top layer (at least 2 to be above default painting layer)
+    const newLayerOrder = Math.max(maxLayerOrder + 1, 2);
 
     // Create the image record
     const imageId = await ctx.db.insert("uploadedImages", {
@@ -39,7 +54,7 @@ export const uploadImage = mutation({
       scale: 1,
       rotation: 0,
       opacity: 1,
-      layerOrder: maxLayerOrder + 1,
+      layerOrder: newLayerOrder,
     });
 
     return imageId;
@@ -57,15 +72,30 @@ export const addAIGeneratedImage = mutation({
     canvasHeight: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    // Get the current max layer order for this session
-    const existingImages = await ctx.db
+    // Get the current max layer order from ALL images (uploaded and AI)
+    const uploadedImages = await ctx.db
       .query("uploadedImages")
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
       .collect();
     
-    const maxLayerOrder = existingImages.reduce((max, img) => 
-      Math.max(max, img.layerOrder), -1
-    );
+    const aiImages = await ctx.db
+      .query("aiGeneratedImages")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+    
+    // Find max layer order across all images
+    let maxLayerOrder = 0; // Start at 0 to be above painting layer (which defaults to 1)
+    
+    uploadedImages.forEach(img => {
+      maxLayerOrder = Math.max(maxLayerOrder, img.layerOrder);
+    });
+    
+    aiImages.forEach(img => {
+      maxLayerOrder = Math.max(maxLayerOrder, img.layerOrder);
+    });
+    
+    // Set new image to top layer (at least 2 to be above default painting layer)
+    const newLayerOrder = Math.max(maxLayerOrder + 1, 2);
 
     // Get canvas dimensions from the painting session if not provided
     let canvasWidth = args.canvasWidth || 800;
@@ -99,7 +129,7 @@ export const addAIGeneratedImage = mutation({
       scale: scale, // Scale to fit canvas
       rotation: 0,
       opacity: 1,
-      layerOrder: maxLayerOrder + 1,
+      layerOrder: newLayerOrder,
       createdAt: Date.now(),
     });
 

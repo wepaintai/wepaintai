@@ -148,6 +148,15 @@ export const getCurrentUser = query({
   handler: async (ctx) => {
     console.log('[getCurrentUser] Starting...');
     
+    // Check if auth is disabled via environment variable
+    // Note: This needs to be set on the Convex backend as well
+    const authDisabled = process.env.VITE_AUTH_DISABLED === 'true';
+    
+    if (authDisabled) {
+      console.log('[getCurrentUser] Auth is disabled, returning null');
+      return null;
+    }
+    
     // Check if we have auth identity
     const identity = await ctx.auth.getUserIdentity();
     console.log('[getCurrentUser] Identity:', identity ? { subject: identity.subject, tokenIdentifier: identity.tokenIdentifier } : 'null');

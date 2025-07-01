@@ -257,7 +257,7 @@ export function PaintingView() {
 
   // Track painting layer visibility and order
   const [paintingLayerVisible, setPaintingLayerVisible] = useState(true)
-  const [paintingLayerOrder, setPaintingLayerOrder] = useState(0)
+  const [paintingLayerOrder, setPaintingLayerOrder] = useState(1) // Default to 1 so images (starting at 0) appear below
   
   // Create layers from strokes and images
   const layers = useMemo<Layer[]>(() => {
@@ -439,8 +439,7 @@ export function PaintingView() {
           color={color}
           size={size}
           opacity={opacity}
-          paintingLayerVisible={paintingLayerVisible}
-          paintingLayerOrder={paintingLayerOrder}
+          layers={layers}
           // perfect-freehand options
           smoothing={smoothing}
           thinning={thinning}
