@@ -63,6 +63,7 @@ interface CanvasProps {
   opacity: number
   onStrokeEnd?: () => void
   paintingLayerVisible?: boolean
+  paintingLayerOrder?: number
   // perfect-freehand options
   smoothing?: number
   thinning?: number
@@ -91,6 +92,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       opacity,
       onStrokeEnd,
       paintingLayerVisible = true,
+      paintingLayerOrder = 0,
       // perfect-freehand options
       smoothing = 0.75, // Increased for smoother lines
       thinning = 0.5,  // Default value
@@ -839,14 +841,25 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
         tempContext.fillStyle = 'white'
         tempContext.fillRect(0, 0, tempCanvas.width, tempCanvas.height)
         
-        // Draw main canvas (strokes) first
-        tempContext.drawImage(mainCanvasRef.current, 0, 0)
-        console.log('[Canvas] Drew strokes layer')
-        
-        // Draw image layer (AI images) on top
-        if (imageCanvasRef.current) {
-          tempContext.drawImage(imageCanvasRef.current, 0, 0)
-          console.log('[Canvas] Drew image layer (AI images) on top')
+        // Draw layers in the correct order based on paintingLayerOrder
+        if (paintingLayerOrder === 0) {
+          // Strokes first, then images
+          tempContext.drawImage(mainCanvasRef.current, 0, 0)
+          console.log('[Canvas] Drew strokes layer first')
+          
+          if (imageCanvasRef.current) {
+            tempContext.drawImage(imageCanvasRef.current, 0, 0)
+            console.log('[Canvas] Drew image layer (AI images) on top')
+          }
+        } else {
+          // Images first, then strokes
+          if (imageCanvasRef.current) {
+            tempContext.drawImage(imageCanvasRef.current, 0, 0)
+            console.log('[Canvas] Drew image layer (AI images) first')
+          }
+          
+          tempContext.drawImage(mainCanvasRef.current, 0, 0)
+          console.log('[Canvas] Drew strokes layer on top')
         }
         
         // Check if the canvas is actually empty
@@ -923,12 +936,12 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
         <canvas
           ref={mainCanvasRef}
           className="absolute inset-0 w-full h-full border border-gray-300"
-          style={{ zIndex: 0 }} // Main canvas for strokes at the bottom
+          style={{ zIndex: paintingLayerOrder }} // Main canvas for strokes with dynamic z-index
         />
         <canvas
           ref={imageCanvasRef}
           className="absolute inset-0 w-full h-full"
-          style={{ zIndex: 1 }} // Image canvas (AI images) in the middle
+          style={{ zIndex: paintingLayerOrder === 0 ? 1 : 0 }} // Image canvas - swap z-index based on painting layer order
         />
         <canvas
           ref={drawingCanvasRef}
@@ -937,7 +950,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerLeave={handlePointerLeave}
-          style={{ touchAction: 'none', zIndex: 2 }} // Drawing canvas on top
+          style={{ touchAction: 'none', zIndex: 2 }} // Drawing canvas always on top for interaction
         />
       </>
     )

@@ -245,7 +245,9 @@ const LayerItem = React.memo(({
   onDelete,
   onReorder,
   onOpacityChange,
-  totalLayers
+  totalLayers,
+  isTopLayer = false,
+  isBottomLayer = false
 }: {
   layer: Layer
   onVisibilityChange: (visible: boolean) => void
@@ -253,6 +255,8 @@ const LayerItem = React.memo(({
   onReorder: (direction: 'up' | 'down') => void
   onOpacityChange?: (opacity: number) => void
   totalLayers: number
+  isTopLayer?: boolean
+  isBottomLayer?: boolean
 }) => {
   const [showOpacitySlider, setShowOpacitySlider] = React.useState(false)
   
@@ -285,7 +289,7 @@ const LayerItem = React.memo(({
         <div className="flex items-center gap-0.5">
           <button
             onClick={() => onReorder('up')}
-            disabled={layer.order === totalLayers - 1}
+            disabled={isTopLayer}
             className="p-0.5 hover:bg-white/20 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
             aria-label="Move layer up"
           >
@@ -293,21 +297,19 @@ const LayerItem = React.memo(({
           </button>
           <button
             onClick={() => onReorder('down')}
-            disabled={layer.order === 0}
+            disabled={isBottomLayer}
             className="p-0.5 hover:bg-white/20 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
             aria-label="Move layer down"
           >
             <ChevronUp className="w-3 h-3 text-white/60 rotate-180" />
           </button>
-          {layer.type !== 'stroke' && (
-            <button
-              onClick={onDelete}
-              className="p-0.5 hover:bg-white/20 rounded transition-colors"
-              aria-label="Delete layer"
-            >
-              <Trash2 className="w-3 h-3 text-white/60 hover:text-red-400" />
-            </button>
-          )}
+          <button
+            onClick={onDelete}
+            className="p-0.5 hover:bg-white/20 rounded transition-colors"
+            aria-label="Delete layer"
+          >
+            <Trash2 className="w-3 h-3 text-white/60 hover:text-red-400" />
+          </button>
         </div>
       </div>
       {showOpacitySlider && layer.type !== 'stroke' && onOpacityChange && (
@@ -674,7 +676,7 @@ export function ToolPanel({
                     <>
                       <div className="text-xs font-medium text-white/80 mb-1">Layers ({layers.length})</div>
                       <div className="space-y-1 max-h-[300px] overflow-y-auto">
-                        {[...layers].sort((a, b) => b.order - a.order).map((layer) => (
+                        {[...layers].sort((a, b) => b.order - a.order).map((layer, index) => (
                           <LayerItem
                             key={layer.id}
                             layer={layer}
@@ -686,6 +688,8 @@ export function ToolPanel({
                             }}
                             onOpacityChange={(opacity) => onLayerOpacityChange?.(layer.id, opacity)}
                             totalLayers={layers.length}
+                            isTopLayer={index === 0}
+                            isBottomLayer={index === layers.length - 1}
                           />
                         ))}
                       </div>

@@ -41,9 +41,6 @@ export function PaintingView() {
   const [showImageUpload, setShowImageUpload] = useState(false)
   const [showAIGeneration, setShowAIGeneration] = useState(false)
   const [selectedTool, setSelectedTool] = useState('brush')
-  const [aiImageOpacity, setAIImageOpacity] = useState(1)
-  const [showAIImage, setShowAIImage] = useState(true)
-  const [hasInitializedAIOpacity, setHasInitializedAIOpacity] = useState(false)
   // Check if admin features should be shown based on environment
   const adminFeaturesEnabled = shouldShowAdminFeatures()
   const [isAdminPanelVisible, setIsAdminPanelVisible] = useState(adminFeaturesEnabled)
@@ -93,34 +90,7 @@ export function PaintingView() {
     }
   }, []);
 
-  // Update AI image opacity when toggle changes
-  useEffect(() => {
-    // Skip the first run to avoid setting opacity to 0 on initial load
-    if (!hasInitializedAIOpacity && aiGeneratedImages.length > 0) {
-      setHasInitializedAIOpacity(true)
-      return
-    }
-    
-    const updateOpacity = async () => {
-      for (const aiImage of aiGeneratedImages) {
-        try {
-          // Check if it's an AI-generated image and use the appropriate mutation
-          if ((aiImage as any).type === 'ai-generated') {
-            await updateAIImageTransform({
-              imageId: aiImage._id as Id<"aiGeneratedImages">,
-              opacity: showAIImage ? aiImageOpacity : 0
-            })
-          }
-        } catch (error) {
-          console.error('Failed to update AI image opacity:', error, aiImage)
-        }
-      }
-    }
-    
-    if (aiGeneratedImages.length > 0 && hasInitializedAIOpacity) {
-      updateOpacity()
-    }
-  }, [showAIImage, aiImageOpacity, aiGeneratedImages, updateAIImageTransform, hasInitializedAIOpacity]);
+;
 
   // Create a new session or join existing one on mount
   useEffect(() => {
@@ -285,13 +255,13 @@ export function PaintingView() {
     }
   }, [toggleAdminPanel, adminFeaturesEnabled])
 
-  // Track painting layer visibility
+  // Track painting layer visibility and order
   const [paintingLayerVisible, setPaintingLayerVisible] = useState(true)
+  const [paintingLayerOrder, setPaintingLayerOrder] = useState(0)
   
   // Create layers from strokes and images
   const layers = useMemo<Layer[]>(() => {
     const allLayers: Layer[] = []
-    let currentOrder = 0
     
     // Add painting layer (all strokes combined)
     // Always show the painting layer, even if there are no strokes yet
@@ -308,7 +278,7 @@ export function PaintingView() {
       name: hasStrokes ? 'Painting' : 'Painting (empty)',
       visible: paintingLayerVisible,
       opacity: 1,
-      order: currentOrder++,
+      order: paintingLayerOrder,
     })
     
     // Add uploaded images
@@ -341,7 +311,7 @@ export function PaintingView() {
     }
     
     return allLayers
-  }, [strokes, images, aiImages, paintingLayerVisible])
+  }, [strokes, images, aiImages, paintingLayerVisible, paintingLayerOrder])
 
   // Handle layer operations
   const handleLayerVisibilityChange = useCallback(async (layerId: string, visible: boolean) => {
@@ -395,16 +365,17 @@ export function PaintingView() {
   }, [images, aiImages, clearSession, deleteImage, deleteAIImageMutation])
 
   const handleLayerReorder = useCallback(async (layerId: string, newOrder: number) => {
-    // Check if it's the painting layer
-    if (layerId === 'painting-layer') {
-      // Painting layer order is fixed for now
-      console.log('Painting layer reordering not yet implemented')
-      return
-    }
-    
     // Clamp newOrder to valid range
     const maxOrder = layers.length - 1
     const clampedOrder = Math.max(0, Math.min(newOrder, maxOrder))
+    
+    // Check if it's the painting layer
+    if (layerId === 'painting-layer') {
+      setPaintingLayerOrder(clampedOrder)
+      // Force canvas redraw to reflect new layer order
+      canvasRef.current?.forceRedraw?.()
+      return
+    }
     
     // Check if it's an uploaded image
     const uploadedImage = images.find(img => img._id === layerId)
@@ -450,31 +421,6 @@ export function PaintingView() {
 
   return (
     <div className="relative w-full h-full bg-gray-50">
-      {/* AI Image Toggle - shown when there are AI images */}
-      {aiGeneratedImages.length > 0 && (
-        <div className="absolute top-2 right-40 z-50 flex items-center gap-2">
-          <button 
-            onClick={() => setShowAIImage(!showAIImage)} 
-            className="bg-black/90 backdrop-blur-md border border-white/20 hover:bg-black/80 text-white font-bold py-1 px-2 rounded text-xs"
-            title="Toggle AI image visibility"
-          >
-            {showAIImage ? 'Hide' : 'Show'} AI
-          </button>
-          {showAIImage && (
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.1"
-              value={aiImageOpacity}
-              onChange={(e) => setAIImageOpacity(parseFloat(e.target.value))}
-              className="ai-opacity-slider"
-              title={`AI image opacity: ${Math.round(aiImageOpacity * 100)}%`}
-            />
-          )}
-        </div>
-      )}
-
       {/* Button to toggle Admin Panel - only shown when admin features are enabled */}
       {adminFeaturesEnabled && (
         <button 
@@ -494,6 +440,7 @@ export function PaintingView() {
           size={size}
           opacity={opacity}
           paintingLayerVisible={paintingLayerVisible}
+          paintingLayerOrder={paintingLayerOrder}
           // perfect-freehand options
           smoothing={smoothing}
           thinning={thinning}

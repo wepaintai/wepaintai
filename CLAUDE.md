@@ -40,9 +40,10 @@ Note: No test or lint commands are currently configured.
    - URL-based session sharing
 
 2. **Canvas Architecture**
-   - Dual canvas system: main canvas (committed strokes) + drawing canvas (active stroke)
+   - Triple canvas system: main canvas (committed strokes) + drawing canvas (active stroke) + image canvas (uploaded/AI images)
    - Single-flight pattern prevents duplicate stroke submissions
    - Coalesced pointer events for smooth drawing performance
+   - Z-index layering: strokes (bottom), images (middle), live drawing (top)
 
 3. **Data Flow**
    - Frontend components use Convex hooks (`useQuery`, `useMutation`)
@@ -74,6 +75,25 @@ Set these in the Convex dashboard (Settings > Environment Variables):
 - The admin panel (bottom-left debug info) is hidden in production
 - When modifying Convex schema, the backend will auto-migrate
 - Production database access (`pnpm dev:prod-db`) should be used carefully
+
+### Layer System Implementation
+
+1. **Layer Types**
+   - `stroke`: Paint strokes layer (always present, shows "Painting" or "Painting (empty)")
+   - `image`: Uploaded images
+   - `ai-image`: AI-generated images
+
+2. **Layer Management**
+   - Layers are computed in `PaintingView` component from strokes and images
+   - Each layer has: id, type, name, visible, opacity, order, thumbnailUrl
+   - Paint strokes are combined into a single "Painting" layer
+   - Layer visibility, opacity, and order can be adjusted via the ToolPanel
+
+3. **Important Implementation Details**
+   - **Guest User Support**: The `usePaintingSession` hook allows guest users (without authentication) to paint by accepting `undefined` userId
+   - **Stroke Detection**: The painting layer shows as "Painting (empty)" when no strokes exist, "Painting" when strokes are present
+   - **Data Source**: Both `PaintingView` and `Canvas` components must use strokes from the same source (`usePaintingSession` hook) to ensure consistency
+   - **Layer Ordering**: Higher order numbers appear on top (painted last)
 
 ### AI Image Generation
 - Uses Replicate's Flux Kontext Pro model for AI image editing
