@@ -9,12 +9,20 @@ export const Route = createFileRoute('/')({
 })
 
 function RouteComponent() {
+  // Check if auth is disabled via environment variable
+  const authDisabled = import.meta.env.VITE_AUTH_DISABLED === 'true'
+  
   return (
     <>
       <PaintingView />
-      <AuthDebug />
-      <AuthTest />
-      <ConvexTokenTest />
+      {/* Only show auth debug components when auth is not disabled */}
+      {!authDisabled && (
+        <>
+          <AuthDebug />
+          <AuthTest />
+          <ConvexTokenTest />
+        </>
+      )}
     </>
   )
 }

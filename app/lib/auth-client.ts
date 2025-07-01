@@ -17,6 +17,10 @@ console.log('[Auth Client] Loading auth-client.ts module...');
 import { createAuthClient } from "better-auth/react";
 import { convexClient } from "@convex-dev/better-auth/client/plugins";
 
+// Check if auth is disabled for local development
+const authDisabled = import.meta.env.VITE_AUTH_DISABLED === 'true';
+console.log('[Auth Client] Auth disabled:', authDisabled);
+
 // Get the base URL for auth - handle different environments
 function getAuthBaseURL() {
   console.log('[Auth Client] getAuthBaseURL called');
@@ -159,6 +163,30 @@ const baseAuthClient = createAuthClient({
 const originalGetSession = baseAuthClient.getSession;
 baseAuthClient.getSession = async () => {
   console.log('[Auth Client] getSession called - using explicit endpoint');
+  
+  // Return mock session if auth is disabled
+  if (authDisabled) {
+    console.log('[Auth Client] Auth disabled - returning mock session');
+    return {
+      data: {
+        session: {
+          id: 'mock-session-id',
+          userId: 'mock-user-id',
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // 24 hours from now
+        },
+        user: {
+          id: 'mock-user-id',
+          email: 'local-dev@example.com',
+          name: 'Local Dev User',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          emailVerified: true,
+        }
+      },
+      error: null
+    };
+  }
+  
   try {
     const response = await customFetch(`${getAuthBaseURL()}/api/auth/session`, {
       method: 'GET',
@@ -192,10 +220,80 @@ baseAuthClient.getSession = async () => {
 };
 
 // Extend the auth client to add the missing convex.token method
+// Override signIn method when auth is disabled
+const originalSignIn = baseAuthClient.signIn;
+baseAuthClient.signIn = {
+  email: async (credentials: any) => {
+    if (authDisabled) {
+      console.log('[Auth Client] Auth disabled - mock sign in');
+      return {
+        data: {
+          session: {
+            id: 'mock-session-id',
+            userId: 'mock-user-id',
+            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          },
+          user: {
+            id: 'mock-user-id',
+            email: credentials.email || 'local-dev@example.com',
+            name: 'Local Dev User',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            emailVerified: true,
+          }
+        },
+        error: null
+      };
+    }
+    return originalSignIn.email(credentials);
+  }
+};
+
+// Override signUp method when auth is disabled
+const originalSignUp = baseAuthClient.signUp;
+baseAuthClient.signUp = {
+  email: async (credentials: any) => {
+    if (authDisabled) {
+      console.log('[Auth Client] Auth disabled - mock sign up');
+      return {
+        data: {
+          session: {
+            id: 'mock-session-id',
+            userId: 'mock-user-id',
+            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          },
+          user: {
+            id: 'mock-user-id',
+            email: credentials.email || 'local-dev@example.com',
+            name: credentials.name || 'Local Dev User',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            emailVerified: true,
+          }
+        },
+        error: null
+      };
+    }
+    return originalSignUp.email(credentials);
+  }
+};
+
 export const authClient = Object.assign(baseAuthClient, {
   convex: {
     token: async () => {
       console.log('[Auth Client] Fetching Convex token...');
+      
+      // Return mock token if auth is disabled
+      if (authDisabled) {
+        console.log('[Auth Client] Auth disabled - returning mock token');
+        return { 
+          data: { 
+            token: 'mock-convex-token-for-local-dev'
+          }, 
+          error: null 
+        };
+      }
+      
       try {
         const response = await customFetch(`${getAuthBaseURL()}/api/auth/convex/token`, {
           method: 'GET',
