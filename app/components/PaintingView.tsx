@@ -17,6 +17,82 @@ import { initP2PLogger } from '../lib/p2p-logger'
 import { useMutation, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 
+// Wrapper component to handle canvas data capture with proper timing
+function AIGenerationModalWrapper({ 
+  sessionId, 
+  canvasRef, 
+  onClose, 
+  onGenerationComplete,
+  layers,
+  strokes 
+}: {
+  sessionId: Id<"paintingSessions">
+  canvasRef: React.RefObject<CanvasRef>
+  onClose: () => void
+  onGenerationComplete: (imageUrl: string) => void
+  layers: Layer[]
+  strokes: any[]
+}) {
+  const [canvasData, setCanvasData] = useState<string>('')
+  const [isLoading, setIsLoading] = useState(true)
+  const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
+  
+  useEffect(() => {
+    // Capture canvas data after a small delay to ensure layers are rendered
+    const captureCanvas = () => {
+      if (canvasRef.current) {
+        console.log('[AIGenerationModalWrapper] About to capture canvas data')
+        console.log('[AIGenerationModalWrapper] Layers available:', layers.length)
+        console.log('[AIGenerationModalWrapper] Strokes available:', strokes?.length || 0)
+        
+        // Force canvas redraw before capturing
+        canvasRef.current.forceRedraw()
+        
+        // Wait a bit after forcing redraw
+        setTimeout(() => {
+          if (canvasRef.current) {
+            const data = canvasRef.current.getImageData() || ''
+            const dims = canvasRef.current.getDimensions() || { width: 800, height: 600 }
+            
+            console.log('[AIGenerationModalWrapper] Canvas data captured after redraw:', data.length)
+            setCanvasData(data)
+            setDimensions(dims)
+            setIsLoading(false)
+            
+            // If still empty, try again after another delay
+            if (!data || data.length === 0) {
+              console.warn('[AIGenerationModalWrapper] Canvas data empty, retrying...')
+              setTimeout(() => {
+                const retryData = canvasRef.current?.getImageData() || ''
+                if (retryData && retryData.length > 0) {
+                  console.log('[AIGenerationModalWrapper] Retry successful:', retryData.length)
+                  setCanvasData(retryData)
+                }
+              }, 500)
+            }
+          }
+        }, 200)
+      }
+    }
+    
+    // Initial delay to let canvas layers render
+    const timer = setTimeout(captureCanvas, 300) // Increased delay
+    return () => clearTimeout(timer)
+  }, [canvasRef])
+  
+  return (
+    <AIGenerationModal
+      isOpen={true}
+      onClose={onClose}
+      sessionId={sessionId}
+      canvasDataUrl={canvasData}
+      canvasWidth={dimensions.width}
+      canvasHeight={dimensions.height}
+      onGenerationComplete={onGenerationComplete}
+    />
+  )
+}
+
 export function PaintingView() {
   const canvasRef = useRef<CanvasRef>(null)
   const [color, setColor] = useState('#000000')
@@ -517,40 +593,19 @@ export function PaintingView() {
           canvasHeight={canvasRef.current?.getDimensions().height}
         />
       )}
-      {showAIGeneration && sessionId && (() => {
-        // Capture canvas data when modal is shown
-        const canvasData = canvasRef.current?.getImageData() || '';
-        console.log('[PaintingView] Canvas ref exists:', !!canvasRef.current);
-        console.log('[PaintingView] Canvas data for AI generation:', canvasData.substring(0, 100) + '...');
-        console.log('[PaintingView] Canvas data length:', canvasData.length);
-        console.log('[PaintingView] Canvas data is empty:', canvasData === '' || canvasData.length === 0);
-        
-        // If canvas data is empty, try to get it again after a short delay
-        if (!canvasData || canvasData.length === 0) {
-          console.error('[PaintingView] ERROR: Canvas data is empty!');
-          setTimeout(() => {
-            const retryData = canvasRef.current?.getImageData() || '';
-            console.log('[PaintingView] Retry canvas data length:', retryData.length);
-          }, 100);
-        }
-        
-        const canvasDimensions = canvasRef.current?.getDimensions() || { width: 800, height: 600 };
-        
-        return (
-          <AIGenerationModal
-            isOpen={showAIGeneration}
-            onClose={() => {
-              setShowAIGeneration(false)
-              setSelectedTool('brush')
-            }}
-            sessionId={sessionId}
-            canvasDataUrl={canvasData}
-            canvasWidth={canvasDimensions.width}
-            canvasHeight={canvasDimensions.height}
-            onGenerationComplete={handleAIGenerationComplete}
-          />
-        );
-      })()}
+      {showAIGeneration && sessionId && (
+        <AIGenerationModalWrapper
+          sessionId={sessionId}
+          canvasRef={canvasRef}
+          onClose={() => {
+            setShowAIGeneration(false)
+            setSelectedTool('brush')
+          }}
+          onGenerationComplete={handleAIGenerationComplete}
+          layers={layers}
+          strokes={strokes}
+        />
+      )}
       {/* Admin Panel - only rendered when admin features are enabled */}
       {adminFeaturesEnabled && (
         <AdminPanel

@@ -118,6 +118,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
   ) => {
     const drawingCanvasRef = useRef<HTMLCanvasElement>(null) // For live drawing
     const [canvasLayers, setCanvasLayers] = useState<Map<string, CanvasLayer>>(new Map())
+    const [layerVersion, setLayerVersion] = useState(0) // Force re-render on layer changes
     const [isDrawing, setIsDrawing] = useState(false)
     const [currentStroke, setCurrentStroke] = useState<Point[]>([])
     const [drawingContext, setDrawingContext] = useState<CanvasRenderingContext2D | null>(null)
@@ -177,26 +178,33 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
           const existing = prevCanvasLayers.get(layer.id)
           if (existing) {
             // Update existing layer properties
+            const orderChanged = existing.order !== layer.order
+            if (orderChanged) {
+              console.log(`[Canvas] Layer ${layer.id} order changed from ${existing.order} to ${layer.order}`)
+            }
             updatedLayers.set(layer.id, {
               ...existing,
               visible: layer.visible,
               opacity: layer.opacity,
               order: layer.order,
-              isDirty: existing.order !== layer.order || existing.visible !== layer.visible || existing.opacity !== layer.opacity
+              isDirty: orderChanged || existing.visible !== layer.visible || existing.opacity !== layer.opacity
             })
           } else {
             // Create new canvas layer
             console.log(`[Canvas] Creating new canvas layer for ${layer.id} (${layer.type})`)
+            const newCanvasRef = React.createRef<HTMLCanvasElement>()
             updatedLayers.set(layer.id, {
               id: layer.id,
               type: layer.type,
-              canvasRef: React.createRef<HTMLCanvasElement>(),
+              canvasRef: newCanvasRef,
               context: null,
               visible: layer.visible,
               opacity: layer.opacity,
               order: layer.order,
               isDirty: true
             })
+            // Force initialization check on next render
+            setLayerVersion(v => v + 1)
           }
         })
         
@@ -213,6 +221,16 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
             }
           }
         })
+        
+        // Increment version to force re-render when order changes
+        const hasOrderChanges = Array.from(updatedLayers.values()).some(layer => {
+          const prev = prevCanvasLayers.get(layer.id)
+          return prev && prev.order !== layer.order
+        })
+        
+        if (hasOrderChanges) {
+          setLayerVersion(v => v + 1)
+        }
         
         return updatedLayers
       })
@@ -314,9 +332,11 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       
       if (layer.type === 'stroke') {
         // Draw all confirmed strokes from the session
+        console.log(`[Canvas] Redrawing stroke layer, strokes count: ${strokes.length}`)
         strokes
           .sort((a, b) => a.strokeOrder - b.strokeOrder)
-          .forEach((s) => {
+          .forEach((s, index) => {
+            console.log(`[Canvas] Drawing stroke ${index}: ${s.points.length} points, color: ${s.brushColor}`)
             drawSingleStroke(layer.context!, {
               points: s.points,
               color: s.brushColor,
@@ -429,32 +449,53 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       if (!container) return
 
       const { clientWidth, clientHeight } = container
+      let needsUpdate = false
 
       // Initialize each layer canvas
       canvasLayers.forEach((layer) => {
         const canvas = layer.canvasRef.current
-        if (canvas && !layer.context) {
-          const ctx = canvas.getContext('2d')
-          if (ctx) {
+        if (canvas) {
+          // Always ensure canvas has correct dimensions
+          if (canvas.width !== clientWidth || canvas.height !== clientHeight) {
             canvas.width = clientWidth
             canvas.height = clientHeight
-            layer.context = ctx
-            layer.isDirty = true
+            needsUpdate = true
+          }
+          
+          // Initialize context if needed
+          if (!layer.context) {
+            const ctx = canvas.getContext('2d')
+            if (ctx) {
+              layer.context = ctx
+              layer.isDirty = true
+              needsUpdate = true
+            }
           }
         }
       })
 
       // Initialize drawing canvas
       const drawingCanvas = drawingCanvasRef.current
-      if (drawingCanvas && !drawingContext) {
-        const ctx = drawingCanvas.getContext('2d')
-        if (ctx) {
+      if (drawingCanvas) {
+        // Always ensure canvas has correct dimensions
+        if (drawingCanvas.width !== clientWidth || drawingCanvas.height !== clientHeight) {
           drawingCanvas.width = clientWidth
           drawingCanvas.height = clientHeight
-          setDrawingContext(ctx)
+        }
+        
+        if (!drawingContext) {
+          const ctx = drawingCanvas.getContext('2d')
+          if (ctx) {
+            setDrawingContext(ctx)
+          }
         }
       }
-    }, [canvasLayers, drawingContext])
+      
+      // Force update if any canvas was initialized
+      if (needsUpdate) {
+        setLayerVersion(v => v + 1)
+      }
+    }, [canvasLayers, drawingContext, layerVersion]) // Added layerVersion to re-run when layers change
 
     // Handle window resize
     useEffect(() => {
@@ -893,13 +934,53 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
         // Combine all canvas layers into a single image
         console.log('[Canvas] getImageData called')
         console.log('[Canvas] Number of layers:', canvasLayers.size)
+        console.log('[Canvas] Container ref exists:', !!containerRef.current)
         
-        if (canvasLayers.size === 0 || !containerRef.current) {
-          console.log('[Canvas] ERROR: No layers or container!')
+        // Force redraw all layers before capturing
+        canvasLayers.forEach(layer => {
+          if (layer.isDirty || !layer.context) {
+            redrawLayer(layer)
+          }
+        })
+        
+        // Check if we have valid canvas elements
+        const validCanvases = Array.from(canvasLayers.values()).filter(layer => 
+          layer.canvasRef.current && layer.canvasRef.current.width > 0
+        )
+        console.log('[Canvas] Valid canvases:', validCanvases.length)
+        
+        if (validCanvases.length === 0) {
+          console.log('[Canvas] WARNING: No valid canvas layers yet')
+          // Create a blank canvas with container dimensions as fallback
+          if (containerRef.current) {
+            const { clientWidth, clientHeight } = containerRef.current
+            const blankCanvas = document.createElement('canvas')
+            blankCanvas.width = clientWidth || 800
+            blankCanvas.height = clientHeight || 600
+            const ctx = blankCanvas.getContext('2d')
+            if (ctx) {
+              ctx.fillStyle = 'white'
+              ctx.fillRect(0, 0, blankCanvas.width, blankCanvas.height)
+              return blankCanvas.toDataURL('image/png')
+            }
+          }
           return ''
         }
         
-        const { clientWidth: width, clientHeight: height } = containerRef.current
+        // Get dimensions from the first valid canvas or container
+        let width = 800
+        let height = 600
+        
+        if (validCanvases.length > 0 && validCanvases[0].canvasRef.current) {
+          const firstValidCanvas = validCanvases[0].canvasRef.current
+          width = firstValidCanvas.width || containerRef.current.clientWidth || 800
+          height = firstValidCanvas.height || containerRef.current.clientHeight || 600
+        } else if (containerRef.current) {
+          width = containerRef.current.clientWidth || 800
+          height = containerRef.current.clientHeight || 600
+        }
+        
+        console.log('[Canvas] Using dimensions:', width, 'x', height)
         
         // Create a temporary canvas to combine all layers
         const tempCanvas = document.createElement('canvas')
@@ -920,10 +1001,26 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
         Array.from(canvasLayers.values())
           .sort((a, b) => a.order - b.order)
           .forEach(layer => {
-            if (layer.visible && layer.canvasRef.current) {
+            if (layer.visible && layer.canvasRef.current && layer.canvasRef.current.width > 0) {
               tempContext.globalAlpha = 1 // Layer opacity is already baked into the canvas
+              
+              // Check if the layer canvas has any content
+              const layerImageData = layer.context?.getImageData(0, 0, layer.canvasRef.current.width, layer.canvasRef.current.height)
+              let hasContent = false
+              if (layerImageData) {
+                const pixels = layerImageData.data
+                for (let i = 0; i < pixels.length; i += 4) {
+                  if (pixels[i + 3] > 0) { // Check alpha channel
+                    hasContent = true
+                    break
+                  }
+                }
+              }
+              
               tempContext.drawImage(layer.canvasRef.current, 0, 0)
-              console.log(`[Canvas] Drew layer ${layer.id} (${layer.type}) at order ${layer.order}`)
+              console.log(`[Canvas] Drew layer ${layer.id} (${layer.type}) at order ${layer.order}, dimensions: ${layer.canvasRef.current.width}x${layer.canvasRef.current.height}, hasContent: ${hasContent}`)
+            } else {
+              console.log(`[Canvas] Skipped layer ${layer.id} - visible: ${layer.visible}, hasRef: ${!!layer.canvasRef.current}, width: ${layer.canvasRef.current?.width || 0}`)
             }
           })
         
@@ -991,34 +1088,35 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
         }
       },
       forceRedraw: () => {
-        // Force redraw all layers
-        setCanvasLayers(prev => {
-          const updated = new Map(prev)
-          updated.forEach((layer) => {
-            layer.isDirty = true
-          })
-          return updated
+        // Force immediate redraw of all layers
+        console.log('[Canvas] forceRedraw called')
+        canvasLayers.forEach((layer) => {
+          layer.isDirty = true
+          redrawLayer(layer)
         })
       },
-    }), [canvasLayers])
+    }), [canvasLayers, redrawLayer])
 
     return (
       <div ref={containerRef} className="relative w-full h-full">
         {/* Render all layer canvases sorted by order */}
         {Array.from(canvasLayers.values())
           .sort((a, b) => a.order - b.order)
-          .map((layer) => (
-            <canvas
-              key={layer.id}
-              ref={layer.canvasRef}
-              className="absolute inset-0 w-full h-full pointer-events-none"
-              style={{
-                zIndex: layer.order,
-                opacity: layer.visible ? 1 : 0,
-                border: layer.type === 'stroke' ? '1px solid rgb(209 213 219)' : 'none'
-              }}
-            />
-          ))}
+          .map((layer, index) => {
+            console.log(`[Canvas Render] Layer ${layer.id} (${layer.type}) at z-index ${layer.order}`)
+            return (
+              <canvas
+                key={layer.id}
+                ref={layer.canvasRef}
+                className="absolute inset-0 w-full h-full pointer-events-none"
+                style={{
+                  zIndex: layer.order,
+                  opacity: layer.visible ? 1 : 0,
+                  border: layer.type === 'stroke' ? '1px solid rgb(209 213 219)' : 'none'
+                }}
+              />
+            )
+          })}
         
         {/* Drawing canvas always on top */}
         <canvas
@@ -1028,7 +1126,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerLeave={handlePointerLeave}
-          style={{ touchAction: 'none', zIndex: 10 }}
+          style={{ touchAction: 'none', zIndex: 40 }}
         />
       </div>
     )
