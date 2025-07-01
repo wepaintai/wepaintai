@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { authClient } from '../lib/auth-client'
 import { useRouter } from '@tanstack/react-router'
 
@@ -15,6 +15,16 @@ function LoginComponent() {
   const [isSignUp, setIsSignUp] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  
+  // Check if auth is disabled
+  const authDisabled = import.meta.env.VITE_AUTH_DISABLED === 'true'
+  
+  // Redirect to home if auth is disabled
+  useEffect(() => {
+    if (authDisabled) {
+      window.location.href = '/'
+    }
+  }, [authDisabled])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -70,6 +80,17 @@ function LoginComponent() {
       setError(errorMessage)
       setLoading(false)
     }
+  }
+
+  // Don't render login form if auth is disabled
+  if (authDisabled) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <p className="text-gray-600">Redirecting...</p>
+        </div>
+      </div>
+    )
   }
 
   return (
