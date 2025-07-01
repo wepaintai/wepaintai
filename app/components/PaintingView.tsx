@@ -48,7 +48,7 @@ export function PaintingView() {
   const adminFeaturesEnabled = shouldShowAdminFeatures()
   const [isAdminPanelVisible, setIsAdminPanelVisible] = useState(adminFeaturesEnabled)
 
-  const { createNewSession, presence, currentUser, isLoading, clearSession, undoLastStroke, redoLastStroke } = usePaintingSession(sessionId)
+  const { createNewSession, presence, currentUser, isLoading, clearSession, undoLastStroke, redoLastStroke, strokes } = usePaintingSession(sessionId)
   const addAIGeneratedImage = useMutation(api.images.addAIGeneratedImage)
   const updateAIImageTransform = useMutation(api.images.updateAIImageTransform)
   
@@ -56,13 +56,17 @@ export function PaintingView() {
   const { images, updateImageTransform, deleteImage, changeLayerOrder } = useSessionImages(sessionId)
   const aiGeneratedImages = images.filter(img => (img as any).type === 'ai-generated')
   
-  // Get strokes for the session
-  const strokes = useQuery(api.strokes.getSessionStrokes, sessionId ? { sessionId } : 'skip')
-  
-  // Debug strokes
+  // Debug strokes from usePaintingSession
   useEffect(() => {
-    console.log('[Layers] Strokes:', strokes?.length, strokes)
-  }, [strokes])
+    console.log('[Layers] Strokes from usePaintingSession:', {
+      strokesExist: !!strokes,
+      strokesLength: strokes?.length,
+      strokesIsArray: Array.isArray(strokes),
+      strokesValue: strokes,
+      sessionId,
+      currentUser
+    })
+  }, [strokes, sessionId, currentUser])
   
   // Get AI generated images separately
   const aiImages = useQuery(api.images.getAIGeneratedImages, sessionId ? { sessionId } : 'skip')
@@ -292,6 +296,12 @@ export function PaintingView() {
     // Add painting layer (all strokes combined)
     // Always show the painting layer, even if there are no strokes yet
     const hasStrokes = Array.isArray(strokes) && strokes.length > 0
+    console.log('[Layers] Computing layers:', {
+      strokesInMemo: strokes,
+      strokesLength: strokes?.length,
+      hasStrokes,
+      isArray: Array.isArray(strokes)
+    })
     allLayers.push({
       id: 'painting-layer',
       type: 'stroke',

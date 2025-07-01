@@ -178,11 +178,11 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     brushSize: number,
     opacity: number = 1
   ) => {
-    if (!sessionId || !currentUser.id) return;
+    if (!sessionId) return;
     
     return await addStroke({
       sessionId,
-      userId: currentUser.id,
+      userId: currentUser.id || undefined,  // Allow undefined for guest users
       userColor: currentUser.color,
       points,
       brushColor,
@@ -198,14 +198,14 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     isDrawing: boolean,
     currentTool: string
   ) => {
-    if (!sessionId || !currentUser.id) {
-      console.log('⚠️ Skipping presence update - no session or user ID');
+    if (!sessionId) {
+      console.log('⚠️ Skipping presence update - no session');
       return;
     }
     
     return await updatePresence({
       sessionId,
-      userId: currentUser.id,
+      userId: currentUser.id || undefined,  // Allow undefined for guest users
       userColor: currentUser.color,
       userName: currentUser.name,
       cursorX,
@@ -269,7 +269,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     brushSize: number,
     opacity: number = 1
   ) => {
-    if (!sessionId || !currentUser.id) return;
+    if (!sessionId) return;
     
     const now = Date.now();
     const timeSinceLastUpdate = now - lastUpdateTimeRef.current;
@@ -330,12 +330,15 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
 
   // Clear live stroke (when finishing drawing)
   const clearLiveStrokeForUser = useCallback(async () => {
-    if (!sessionId || !currentUser.id) return;
+    if (!sessionId) return;
     
-    return await clearLiveStroke({
-      sessionId,
-      userId: currentUser.id,
-    });
+    // Only clear if user has an ID (guest users don't have live strokes)
+    if (currentUser.id) {
+      return await clearLiveStroke({
+        sessionId,
+        userId: currentUser.id,
+      });
+    }
   }, [sessionId, currentUser.id, clearLiveStroke]);
 
   // Leave session on unmount and cleanup timeouts
