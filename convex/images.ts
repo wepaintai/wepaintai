@@ -351,11 +351,19 @@ export const updateAIImageLayerOrder = mutation({
 export const deleteAIImage = mutation({
   args: { imageId: v.id("aiGeneratedImages") },
   handler: async (ctx, args) => {
+    console.log('[deleteAIImage] Attempting to delete AI image:', args.imageId);
+    
     const image = await ctx.db.get(args.imageId);
-    if (!image) throw new Error("AI image not found");
+    if (!image) {
+      console.error('[deleteAIImage] AI image not found:', args.imageId);
+      throw new Error("AI image not found");
+    }
+    
+    console.log('[deleteAIImage] Found image to delete:', image);
 
     // Delete the record
     await ctx.db.delete(args.imageId);
+    console.log('[deleteAIImage] AI image deleted successfully');
 
     // Reorder remaining images
     const remainingImages = await ctx.db

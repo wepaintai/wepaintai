@@ -129,6 +129,12 @@ export function PaintingView() {
   const { images, updateImageTransform, deleteImage, changeLayerOrder } = useSessionImages(sessionId)
   const aiGeneratedImages = images.filter(img => (img as any).type === 'ai-generated')
   
+  // Debug: Log both image sources
+  useEffect(() => {
+    console.log('[PaintingView] Images from useSessionImages:', images)
+    console.log('[PaintingView] AI images filtered from images:', aiGeneratedImages)
+  }, [images, aiGeneratedImages])
+  
   // Debug strokes from usePaintingSession
   useEffect(() => {
     console.log('[Layers] Strokes from usePaintingSession:', {
@@ -146,6 +152,11 @@ export function PaintingView() {
   const updateAIImageTransformMutation = useMutation(api.images.updateAIImageTransform)
   const deleteAIImageMutation = useMutation(api.images.deleteAIImage)
   const updateAIImageLayerOrderMutation = useMutation(api.images.updateAIImageLayerOrder)
+  
+  // Debug: Log aiImages from direct query
+  useEffect(() => {
+    console.log('[PaintingView] AI images from direct query:', aiImages)
+  }, [aiImages])
   
   // P2P connection status
   const { 
@@ -373,7 +384,9 @@ export function PaintingView() {
     
     // Add AI-generated images
     if (aiImages) {
+      console.log('[Layers] Adding AI images to layers:', aiImages.length)
       aiImages.forEach((img, index) => {
+        console.log('[Layers] AI image:', img._id, img)
         allLayers.push({
           id: img._id,
           type: 'ai-image',
@@ -419,6 +432,8 @@ export function PaintingView() {
   }, [images, aiImages, updateImageTransform, updateAIImageTransformMutation])
 
   const handleLayerDelete = useCallback(async (layerId: string) => {
+    console.log('[PaintingView] handleLayerDelete called with layerId:', layerId)
+    
     // Check if it's the painting layer
     if (layerId === 'painting-layer') {
       // Clear all strokes
@@ -426,17 +441,33 @@ export function PaintingView() {
       return
     }
     
-    // Check if it's an uploaded image
-    const uploadedImage = images.find(img => img._id === layerId)
+    // Check if it's an uploaded image (not AI-generated)
+    const uploadedImage = images.find(img => img._id === layerId && (img as any).type !== 'ai-generated')
     if (uploadedImage) {
+      console.log('[PaintingView] Deleting uploaded image:', layerId)
       await deleteImage(layerId as Id<"uploadedImages">)
       return
     }
     
-    // Check if it's an AI image
-    const aiImage = aiImages?.find(img => img._id === layerId)
+    // Check if it's an AI image (either in aiImages or in images with type 'ai-generated')
+    const aiImageFromQuery = aiImages?.find(img => img._id === layerId)
+    const aiImageFromImages = images.find(img => img._id === layerId && (img as any).type === 'ai-generated')
+    const aiImage = aiImageFromQuery || aiImageFromImages
+    
+    console.log('[PaintingView] AI images from query:', aiImages)
+    console.log('[PaintingView] Found AI image from query:', aiImageFromQuery)
+    console.log('[PaintingView] Found AI image from images:', aiImageFromImages)
+    
     if (aiImage) {
-      await deleteAIImageMutation({ imageId: layerId as Id<"aiGeneratedImages"> })
+      console.log('[PaintingView] Deleting AI image:', layerId)
+      try {
+        await deleteAIImageMutation({ imageId: layerId as Id<"aiGeneratedImages"> })
+        console.log('[PaintingView] AI image deleted successfully')
+      } catch (error) {
+        console.error('[PaintingView] Error deleting AI image:', error)
+      }
+    } else {
+      console.warn('[PaintingView] Layer not found for deletion:', layerId)
     }
   }, [images, aiImages, clearSession, deleteImage, deleteAIImageMutation])
 
