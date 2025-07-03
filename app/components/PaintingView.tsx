@@ -1,5 +1,6 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react'
 import { Canvas, CanvasRef } from './Canvas'
+import { KonvaCanvas } from './KonvaCanvas'
 import { ToolPanel, Layer } from './ToolPanel'
 import { AdminPanel } from './AdminPanel' // Import AdminPanel
 import { SessionInfo } from './SessionInfo'
@@ -98,6 +99,10 @@ export function PaintingView() {
   const [color, setColor] = useState('#000000')
   const [size, setSize] = useState(20) // perfect-freehand: size
   const [opacity, setOpacity] = useState(1.0)
+  
+  // Feature flag to enable Konva canvas - can be toggled via environment variable or local storage
+  const useKonvaCanvas = import.meta.env.VITE_USE_KONVA_CANVAS === 'true' || 
+                        (typeof window !== 'undefined' && localStorage.getItem('useKonvaCanvas') === 'true')
 
   // perfect-freehand options
   const [smoothing, setSmoothing] = useState(0.35)
@@ -530,34 +535,72 @@ export function PaintingView() {
     <div className="relative w-full h-full bg-gray-50">
       {/* Button to toggle Admin Panel - only shown when admin features are enabled */}
       {adminFeaturesEnabled && (
-        <button 
-          onClick={toggleAdminPanel} 
-          className="absolute top-2 right-28 z-50 bg-black/90 backdrop-blur-md border border-white/20 hover:bg-black/80 text-white font-bold py-1 px-2 rounded text-xs"
-          title="Toggle Admin Panel (Ctrl+Shift+A)"
-        >
-          {isAdminPanelVisible ? 'Hide' : 'Show'} Admin
-        </button>
+        <>
+          <button 
+            onClick={toggleAdminPanel} 
+            className="absolute top-2 right-28 z-50 bg-black/90 backdrop-blur-md border border-white/20 hover:bg-black/80 text-white font-bold py-1 px-2 rounded text-xs"
+            title="Toggle Admin Panel (Ctrl+Shift+A)"
+          >
+            {isAdminPanelVisible ? 'Hide' : 'Show'} Admin
+          </button>
+          
+          {/* Canvas implementation toggle - only in development */}
+          {process.env.NODE_ENV === 'development' && (
+            <button
+              onClick={() => {
+                const newValue = !useKonvaCanvas
+                localStorage.setItem('useKonvaCanvas', String(newValue))
+                window.location.reload()
+              }}
+              className="absolute top-2 right-2 z-50 bg-purple-600/90 backdrop-blur-md border border-white/20 hover:bg-purple-700/80 text-white font-bold py-1 px-2 rounded text-xs"
+              title="Toggle between Canvas implementations"
+            >
+              {useKonvaCanvas ? 'Konva' : 'Canvas'} Mode
+            </button>
+          )}
+        </>
       )}
 
       {sessionId ? (
-        <Canvas
-          ref={canvasRef}
-          sessionId={sessionId}
-          color={color}
-          size={size}
-          opacity={opacity}
-          layers={layers}
-          // perfect-freehand options
-          smoothing={smoothing}
-          thinning={thinning}
-          streamline={streamline}
-          easing={easing}
-          startTaper={startTaper}
-          startCap={startCap}
-          endTaper={endTaper}
-          endCap={endCap}
-          onStrokeEnd={handleStrokeEnd}
-        />
+        useKonvaCanvas ? (
+          <KonvaCanvas
+            ref={canvasRef}
+            sessionId={sessionId}
+            color={color}
+            size={size}
+            opacity={opacity}
+            layers={layers}
+            // perfect-freehand options
+            smoothing={smoothing}
+            thinning={thinning}
+            streamline={streamline}
+            easing={easing}
+            startTaper={startTaper}
+            startCap={startCap}
+            endTaper={endTaper}
+            endCap={endCap}
+            onStrokeEnd={handleStrokeEnd}
+          />
+        ) : (
+          <Canvas
+            ref={canvasRef}
+            sessionId={sessionId}
+            color={color}
+            size={size}
+            opacity={opacity}
+            layers={layers}
+            // perfect-freehand options
+            smoothing={smoothing}
+            thinning={thinning}
+            streamline={streamline}
+            easing={easing}
+            startTaper={startTaper}
+            startCap={startCap}
+            endTaper={endTaper}
+            endCap={endCap}
+            onStrokeEnd={handleStrokeEnd}
+          />
+        )
       ) : (
         <div className="absolute inset-0 flex items-center justify-center bg-gray-100">
           <div className="text-center">
