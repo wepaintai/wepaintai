@@ -1,5 +1,6 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react'
 import { Canvas, CanvasRef } from './Canvas'
+import { KonvaCanvas } from './KonvaCanvas'
 import { ToolPanel, Layer } from './ToolPanel'
 import { AdminPanel } from './AdminPanel' // Import AdminPanel
 import { SessionInfo } from './SessionInfo'
@@ -98,6 +99,10 @@ export function PaintingView() {
   const [color, setColor] = useState('#000000')
   const [size, setSize] = useState(20) // perfect-freehand: size
   const [opacity, setOpacity] = useState(1.0)
+  
+  // Feature flag to enable Konva canvas - can be toggled via environment variable or local storage
+  const useKonvaCanvas = import.meta.env.VITE_USE_KONVA_CANVAS === 'true' || 
+                        (typeof window !== 'undefined' && localStorage.getItem('useKonvaCanvas') === 'true')
 
   // perfect-freehand options
   const [smoothing, setSmoothing] = useState(0.35)
@@ -128,6 +133,14 @@ export function PaintingView() {
   // Get images to find AI-generated ones
   const { images, updateImageTransform, deleteImage, changeLayerOrder } = useSessionImages(sessionId)
   const aiGeneratedImages = images.filter(img => (img as any).type === 'ai-generated')
+  
+  // Paint layer mutations
+  const updatePaintLayerOrder = useMutation(api.paintLayer.updatePaintLayerOrder)
+  const updatePaintLayerVisibility = useMutation(api.paintLayer.updatePaintLayerVisibility)
+  const paintLayerSettings = useQuery(api.paintLayer.getPaintLayerSettings, sessionId ? { sessionId } : 'skip')
+  
+  // Unified layer reordering
+  const reorderLayer = useMutation(api.layers.reorderLayer)
   
   // Debug: Log both image sources
   useEffect(() => {
@@ -326,12 +339,41 @@ export function PaintingView() {
     }
   }, [handleImageUpload])
 
-  // Add keyboard listener for toggling admin panel (e.g., Ctrl+Shift+A) - only when admin features are enabled
+  // Add keyboard listeners for tool shortcuts and admin panel
   useEffect(() => {
-    if (!adminFeaturesEnabled) return
-    
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.ctrlKey && event.shiftKey && event.key === 'A') {
+      // Tool shortcuts (when not typing in an input field)
+      if (!event.ctrlKey && !event.metaKey && !event.altKey && 
+          event.target instanceof Element && 
+          !['INPUT', 'TEXTAREA'].includes(event.target.tagName)) {
+        switch (event.key.toLowerCase()) {
+          case 'b':
+            event.preventDefault()
+            setSelectedTool('brush')
+            break
+          case 'h':
+            event.preventDefault()
+            setSelectedTool('pan')
+            break
+          case 'u':
+            event.preventDefault()
+            setSelectedTool('upload')
+            handleImageUpload()
+            break
+          case 'g':
+            event.preventDefault()
+            setSelectedTool('ai')
+            handleAIGenerate()
+            break
+          case 'i':
+            event.preventDefault()
+            setSelectedTool('inpaint')
+            break
+        }
+      }
+      
+      // Admin panel toggle (Ctrl+Shift+A) - only when admin features are enabled
+      if (adminFeaturesEnabled && event.ctrlKey && event.shiftKey && event.key === 'A') {
         event.preventDefault()
         toggleAdminPanel()
       }
@@ -340,11 +382,11 @@ export function PaintingView() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [toggleAdminPanel, adminFeaturesEnabled])
+  }, [toggleAdminPanel, adminFeaturesEnabled, handleImageUpload, handleAIGenerate])
 
-  // Track painting layer visibility and order
-  const [paintingLayerVisible, setPaintingLayerVisible] = useState(true)
-  const [paintingLayerOrder, setPaintingLayerOrder] = useState(1) // Default to 1 so images (starting at 0) appear below
+  // Use persisted paint layer settings or defaults
+  const paintingLayerVisible = paintLayerSettings?.visible ?? true
+  const paintingLayerOrder = paintLayerSettings?.layerOrder ?? 0
   
   // Create layers from strokes and images
   const layers = useMemo<Layer[]>(() => {
@@ -406,7 +448,9 @@ export function PaintingView() {
   const handleLayerVisibilityChange = useCallback(async (layerId: string, visible: boolean) => {
     // Check if it's the painting layer
     if (layerId === 'painting-layer') {
-      setPaintingLayerVisible(visible)
+      if (sessionId) {
+        await updatePaintLayerVisibility({ sessionId, visible })
+      }
       // Force canvas redraw
       canvasRef.current?.forceRedraw?.()
       return
@@ -472,34 +516,22 @@ export function PaintingView() {
   }, [images, aiImages, clearSession, deleteImage, deleteAIImageMutation])
 
   const handleLayerReorder = useCallback(async (layerId: string, newOrder: number) => {
+    if (!sessionId) return
+    
     // Clamp newOrder to valid range
     const maxOrder = layers.length - 1
     const clampedOrder = Math.max(0, Math.min(newOrder, maxOrder))
     
-    // Check if it's the painting layer
-    if (layerId === 'painting-layer') {
-      setPaintingLayerOrder(clampedOrder)
-      // Force canvas redraw to reflect new layer order
-      canvasRef.current?.forceRedraw?.()
-      return
-    }
+    // Use the unified reorderLayer mutation
+    await reorderLayer({
+      sessionId,
+      layerId,
+      newOrder: clampedOrder
+    })
     
-    // Check if it's an uploaded image
-    const uploadedImage = images.find(img => img._id === layerId)
-    if (uploadedImage) {
-      await changeLayerOrder(layerId as Id<"uploadedImages">, clampedOrder)
-      return
-    }
-    
-    // Check if it's an AI image
-    const aiImage = aiImages?.find(img => img._id === layerId)
-    if (aiImage) {
-      await updateAIImageLayerOrderMutation({
-        imageId: layerId as Id<"aiGeneratedImages">,
-        newLayerOrder: clampedOrder
-      })
-    }
-  }, [layers, images, aiImages, changeLayerOrder, updateAIImageLayerOrderMutation])
+    // Force canvas redraw to reflect new layer order
+    canvasRef.current?.forceRedraw?.()
+  }, [sessionId, layers, reorderLayer])
 
   const handleLayerOpacityChange = useCallback(async (layerId: string, opacity: number) => {
     // Check if it's the painting layer
@@ -530,34 +562,73 @@ export function PaintingView() {
     <div className="relative w-full h-full bg-gray-50">
       {/* Button to toggle Admin Panel - only shown when admin features are enabled */}
       {adminFeaturesEnabled && (
-        <button 
-          onClick={toggleAdminPanel} 
-          className="absolute top-2 right-28 z-50 bg-black/90 backdrop-blur-md border border-white/20 hover:bg-black/80 text-white font-bold py-1 px-2 rounded text-xs"
-          title="Toggle Admin Panel (Ctrl+Shift+A)"
-        >
-          {isAdminPanelVisible ? 'Hide' : 'Show'} Admin
-        </button>
+        <>
+          <button 
+            onClick={toggleAdminPanel} 
+            className="absolute top-2 right-28 z-50 bg-black/90 backdrop-blur-md border border-white/20 hover:bg-black/80 text-white font-bold py-1 px-2 rounded text-xs"
+            title="Toggle Admin Panel (Ctrl+Shift+A)"
+          >
+            {isAdminPanelVisible ? 'Hide' : 'Show'} Admin
+          </button>
+          
+          {/* Canvas implementation toggle - only in development */}
+          {process.env.NODE_ENV === 'development' && (
+            <button
+              onClick={() => {
+                const newValue = !useKonvaCanvas
+                localStorage.setItem('useKonvaCanvas', String(newValue))
+                window.location.reload()
+              }}
+              className="absolute top-2 right-2 z-50 bg-purple-600/90 backdrop-blur-md border border-white/20 hover:bg-purple-700/80 text-white font-bold py-1 px-2 rounded text-xs"
+              title="Toggle between Canvas implementations"
+            >
+              {useKonvaCanvas ? 'Konva' : 'Canvas'} Mode
+            </button>
+          )}
+        </>
       )}
 
       {sessionId ? (
-        <Canvas
-          ref={canvasRef}
-          sessionId={sessionId}
-          color={color}
-          size={size}
-          opacity={opacity}
-          layers={layers}
-          // perfect-freehand options
-          smoothing={smoothing}
-          thinning={thinning}
-          streamline={streamline}
-          easing={easing}
-          startTaper={startTaper}
-          startCap={startCap}
-          endTaper={endTaper}
-          endCap={endCap}
-          onStrokeEnd={handleStrokeEnd}
-        />
+        useKonvaCanvas ? (
+          <KonvaCanvas
+            ref={canvasRef}
+            sessionId={sessionId}
+            color={color}
+            size={size}
+            opacity={opacity}
+            layers={layers}
+            selectedTool={selectedTool}
+            // perfect-freehand options
+            smoothing={smoothing}
+            thinning={thinning}
+            streamline={streamline}
+            easing={easing}
+            startTaper={startTaper}
+            startCap={startCap}
+            endTaper={endTaper}
+            endCap={endCap}
+            onStrokeEnd={handleStrokeEnd}
+          />
+        ) : (
+          <Canvas
+            ref={canvasRef}
+            sessionId={sessionId}
+            color={color}
+            size={size}
+            opacity={opacity}
+            layers={layers}
+            // perfect-freehand options
+            smoothing={smoothing}
+            thinning={thinning}
+            streamline={streamline}
+            easing={easing}
+            startTaper={startTaper}
+            startCap={startCap}
+            endTaper={endTaper}
+            endCap={endCap}
+            onStrokeEnd={handleStrokeEnd}
+          />
+        )
       ) : (
         <div className="absolute inset-0 flex items-center justify-center bg-gray-100">
           <div className="text-center">

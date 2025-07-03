@@ -10,6 +10,8 @@ const schema = defineSchema({
     canvasHeight: v.number(),
     backgroundImage: v.optional(v.string()),
     strokeCounter: v.number(), // For ordering strokes globally
+    paintLayerOrder: v.optional(v.number()), // Order of the paint layer
+    paintLayerVisible: v.optional(v.boolean()), // Visibility of the paint layer
   }),
 
   strokes: defineTable({

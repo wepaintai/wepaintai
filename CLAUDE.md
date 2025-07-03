@@ -29,6 +29,7 @@ Note: No test or lint commands are currently configured.
 - **Frontend**: TanStack Start (React 19 + file-based routing), TypeScript, Tailwind CSS
 - **Backend**: Convex (real-time serverless database with WebSocket support)
 - **Drawing**: perfect-freehand library for smooth strokes
+- **Canvas Library**: Konva.js (via react-konva) for advanced canvas rendering and layer management
 - **Deployment**: Vercel (frontend) + Convex Cloud (backend)
 
 ### Key Patterns
@@ -40,10 +41,17 @@ Note: No test or lint commands are currently configured.
    - URL-based session sharing
 
 2. **Canvas Architecture**
-   - Triple canvas system: main canvas (committed strokes) + drawing canvas (active stroke) + image canvas (uploaded/AI images)
+   - **Dual Implementation**: 
+     - `Canvas.tsx`: Traditional HTML5 Canvas implementation (legacy)
+     - `KonvaCanvas.tsx`: Konva.js implementation with advanced features (recommended)
+   - **Konva Features**:
+     - Each visual layer maps to a Konva Layer component
+     - Built-in dragging support for layers when pan tool is active
+     - Automatic hit detection and event handling
+     - Efficient batch drawing and caching
    - Single-flight pattern prevents duplicate stroke submissions
    - Coalesced pointer events for smooth drawing performance
-   - Z-index layering: strokes (bottom), images (middle), live drawing (top)
+   - Layer ordering: Higher order numbers appear on top
 
 3. **Data Flow**
    - Frontend components use Convex hooks (`useQuery`, `useMutation`)
@@ -76,6 +84,8 @@ Set these in the Convex dashboard (Settings > Environment Variables):
 - The admin panel (bottom-left debug info) is hidden in production
 - When modifying Convex schema, the backend will auto-migrate
 - Production database access (`pnpm dev:prod-db`) should be used carefully
+- **Canvas Toggle**: In development, you can toggle between Canvas and KonvaCanvas implementations
+- **Keyboard Shortcuts**: Tool shortcuts work when not typing in input fields
 
 ### Layer System Implementation
 
@@ -89,12 +99,36 @@ Set these in the Convex dashboard (Settings > Environment Variables):
    - Each layer has: id, type, name, visible, opacity, order, thumbnailUrl
    - Paint strokes are combined into a single "Painting" layer
    - Layer visibility, opacity, and order can be adjusted via the ToolPanel
+   - Paint layer order and visibility are persisted in the database (paintingSessions table)
 
-3. **Important Implementation Details**
+3. **Konva Layer Integration**
+   - Each app layer maps to a Konva `<Layer>` component
+   - Layers are rendered in order: `.sort((a, b) => a.order - b.order)`
+   - Stroke layer contains all paint strokes as `<Path>` elements
+   - Image layers contain individual `<KonvaImage>` components
+   - Dragging is enabled when pan tool is selected (`draggable={selectedTool === 'pan'}`)
+   - Position updates are saved to database on drag end
+
+4. **Layer Ordering System**
+   - **Unified Reordering**: Uses `api.layers.reorderLayer` mutation for all layer types
+   - **Order Values**: 0-based indexing, higher numbers appear on top
+   - **Default Order**: Paint layer starts at order 0, new images get max order + 1
+   - **Reordering Logic**: When moving a layer, all affected layers shift to maintain sequential ordering
+   - **Database Fields**: `paintLayerOrder` and `paintLayerVisible` in paintingSessions table
+
+5. **Tools Available**
+   - **Brush (B)**: Drawing tool for creating strokes
+   - **Pan/Hand (H)**: Move individual image/AI layers by dragging
+   - **Upload (U)**: Upload images to the canvas
+   - **AI Generation (G)**: Generate AI images based on canvas content
+   - **Inpaint (I)**: Inpainting tool (planned)
+
+6. **Important Implementation Details**
    - **Guest User Support**: The `usePaintingSession` hook allows guest users (without authentication) to paint by accepting `undefined` userId
    - **Stroke Detection**: The painting layer shows as "Painting (empty)" when no strokes exist, "Painting" when strokes are present
    - **Data Source**: Both `PaintingView` and `Canvas` components must use strokes from the same source (`usePaintingSession` hook) to ensure consistency
    - **Layer Ordering**: Higher order numbers appear on top (painted last)
+   - **Pan Tool Limitations**: The stroke/painting layer cannot be moved as it would require updating all stroke positions in the database
 
 ### AI Image Generation
 - Uses Replicate's Flux Kontext Pro model for AI image editing

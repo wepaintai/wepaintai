@@ -19,7 +19,8 @@ import {
   Settings,
   EyeOff,
   Trash2,
-  GripVertical
+  GripVertical,
+  Hand
 } from 'lucide-react'
 import { AuthModal } from './AuthModal'
 
@@ -77,6 +78,7 @@ interface SliderProps {
 // Tool definitions
 const tools: Tool[] = [
   { id: 'brush', icon: Paintbrush, label: 'Brush', ariaLabel: 'Select brush tool', keyboardShortcut: 'B' },
+  { id: 'pan', icon: Hand, label: 'Pan', ariaLabel: 'Pan/Move layers', keyboardShortcut: 'H' },
   { id: 'upload', icon: ImagePlus, label: 'Upload', ariaLabel: 'Upload image', keyboardShortcut: 'U' },
   { id: 'ai', icon: Sparkles, label: 'AI', ariaLabel: 'AI Generation', keyboardShortcut: 'G' },
   { id: 'inpaint', icon: Palette, label: 'Inpaint', ariaLabel: 'Inpaint tool', keyboardShortcut: 'I' },
@@ -683,13 +685,22 @@ export function ToolPanel({
                             onVisibilityChange={(visible) => onLayerVisibilityChange?.(layer.id, visible)}
                             onDelete={() => onLayerDelete?.(layer.id)}
                             onReorder={(direction) => {
-                              const newOrder = direction === 'up' ? layer.order + 1 : layer.order - 1
-                              onLayerReorder?.(layer.id, newOrder)
+                              // Layers are displayed from top to bottom (highest order to lowest)
+                              // Moving "up" in the UI means increasing the order value
+                              // Moving "down" in the UI means decreasing the order value
+                              
+                              if (direction === 'up') {
+                                // Increase order to move layer up in the visual stack
+                                onLayerReorder?.(layer.id, layer.order + 1)
+                              } else if (direction === 'down') {
+                                // Decrease order to move layer down in the visual stack
+                                onLayerReorder?.(layer.id, layer.order - 1)
+                              }
                             }}
                             onOpacityChange={(opacity) => onLayerOpacityChange?.(layer.id, opacity)}
                             totalLayers={layers.length}
                             isTopLayer={index === 0}
-                            isBottomLayer={index === layers.length - 1}
+                            isBottomLayer={index === [...layers].sort((a, b) => b.order - a.order).length - 1}
                           />
                         ))}
                       </div>
