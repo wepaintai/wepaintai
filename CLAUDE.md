@@ -99,22 +99,31 @@ Set these in the Convex dashboard (Settings > Environment Variables):
    - Each layer has: id, type, name, visible, opacity, order, thumbnailUrl
    - Paint strokes are combined into a single "Painting" layer
    - Layer visibility, opacity, and order can be adjusted via the ToolPanel
+   - Paint layer order and visibility are persisted in the database (paintingSessions table)
 
 3. **Konva Layer Integration**
    - Each app layer maps to a Konva `<Layer>` component
+   - Layers are rendered in order: `.sort((a, b) => a.order - b.order)`
    - Stroke layer contains all paint strokes as `<Path>` elements
    - Image layers contain individual `<KonvaImage>` components
    - Dragging is enabled when pan tool is selected (`draggable={selectedTool === 'pan'}`)
    - Position updates are saved to database on drag end
 
-4. **Tools Available**
+4. **Layer Ordering System**
+   - **Unified Reordering**: Uses `api.layers.reorderLayer` mutation for all layer types
+   - **Order Values**: 0-based indexing, higher numbers appear on top
+   - **Default Order**: Paint layer starts at order 0, new images get max order + 1
+   - **Reordering Logic**: When moving a layer, all affected layers shift to maintain sequential ordering
+   - **Database Fields**: `paintLayerOrder` and `paintLayerVisible` in paintingSessions table
+
+5. **Tools Available**
    - **Brush (B)**: Drawing tool for creating strokes
    - **Pan/Hand (H)**: Move individual image/AI layers by dragging
    - **Upload (U)**: Upload images to the canvas
    - **AI Generation (G)**: Generate AI images based on canvas content
    - **Inpaint (I)**: Inpainting tool (planned)
 
-5. **Important Implementation Details**
+6. **Important Implementation Details**
    - **Guest User Support**: The `usePaintingSession` hook allows guest users (without authentication) to paint by accepting `undefined` userId
    - **Stroke Detection**: The painting layer shows as "Painting (empty)" when no strokes exist, "Painting" when strokes are present
    - **Data Source**: Both `PaintingView` and `Canvas` components must use strokes from the same source (`usePaintingSession` hook) to ensure consistency
