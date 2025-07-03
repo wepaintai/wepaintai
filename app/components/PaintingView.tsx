@@ -134,6 +134,14 @@ export function PaintingView() {
   const { images, updateImageTransform, deleteImage, changeLayerOrder } = useSessionImages(sessionId)
   const aiGeneratedImages = images.filter(img => (img as any).type === 'ai-generated')
   
+  // Paint layer mutations
+  const updatePaintLayerOrder = useMutation(api.paintLayer.updatePaintLayerOrder)
+  const updatePaintLayerVisibility = useMutation(api.paintLayer.updatePaintLayerVisibility)
+  const paintLayerSettings = useQuery(api.paintLayer.getPaintLayerSettings, sessionId ? { sessionId } : 'skip')
+  
+  // Unified layer reordering
+  const reorderLayer = useMutation(api.layers.reorderLayer)
+  
   // Debug: Log both image sources
   useEffect(() => {
     console.log('[PaintingView] Images from useSessionImages:', images)
@@ -376,9 +384,9 @@ export function PaintingView() {
     }
   }, [toggleAdminPanel, adminFeaturesEnabled, handleImageUpload, handleAIGenerate])
 
-  // Track painting layer visibility and order
-  const [paintingLayerVisible, setPaintingLayerVisible] = useState(true)
-  const [paintingLayerOrder, setPaintingLayerOrder] = useState(1) // Default to 1 so images (starting at 0) appear below
+  // Use persisted paint layer settings or defaults
+  const paintingLayerVisible = paintLayerSettings?.visible ?? true
+  const paintingLayerOrder = paintLayerSettings?.layerOrder ?? 0
   
   // Create layers from strokes and images
   const layers = useMemo<Layer[]>(() => {
@@ -440,7 +448,9 @@ export function PaintingView() {
   const handleLayerVisibilityChange = useCallback(async (layerId: string, visible: boolean) => {
     // Check if it's the painting layer
     if (layerId === 'painting-layer') {
-      setPaintingLayerVisible(visible)
+      if (sessionId) {
+        await updatePaintLayerVisibility({ sessionId, visible })
+      }
       // Force canvas redraw
       canvasRef.current?.forceRedraw?.()
       return
@@ -506,34 +516,22 @@ export function PaintingView() {
   }, [images, aiImages, clearSession, deleteImage, deleteAIImageMutation])
 
   const handleLayerReorder = useCallback(async (layerId: string, newOrder: number) => {
+    if (!sessionId) return
+    
     // Clamp newOrder to valid range
     const maxOrder = layers.length - 1
     const clampedOrder = Math.max(0, Math.min(newOrder, maxOrder))
     
-    // Check if it's the painting layer
-    if (layerId === 'painting-layer') {
-      setPaintingLayerOrder(clampedOrder)
-      // Force canvas redraw to reflect new layer order
-      canvasRef.current?.forceRedraw?.()
-      return
-    }
+    // Use the unified reorderLayer mutation
+    await reorderLayer({
+      sessionId,
+      layerId,
+      newOrder: clampedOrder
+    })
     
-    // Check if it's an uploaded image
-    const uploadedImage = images.find(img => img._id === layerId)
-    if (uploadedImage) {
-      await changeLayerOrder(layerId as Id<"uploadedImages">, clampedOrder)
-      return
-    }
-    
-    // Check if it's an AI image
-    const aiImage = aiImages?.find(img => img._id === layerId)
-    if (aiImage) {
-      await updateAIImageLayerOrderMutation({
-        imageId: layerId as Id<"aiGeneratedImages">,
-        newLayerOrder: clampedOrder
-      })
-    }
-  }, [layers, images, aiImages, changeLayerOrder, updateAIImageLayerOrderMutation])
+    // Force canvas redraw to reflect new layer order
+    canvasRef.current?.forceRedraw?.()
+  }, [sessionId, layers, reorderLayer])
 
   const handleLayerOpacityChange = useCallback(async (layerId: string, opacity: number) => {
     // Check if it's the painting layer

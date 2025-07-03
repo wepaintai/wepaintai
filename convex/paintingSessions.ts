@@ -25,6 +25,8 @@ export const createSession = mutation({
       canvasWidth: args.canvasWidth,
       canvasHeight: args.canvasHeight,
       strokeCounter: 0,
+      paintLayerOrder: 0, // Initialize paint layer at the bottom
+      paintLayerVisible: true, // Paint layer visible by default
     });
     
     return sessionId;
@@ -43,10 +45,14 @@ export const getSession = query({
       _id: v.id("paintingSessions"),
       _creationTime: v.number(),
       name: v.optional(v.string()),
+      createdBy: v.optional(v.id("users")),
       isPublic: v.boolean(),
       canvasWidth: v.number(),
       canvasHeight: v.number(),
       strokeCounter: v.number(),
+      paintLayerOrder: v.optional(v.number()),
+      paintLayerVisible: v.optional(v.boolean()),
+      backgroundImage: v.optional(v.string()),
     }),
     v.null()
   ),
@@ -64,10 +70,14 @@ export const listRecentSessions = query({
     _id: v.id("paintingSessions"),
     _creationTime: v.number(),
     name: v.optional(v.string()),
+    createdBy: v.optional(v.id("users")),
     isPublic: v.boolean(),
     canvasWidth: v.number(),
     canvasHeight: v.number(),
     strokeCounter: v.number(),
+    paintLayerOrder: v.optional(v.number()),
+    paintLayerVisible: v.optional(v.boolean()),
+    backgroundImage: v.optional(v.string()),
   })),
   handler: async (ctx) => {
     return await ctx.db
