@@ -19,7 +19,8 @@ import {
   Settings,
   EyeOff,
   Trash2,
-  GripVertical
+  GripVertical,
+  Hand
 } from 'lucide-react'
 import { AuthModal } from './AuthModal'
 
@@ -77,6 +78,7 @@ interface SliderProps {
 // Tool definitions
 const tools: Tool[] = [
   { id: 'brush', icon: Paintbrush, label: 'Brush', ariaLabel: 'Select brush tool', keyboardShortcut: 'B' },
+  { id: 'pan', icon: Hand, label: 'Pan', ariaLabel: 'Pan/Move layers', keyboardShortcut: 'H' },
   { id: 'upload', icon: ImagePlus, label: 'Upload', ariaLabel: 'Upload image', keyboardShortcut: 'U' },
   { id: 'ai', icon: Sparkles, label: 'AI', ariaLabel: 'AI Generation', keyboardShortcut: 'G' },
   { id: 'inpaint', icon: Palette, label: 'Inpaint', ariaLabel: 'Inpaint tool', keyboardShortcut: 'I' },

@@ -331,12 +331,41 @@ export function PaintingView() {
     }
   }, [handleImageUpload])
 
-  // Add keyboard listener for toggling admin panel (e.g., Ctrl+Shift+A) - only when admin features are enabled
+  // Add keyboard listeners for tool shortcuts and admin panel
   useEffect(() => {
-    if (!adminFeaturesEnabled) return
-    
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.ctrlKey && event.shiftKey && event.key === 'A') {
+      // Tool shortcuts (when not typing in an input field)
+      if (!event.ctrlKey && !event.metaKey && !event.altKey && 
+          event.target instanceof Element && 
+          !['INPUT', 'TEXTAREA'].includes(event.target.tagName)) {
+        switch (event.key.toLowerCase()) {
+          case 'b':
+            event.preventDefault()
+            setSelectedTool('brush')
+            break
+          case 'h':
+            event.preventDefault()
+            setSelectedTool('pan')
+            break
+          case 'u':
+            event.preventDefault()
+            setSelectedTool('upload')
+            handleImageUpload()
+            break
+          case 'g':
+            event.preventDefault()
+            setSelectedTool('ai')
+            handleAIGenerate()
+            break
+          case 'i':
+            event.preventDefault()
+            setSelectedTool('inpaint')
+            break
+        }
+      }
+      
+      // Admin panel toggle (Ctrl+Shift+A) - only when admin features are enabled
+      if (adminFeaturesEnabled && event.ctrlKey && event.shiftKey && event.key === 'A') {
         event.preventDefault()
         toggleAdminPanel()
       }
@@ -345,7 +374,7 @@ export function PaintingView() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [toggleAdminPanel, adminFeaturesEnabled])
+  }, [toggleAdminPanel, adminFeaturesEnabled, handleImageUpload, handleAIGenerate])
 
   // Track painting layer visibility and order
   const [paintingLayerVisible, setPaintingLayerVisible] = useState(true)
@@ -570,6 +599,7 @@ export function PaintingView() {
             size={size}
             opacity={opacity}
             layers={layers}
+            selectedTool={selectedTool}
             // perfect-freehand options
             smoothing={smoothing}
             thinning={thinning}
