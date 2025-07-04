@@ -127,6 +127,10 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   const [konvaImages, setKonvaImages] = useState<Map<string, HTMLImageElement>>(new Map())
   // Map to track pending strokes by their temporary IDs to backend IDs
   const pendingStrokeIdsRef = useRef<Map<string, Id<"strokes"> | null>>(new Map())
+  // Cursor position for brush size indicator
+  const [cursorPosition, setCursorPosition] = useState<Point | null>(null)
+  // Eraser masks for image layers - maps layer ID to array of eraser strokes
+  const [imageMasks, setImageMasks] = useState<Map<string, LocalStroke[]>>(new Map())
 
   // Use the painting session hook
   const {
@@ -273,6 +277,23 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     return () => clearInterval(cleanup)
   }, [])
 
+  // Clean up masks for deleted layers
+  useEffect(() => {
+    setImageMasks(prev => {
+      const newMasks = new Map(prev)
+      const layerIds = new Set(layers.map(l => l.id))
+      
+      // Remove masks for layers that no longer exist
+      for (const [layerId] of newMasks) {
+        if (!layerIds.has(layerId)) {
+          newMasks.delete(layerId)
+        }
+      }
+      
+      return newMasks
+    })
+  }, [layers])
+
   // Generate stroke path data
   const getStrokePathData = useCallback((strokeData: LocalStroke) => {
     if (strokeData.points.length === 0) return ''
@@ -319,10 +340,17 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       return
     }
     
-    // Only allow drawing on paint layer for now
-    if ((selectedTool === 'brush' || selectedTool === 'eraser') && activeLayerId !== 'painting-layer') {
-      // TODO: Implement erasing on image layers
+    // Only allow brush on paint layer
+    if (selectedTool === 'brush' && activeLayerId !== 'painting-layer') {
       return
+    }
+    
+    // Check if erasing on a valid layer
+    if (selectedTool === 'eraser') {
+      const activeLayer = layers.find(l => l.id === activeLayerId)
+      if (!activeLayer || !['stroke', 'image', 'ai-image'].includes(activeLayer.type)) {
+        return
+      }
     }
     
     const point = getPointerPosition(e)
@@ -350,6 +378,13 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   const handlePointerMove = useCallback((e: Konva.KonvaEventObject<PointerEvent>) => {
     const point = getPointerPosition(e)
 
+    // Update cursor position for brush size indicator
+    if (selectedTool === 'brush' || selectedTool === 'eraser') {
+      setCursorPosition(point)
+    } else {
+      setCursorPosition(null)
+    }
+
     if (!isDrawing) {
       // Still update presence even if not drawing, for cursor tracking
       if (isP2PConnected && dimensions.width > 0) {
@@ -365,9 +400,9 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
         const container = stage.container()
         if (container) {
           if (selectedTool === 'pan') {
-            container.style.cursor = 'grab'
-          } else if (selectedTool === 'eraser') {
-            container.style.cursor = 'crosshair' // TODO: Could use custom eraser cursor
+            container.style.cursor = isDragging ? 'grabbing' : 'grab'
+          } else if (selectedTool === 'eraser' || selectedTool === 'brush') {
+            container.style.cursor = 'none' // Hide default cursor, we'll show our custom one
           } else {
             container.style.cursor = 'crosshair'
           }
@@ -409,25 +444,46 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     const finalStrokePoints = [...currentStroke, point]
 
     if (finalStrokePoints.length > 0) {
-      const tempId = crypto.randomUUID()
-      const newPendingStroke: LocalStroke = {
-        points: finalStrokePoints,
-        color,
-        size,
-        opacity,
-        id: tempId,
-        isPending: true,
-        isEraser: selectedTool === 'eraser',
-      }
-      setPendingStrokes(prev => new Map(prev).set(tempId, newPendingStroke))
-      
-      // Track the pending stroke and update when we get the backend ID
-      pendingStrokeIdsRef.current.set(tempId, null)
-      addStrokeToSession(finalStrokePoints, color, size, opacity, selectedTool === 'eraser').then(strokeId => {
-        if (strokeId) {
-          pendingStrokeIdsRef.current.set(tempId, strokeId)
+      // Check if we're erasing on an image layer
+      if (selectedTool === 'eraser' && activeLayerId !== 'painting-layer') {
+        // Add eraser stroke to the image mask
+        const eraserStroke: LocalStroke = {
+          points: finalStrokePoints,
+          color: '#000000',
+          size,
+          opacity: 1,
+          id: crypto.randomUUID(),
+          isEraser: true,
         }
-      })
+        
+        setImageMasks(prev => {
+          const newMasks = new Map(prev)
+          const layerMasks = newMasks.get(activeLayerId) || []
+          newMasks.set(activeLayerId, [...layerMasks, eraserStroke])
+          return newMasks
+        })
+      } else {
+        // Normal paint layer behavior
+        const tempId = crypto.randomUUID()
+        const newPendingStroke: LocalStroke = {
+          points: finalStrokePoints,
+          color,
+          size,
+          opacity,
+          id: tempId,
+          isPending: true,
+          isEraser: selectedTool === 'eraser',
+        }
+        setPendingStrokes(prev => new Map(prev).set(tempId, newPendingStroke))
+        
+        // Track the pending stroke and update when we get the backend ID
+        pendingStrokeIdsRef.current.set(tempId, null)
+        addStrokeToSession(finalStrokePoints, color, size, opacity, selectedTool === 'eraser').then(strokeId => {
+          if (strokeId) {
+            pendingStrokeIdsRef.current.set(tempId, strokeId)
+          }
+        })
+      }
     }
 
     setCurrentStroke([])
@@ -446,25 +502,46 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       setIsDrawing(false)
       
       if (currentStroke.length > 0) {
-        const tempId = crypto.randomUUID()
-        const newPendingStroke: LocalStroke = {
-          points: currentStroke,
-          color,
-          size,
-          opacity,
-          id: tempId,
-          isPending: true,
-          isEraser: selectedTool === 'eraser',
-        }
-        setPendingStrokes(prev => new Map(prev).set(tempId, newPendingStroke))
-        
-        // Track the pending stroke and update when we get the backend ID
-        pendingStrokeIdsRef.current.set(tempId, null)
-        addStrokeToSession(currentStroke, color, size, opacity, selectedTool === 'eraser').then(strokeId => {
-          if (strokeId) {
-            pendingStrokeIdsRef.current.set(tempId, strokeId)
+        // Check if we're erasing on an image layer
+        if (selectedTool === 'eraser' && activeLayerId !== 'painting-layer') {
+          // Add eraser stroke to the image mask
+          const eraserStroke: LocalStroke = {
+            points: currentStroke,
+            color: '#000000',
+            size,
+            opacity: 1,
+            id: crypto.randomUUID(),
+            isEraser: true,
           }
-        })
+          
+          setImageMasks(prev => {
+            const newMasks = new Map(prev)
+            const layerMasks = newMasks.get(activeLayerId) || []
+            newMasks.set(activeLayerId, [...layerMasks, eraserStroke])
+            return newMasks
+          })
+        } else {
+          // Normal paint layer behavior
+          const tempId = crypto.randomUUID()
+          const newPendingStroke: LocalStroke = {
+            points: currentStroke,
+            color,
+            size,
+            opacity,
+            id: tempId,
+            isPending: true,
+            isEraser: selectedTool === 'eraser',
+          }
+          setPendingStrokes(prev => new Map(prev).set(tempId, newPendingStroke))
+          
+          // Track the pending stroke and update when we get the backend ID
+          pendingStrokeIdsRef.current.set(tempId, null)
+          addStrokeToSession(currentStroke, color, size, opacity, selectedTool === 'eraser').then(strokeId => {
+            if (strokeId) {
+              pendingStrokeIdsRef.current.set(tempId, strokeId)
+            }
+          })
+        }
       }
 
       setCurrentStroke([])
@@ -474,7 +551,12 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
 
     document.addEventListener('pointerup', handleGlobalPointerUp)
     return () => document.removeEventListener('pointerup', handleGlobalPointerUp)
-  }, [isDrawing, currentStroke, color, size, opacity, addStrokeToSession, onStrokeEnd])
+  }, [isDrawing, currentStroke, color, size, opacity, addStrokeToSession, onStrokeEnd, selectedTool, activeLayerId])
+
+  // Handle pointer leave - hide cursor
+  const handlePointerLeave = useCallback(() => {
+    setCursorPosition(null)
+  }, [])
 
   // Expose methods via ref
   useImperativeHandle(ref, () => ({
@@ -491,6 +573,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       setIsDrawing(false)
       strokeEndedRef.current = false
       loadedImagesRef.current.clear()
+      setImageMasks(new Map())
     },
     undo: () => {
       console.warn('KonvaCanvas.undo() is deprecated. Use session-level undo instead.')
@@ -530,6 +613,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
+        onPointerLeave={handlePointerLeave}
         style={{ touchAction: 'none' }}
       >
         {/* Render layers in order */}
@@ -613,27 +697,60 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
               
               return (
                 <Layer key={layer.id} ref={layer.id === images?.[0]?._id ? imageLayerRef : undefined} listening={selectedTool === 'pan'} opacity={layer.opacity}>
-                  <KonvaImage
-                    id={layer.id}
-                    image={loadedImage}
-                    x={image.x}
-                    y={image.y}
-                    width={image.width * image.scale}
-                    height={image.height * image.scale}
-                    rotation={image.rotation}
-                    offsetX={image.width / 2}
-                    offsetY={image.height / 2}
-                    opacity={image.opacity}
-                    draggable={selectedTool === 'pan'}
-                    onDragEnd={async (e) => {
-                      const node = e.target
-                      await updateImageTransform({
-                        imageId: layer.id as Id<"uploadedImages">,
-                        x: node.x(),
-                        y: node.y()
-                      })
-                    }}
-                  />
+                  <Group>
+                    <KonvaImage
+                      id={layer.id}
+                      image={loadedImage}
+                      x={image.x}
+                      y={image.y}
+                      width={image.width * image.scale}
+                      height={image.height * image.scale}
+                      rotation={image.rotation}
+                      offsetX={image.width / 2}
+                      offsetY={image.height / 2}
+                      opacity={image.opacity}
+                      draggable={selectedTool === 'pan'}
+                      onDragEnd={async (e) => {
+                        const node = e.target
+                        await updateImageTransform({
+                          imageId: layer.id as Id<"uploadedImages">,
+                          x: node.x(),
+                          y: node.y()
+                        })
+                      }}
+                    />
+                    
+                    {/* Render eraser masks */}
+                    {imageMasks.get(layer.id)?.map((maskStroke) => {
+                      const pathData = getStrokePathData(maskStroke)
+                      if (!pathData) return null
+                      
+                      return (
+                        <Path
+                          key={maskStroke.id}
+                          data={pathData}
+                          fill="#000000"
+                          globalCompositeOperation="destination-out"
+                        />
+                      )
+                    })}
+                    
+                    {/* Render current eraser stroke if erasing this layer */}
+                    {isDrawing && currentStroke.length > 0 && selectedTool === 'eraser' && activeLayerId === layer.id && (
+                      <Path
+                        data={getStrokePathData({
+                          points: currentStroke,
+                          color: '#000000',
+                          size,
+                          opacity: 1,
+                          isLive: true,
+                          isEraser: true,
+                        })}
+                        fill="#000000"
+                        globalCompositeOperation="destination-out"
+                      />
+                    )}
+                  </Group>
                 </Layer>
               )
             }
@@ -647,29 +764,62 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
               
               return (
                 <Layer key={layer.id} ref={layer.id === aiImages?.[0]?._id ? aiImageLayerRef : undefined} listening={selectedTool === 'pan'} opacity={layer.opacity}>
-                  <KonvaImage
-                    id={layer.id}
-                    image={loadedImage}
-                    x={aiImage.x}
-                    y={aiImage.y}
-                    width={aiImage.width * aiImage.scale}
-                    height={aiImage.height * aiImage.scale}
-                    rotation={aiImage.rotation}
-                    offsetX={aiImage.width / 2}
-                    offsetY={aiImage.height / 2}
-                    opacity={aiImage.opacity}
-                    draggable={selectedTool === 'pan'}
-                    onDragEnd={async (e) => {
-                      const node = e.target
-                      await updateAIImageTransform({
-                        imageId: layer.id as Id<"aiGeneratedImages">,
-                        x: node.x(),
-                        y: node.y()
-                      })
-                    }}
+                  <Group>
+                    <KonvaImage
+                      id={layer.id}
+                      image={loadedImage}
+                      x={aiImage.x}
+                      y={aiImage.y}
+                      width={aiImage.width * aiImage.scale}
+                      height={aiImage.height * aiImage.scale}
+                      rotation={aiImage.rotation}
+                      offsetX={aiImage.width / 2}
+                      offsetY={aiImage.height / 2}
+                      opacity={aiImage.opacity}
+                      draggable={selectedTool === 'pan'}
+                      onDragEnd={async (e) => {
+                        const node = e.target
+                        await updateAIImageTransform({
+                          imageId: layer.id as Id<"aiGeneratedImages">,
+                          x: node.x(),
+                          y: node.y()
+                        })
+                      }}
                     />
-                  </Layer>
-                )
+                    
+                    {/* Render eraser masks */}
+                    {imageMasks.get(layer.id)?.map((maskStroke) => {
+                      const pathData = getStrokePathData(maskStroke)
+                      if (!pathData) return null
+                      
+                      return (
+                        <Path
+                          key={maskStroke.id}
+                          data={pathData}
+                          fill="#000000"
+                          globalCompositeOperation="destination-out"
+                        />
+                      )
+                    })}
+                    
+                    {/* Render current eraser stroke if erasing this layer */}
+                    {isDrawing && currentStroke.length > 0 && selectedTool === 'eraser' && activeLayerId === layer.id && (
+                      <Path
+                        data={getStrokePathData({
+                          points: currentStroke,
+                          color: '#000000',
+                          size,
+                          opacity: 1,
+                          isLive: true,
+                          isEraser: true,
+                        })}
+                        fill="#000000"
+                        globalCompositeOperation="destination-out"
+                      />
+                    )}
+                  </Group>
+                </Layer>
+              )
               }
 
               return null
@@ -756,6 +906,21 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                 </Group>
               )
             })}
+            
+            {/* Cursor size indicator */}
+            {cursorPosition && (selectedTool === 'brush' || selectedTool === 'eraser') && (
+              <Circle
+                x={cursorPosition.x}
+                y={cursorPosition.y}
+                radius={size / 2}
+                stroke={selectedTool === 'eraser' ? '#ff0000' : color}
+                strokeWidth={1}
+                fill={selectedTool === 'eraser' ? 'rgba(255, 0, 0, 0.1)' : color}
+                fillOpacity={selectedTool === 'eraser' ? 0.1 : 0.2}
+                listening={false}
+                opacity={0.8}
+              />
+            )}
           </Layer>
         </Stage>
       </div>
