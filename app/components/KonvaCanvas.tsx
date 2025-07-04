@@ -122,6 +122,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   const containerRef = useRef<HTMLDivElement>(null)
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
   const [konvaImages, setKonvaImages] = useState<Map<string, HTMLImageElement>>(new Map())
+  // Map to track pending strokes by their temporary IDs to backend IDs
+  const pendingStrokeIdsRef = useRef<Map<string, Id<"strokes"> | null>>(new Map())
 
   // Use the painting session hook
   const {
@@ -226,44 +228,44 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     if (strokes.length > 0) {
       setPendingStrokes(prev => {
         const newPending = new Map(prev)
-        strokes.forEach(stroke => {
-          for (const [id, pendingStroke] of newPending) {
-            if (pendingStroke.points.length === stroke.points.length &&
-                pendingStroke.color === stroke.brushColor &&
-                pendingStroke.size === stroke.brushSize) {
-              const firstMatch = Math.abs(pendingStroke.points[0].x - stroke.points[0].x) < 1 &&
-                               Math.abs(pendingStroke.points[0].y - stroke.points[0].y) < 1
-              const lastIdx = pendingStroke.points.length - 1
-              const lastMatch = Math.abs(pendingStroke.points[lastIdx].x - stroke.points[lastIdx].x) < 1 &&
-                              Math.abs(pendingStroke.points[lastIdx].y - stroke.points[lastIdx].y) < 1
-              
-              if (firstMatch && lastMatch) {
-                newPending.delete(id)
-                break
-              }
-            }
+        const strokeIds = new Set(strokes.map(s => s._id))
+        
+        // Check each pending stroke to see if it's been confirmed
+        for (const [tempId, pendingStroke] of newPending) {
+          const backendId = pendingStrokeIdsRef.current.get(tempId)
+          if (backendId && strokeIds.has(backendId)) {
+            // This pending stroke has been confirmed, remove it
+            newPending.delete(tempId)
+            pendingStrokeIdsRef.current.delete(tempId)
           }
-        })
+        }
+        
         return newPending
       })
     }
   }, [strokes])
 
-  // Clean up pending strokes that haven't been confirmed after 10 seconds
+  // Clean up pending strokes that haven't been confirmed after 30 seconds
   useEffect(() => {
     const cleanup = setInterval(() => {
       setPendingStrokes(prev => {
         const newPending = new Map(prev)
         const now = Date.now()
-        for (const [id] of newPending) {
-          if (newPending.size > 5) {
-            newPending.delete(id)
-            break
+        
+        // Only clean up if we have a lot of pending strokes (more than 20)
+        // This prevents aggressive deletion of strokes that are still being processed
+        if (newPending.size > 20) {
+          // Remove the oldest pending stroke
+          const firstKey = newPending.keys().next().value
+          if (firstKey) {
+            newPending.delete(firstKey)
+            pendingStrokeIdsRef.current.delete(firstKey)
           }
         }
+        
         return newPending
       })
-    }, 5000)
+    }, 30000) // Increased to 30 seconds and only when > 20 pending
 
     return () => clearInterval(cleanup)
   }, [])
@@ -403,7 +405,13 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       }
       setPendingStrokes(prev => new Map(prev).set(tempId, newPendingStroke))
       
-      addStrokeToSession(finalStrokePoints, color, size, opacity)
+      // Track the pending stroke and update when we get the backend ID
+      pendingStrokeIdsRef.current.set(tempId, null)
+      addStrokeToSession(finalStrokePoints, color, size, opacity).then(strokeId => {
+        if (strokeId) {
+          pendingStrokeIdsRef.current.set(tempId, strokeId)
+        }
+      })
     }
 
     setCurrentStroke([])
@@ -433,7 +441,13 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
         }
         setPendingStrokes(prev => new Map(prev).set(tempId, newPendingStroke))
         
-        addStrokeToSession(currentStroke, color, size, opacity)
+        // Track the pending stroke and update when we get the backend ID
+        pendingStrokeIdsRef.current.set(tempId, null)
+        addStrokeToSession(currentStroke, color, size, opacity).then(strokeId => {
+          if (strokeId) {
+            pendingStrokeIdsRef.current.set(tempId, strokeId)
+          }
+        })
       }
 
       setCurrentStroke([])
@@ -455,6 +469,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       drawingLayerRef.current?.clear()
       
       setPendingStrokes(new Map())
+      pendingStrokeIdsRef.current.clear()
       setCurrentStroke([])
       setIsDrawing(false)
       strokeEndedRef.current = false
