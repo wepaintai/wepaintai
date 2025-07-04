@@ -20,7 +20,8 @@ import {
   EyeOff,
   Trash2,
   GripVertical,
-  Hand
+  Hand,
+  Eraser
 } from 'lucide-react'
 import { AuthModal } from './AuthModal'
 
@@ -51,6 +52,8 @@ interface ToolPanelProps {
   selectedTool?: string
   onToolChange?: (tool: string) => void
   layers?: Layer[]
+  activeLayerId?: string
+  onActiveLayerChange?: (layerId: string) => void
   onLayerVisibilityChange?: (layerId: string, visible: boolean) => void
   onLayerReorder?: (layerId: string, newOrder: number) => void
   onLayerDelete?: (layerId: string) => void
@@ -78,6 +81,7 @@ interface SliderProps {
 // Tool definitions
 const tools: Tool[] = [
   { id: 'brush', icon: Paintbrush, label: 'Brush', ariaLabel: 'Select brush tool', keyboardShortcut: 'B' },
+  { id: 'eraser', icon: Eraser, label: 'Eraser', ariaLabel: 'Eraser tool', keyboardShortcut: 'E' },
   { id: 'pan', icon: Hand, label: 'Pan', ariaLabel: 'Pan/Move layers', keyboardShortcut: 'H' },
   { id: 'upload', icon: ImagePlus, label: 'Upload', ariaLabel: 'Upload image', keyboardShortcut: 'U' },
   { id: 'ai', icon: Sparkles, label: 'AI', ariaLabel: 'AI Generation', keyboardShortcut: 'G' },
@@ -243,6 +247,8 @@ const tabs: Tab[] = [
 // Layer item component
 const LayerItem = React.memo(({ 
   layer,
+  isActive,
+  onActivate,
   onVisibilityChange,
   onDelete,
   onReorder,
@@ -252,6 +258,8 @@ const LayerItem = React.memo(({
   isBottomLayer = false
 }: {
   layer: Layer
+  isActive: boolean
+  onActivate: () => void
   onVisibilityChange: (visible: boolean) => void
   onDelete: () => void
   onReorder: (direction: 'up' | 'down') => void
@@ -264,10 +272,20 @@ const LayerItem = React.memo(({
   
   return (
     <div className="space-y-1">
-      <div className="flex items-center gap-1 p-1 bg-white/5 hover:bg-white/10 rounded transition-colors">
+      <div 
+        className={`flex items-center gap-1 p-1 rounded transition-all cursor-pointer ${
+          isActive 
+            ? 'bg-blue-500/30 border border-blue-400/50' 
+            : 'bg-white/5 hover:bg-white/10 border border-transparent'
+        }`}
+        onClick={onActivate}
+      >
         <GripVertical className="w-3 h-3 text-white/40 cursor-move" />
         <button
-          onClick={() => onVisibilityChange(!layer.visible)}
+          onClick={(e) => {
+            e.stopPropagation()
+            onVisibilityChange(!layer.visible)
+          }}
           className="p-0.5 hover:bg-white/20 rounded transition-colors"
           aria-label={layer.visible ? 'Hide layer' : 'Show layer'}
         >
@@ -277,10 +295,16 @@ const LayerItem = React.memo(({
             <EyeOff className="w-3.5 h-3.5 text-white/40" />
           )}
         </button>
-        <span className={`flex-1 text-xs truncate ${layer.name.includes('(empty)') ? 'text-white/40' : 'text-white/80'}`}>{layer.name}</span>
+        <span className={`flex-1 text-xs truncate ${layer.name.includes('(empty)') ? 'text-white/40' : 'text-white/80'}`}>
+          {layer.name}
+          {isActive && <span className="ml-1 text-blue-400">(Active)</span>}
+        </span>
         {layer.type !== 'stroke' && (
           <button
-            onClick={() => setShowOpacitySlider(!showOpacitySlider)}
+            onClick={(e) => {
+              e.stopPropagation()
+              setShowOpacitySlider(!showOpacitySlider)
+            }}
             className="p-0.5 hover:bg-white/20 rounded transition-colors"
             aria-label="Adjust opacity"
             title={`Opacity: ${Math.round(layer.opacity * 100)}%`}
@@ -290,7 +314,10 @@ const LayerItem = React.memo(({
         )}
         <div className="flex items-center gap-0.5">
           <button
-            onClick={() => onReorder('up')}
+            onClick={(e) => {
+              e.stopPropagation()
+              onReorder('up')
+            }}
             disabled={isTopLayer}
             className="p-0.5 hover:bg-white/20 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
             aria-label="Move layer up"
@@ -298,7 +325,10 @@ const LayerItem = React.memo(({
             <ChevronUp className="w-3 h-3 text-white/60" />
           </button>
           <button
-            onClick={() => onReorder('down')}
+            onClick={(e) => {
+              e.stopPropagation()
+              onReorder('down')
+            }}
             disabled={isBottomLayer}
             className="p-0.5 hover:bg-white/20 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
             aria-label="Move layer down"
@@ -306,7 +336,10 @@ const LayerItem = React.memo(({
             <ChevronUp className="w-3 h-3 text-white/60 rotate-180" />
           </button>
           <button
-            onClick={onDelete}
+            onClick={(e) => {
+              e.stopPropagation()
+              onDelete()
+            }}
             className="p-0.5 hover:bg-white/20 rounded transition-colors"
             aria-label="Delete layer"
           >
@@ -352,6 +385,8 @@ export function ToolPanel({
   selectedTool: externalSelectedTool,
   onToolChange,
   layers = [],
+  activeLayerId,
+  onActiveLayerChange,
   onLayerVisibilityChange,
   onLayerReorder,
   onLayerDelete,
@@ -682,6 +717,8 @@ export function ToolPanel({
                           <LayerItem
                             key={layer.id}
                             layer={layer}
+                            isActive={activeLayerId === layer.id}
+                            onActivate={() => onActiveLayerChange?.(layer.id)}
                             onVisibilityChange={(visible) => onLayerVisibilityChange?.(layer.id, visible)}
                             onDelete={() => onLayerDelete?.(layer.id)}
                             onReorder={(direction) => {

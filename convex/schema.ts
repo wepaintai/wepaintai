@@ -27,6 +27,7 @@ const schema = defineSchema({
     brushSize: v.number(),
     opacity: v.number(),
     strokeOrder: v.number(), // For ordering strokes
+    isEraser: v.optional(v.boolean()), // True if this stroke is an eraser stroke
   }).index("by_session", ["sessionId", "strokeOrder"]),
 
   userPresence: defineTable({
@@ -158,6 +159,7 @@ const schema = defineSchema({
     brushSize: v.number(),
     opacity: v.number(),
     strokeOrder: v.number(),
+    isEraser: v.optional(v.boolean()),
     deletedAt: v.number(),
   }).index("by_session_deleted", ["sessionId", "deletedAt"]),
 });
