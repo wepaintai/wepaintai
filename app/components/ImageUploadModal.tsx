@@ -210,9 +210,11 @@ export function ImageUploadModal({
       const { storageId } = await response.json()
       console.log('File uploaded, storage ID:', storageId)
 
-      // Calculate centered position
-      const x = Math.max(0, (canvasWidth - finalDimensions.width) / 2)
-      const y = Math.max(0, (canvasHeight - finalDimensions.height) / 2)
+      // Center the image on the canvas
+      // Since KonvaImage uses offsetX/offsetY to center the image anchor,
+      // we position at the canvas center directly
+      const x = canvasWidth / 2
+      const y = canvasHeight / 2
 
       // Create image record
       console.log('Creating image record in database...')
