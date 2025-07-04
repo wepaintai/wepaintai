@@ -59,6 +59,7 @@ interface LocalStroke {
   id?: string
   isPending?: boolean
   isLive?: boolean
+  isEraser?: boolean
 }
 
 interface KonvaCanvasProps {
@@ -69,6 +70,7 @@ interface KonvaCanvasProps {
   onStrokeEnd?: () => void
   layers: LayerType[]
   selectedTool?: string
+  activeLayerId?: string
   // perfect-freehand options
   smoothing?: number
   thinning?: number
@@ -97,6 +99,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     onStrokeEnd,
     layers,
     selectedTool = 'brush',
+    activeLayerId = 'painting-layer',
     // perfect-freehand options
     smoothing = 0.75,
     thinning = 0.5,
@@ -122,6 +125,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   const containerRef = useRef<HTMLDivElement>(null)
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
   const [konvaImages, setKonvaImages] = useState<Map<string, HTMLImageElement>>(new Map())
+  // Map to track pending strokes by their temporary IDs to backend IDs
+  const pendingStrokeIdsRef = useRef<Map<string, Id<"strokes"> | null>>(new Map())
 
   // Use the painting session hook
   const {
@@ -226,44 +231,44 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     if (strokes.length > 0) {
       setPendingStrokes(prev => {
         const newPending = new Map(prev)
-        strokes.forEach(stroke => {
-          for (const [id, pendingStroke] of newPending) {
-            if (pendingStroke.points.length === stroke.points.length &&
-                pendingStroke.color === stroke.brushColor &&
-                pendingStroke.size === stroke.brushSize) {
-              const firstMatch = Math.abs(pendingStroke.points[0].x - stroke.points[0].x) < 1 &&
-                               Math.abs(pendingStroke.points[0].y - stroke.points[0].y) < 1
-              const lastIdx = pendingStroke.points.length - 1
-              const lastMatch = Math.abs(pendingStroke.points[lastIdx].x - stroke.points[lastIdx].x) < 1 &&
-                              Math.abs(pendingStroke.points[lastIdx].y - stroke.points[lastIdx].y) < 1
-              
-              if (firstMatch && lastMatch) {
-                newPending.delete(id)
-                break
-              }
-            }
+        const strokeIds = new Set(strokes.map(s => s._id))
+        
+        // Check each pending stroke to see if it's been confirmed
+        for (const [tempId, pendingStroke] of newPending) {
+          const backendId = pendingStrokeIdsRef.current.get(tempId)
+          if (backendId && strokeIds.has(backendId)) {
+            // This pending stroke has been confirmed, remove it
+            newPending.delete(tempId)
+            pendingStrokeIdsRef.current.delete(tempId)
           }
-        })
+        }
+        
         return newPending
       })
     }
   }, [strokes])
 
-  // Clean up pending strokes that haven't been confirmed after 10 seconds
+  // Clean up pending strokes that haven't been confirmed after 30 seconds
   useEffect(() => {
     const cleanup = setInterval(() => {
       setPendingStrokes(prev => {
         const newPending = new Map(prev)
         const now = Date.now()
-        for (const [id] of newPending) {
-          if (newPending.size > 5) {
-            newPending.delete(id)
-            break
+        
+        // Only clean up if we have a lot of pending strokes (more than 20)
+        // This prevents aggressive deletion of strokes that are still being processed
+        if (newPending.size > 20) {
+          // Remove the oldest pending stroke
+          const firstKey = newPending.keys().next().value
+          if (firstKey) {
+            newPending.delete(firstKey)
+            pendingStrokeIdsRef.current.delete(firstKey)
           }
         }
+        
         return newPending
       })
-    }, 5000)
+    }, 30000) // Increased to 30 seconds and only when > 20 pending
 
     return () => clearInterval(cleanup)
   }, [])
@@ -314,14 +319,20 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       return
     }
     
+    // Only allow drawing on paint layer for now
+    if ((selectedTool === 'brush' || selectedTool === 'eraser') && activeLayerId !== 'painting-layer') {
+      // TODO: Implement erasing on image layers
+      return
+    }
+    
     const point = getPointerPosition(e)
     
-    // Normal brush behavior
+    // Normal brush/eraser behavior
     setIsDrawing(true)
     strokeEndedRef.current = false
 
     setCurrentStroke([point])
-    updateUserPresence(point.x, point.y, true, 'brush')
+    updateUserPresence(point.x, point.y, true, selectedTool)
 
     // Initialize stroke ID for P2P
     const strokeId = crypto.randomUUID()
@@ -333,7 +344,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       const normalizedY = point.y / dimensions.height
       sendStrokePoint(strokeId, normalizedX, normalizedY, point.pressure || 0.5)
     }
-  }, [getPointerPosition, updateUserPresence, isP2PConnected, dimensions, sendStrokePoint, selectedTool])
+  }, [getPointerPosition, updateUserPresence, isP2PConnected, dimensions, sendStrokePoint, selectedTool, activeLayerId])
 
   // Handle pointer move
   const handlePointerMove = useCallback((e: Konva.KonvaEventObject<PointerEvent>) => {
@@ -353,14 +364,20 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       if (stage) {
         const container = stage.container()
         if (container) {
-          container.style.cursor = selectedTool === 'pan' ? 'grab' : 'crosshair'
+          if (selectedTool === 'pan') {
+            container.style.cursor = 'grab'
+          } else if (selectedTool === 'eraser') {
+            container.style.cursor = 'crosshair' // TODO: Could use custom eraser cursor
+          } else {
+            container.style.cursor = 'crosshair'
+          }
         }
       }
       return
     }
 
-    // Handle drawing (only if brush tool is selected)
-    if (selectedTool !== 'brush') return
+    // Handle drawing (only if brush or eraser tool is selected)
+    if (selectedTool !== 'brush' && selectedTool !== 'eraser') return
     
     const newPoints = [...currentStroke, point]
     setCurrentStroke(newPoints)
@@ -378,12 +395,12 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       const normalizedY = point.y / dimensions.height
       sendCursorPosition(normalizedX, normalizedY, true)
     }
-    updateUserPresence(point.x, point.y, isDrawing, 'brush')
+    updateUserPresence(point.x, point.y, isDrawing, selectedTool)
   }, [isDrawing, currentStroke, getPointerPosition, updateUserPresence, isP2PConnected, currentStrokeId, dimensions, sendStrokePoint, sendCursorPosition, selectedTool])
 
   // Handle pointer up
   const handlePointerUp = useCallback((e: Konva.KonvaEventObject<PointerEvent>) => {
-    if (!isDrawing || strokeEndedRef.current || selectedTool !== 'brush') return
+    if (!isDrawing || strokeEndedRef.current || (selectedTool !== 'brush' && selectedTool !== 'eraser')) return
     strokeEndedRef.current = true
 
     setIsDrawing(false)
@@ -400,10 +417,17 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
         opacity,
         id: tempId,
         isPending: true,
+        isEraser: selectedTool === 'eraser',
       }
       setPendingStrokes(prev => new Map(prev).set(tempId, newPendingStroke))
       
-      addStrokeToSession(finalStrokePoints, color, size, opacity)
+      // Track the pending stroke and update when we get the backend ID
+      pendingStrokeIdsRef.current.set(tempId, null)
+      addStrokeToSession(finalStrokePoints, color, size, opacity, selectedTool === 'eraser').then(strokeId => {
+        if (strokeId) {
+          pendingStrokeIdsRef.current.set(tempId, strokeId)
+        }
+      })
     }
 
     setCurrentStroke([])
@@ -430,10 +454,17 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
           opacity,
           id: tempId,
           isPending: true,
+          isEraser: selectedTool === 'eraser',
         }
         setPendingStrokes(prev => new Map(prev).set(tempId, newPendingStroke))
         
-        addStrokeToSession(currentStroke, color, size, opacity)
+        // Track the pending stroke and update when we get the backend ID
+        pendingStrokeIdsRef.current.set(tempId, null)
+        addStrokeToSession(currentStroke, color, size, opacity, selectedTool === 'eraser').then(strokeId => {
+          if (strokeId) {
+            pendingStrokeIdsRef.current.set(tempId, strokeId)
+          }
+        })
       }
 
       setCurrentStroke([])
@@ -455,6 +486,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       drawingLayerRef.current?.clear()
       
       setPendingStrokes(new Map())
+      pendingStrokeIdsRef.current.clear()
       setCurrentStroke([])
       setIsDrawing(false)
       strokeEndedRef.current = false
@@ -528,8 +560,9 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                         <Path
                           key={stroke._id}
                           data={pathData}
-                          fill={stroke.brushColor}
+                          fill={stroke.isEraser ? '#000000' : stroke.brushColor}
                           opacity={stroke.opacity}
+                          globalCompositeOperation={stroke.isEraser ? 'destination-out' : 'source-over'}
                         />
                       )
                     })}
@@ -543,11 +576,30 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       <Path
                         key={pendingStroke.id}
                         data={pathData}
-                        fill={pendingStroke.color}
+                        fill={pendingStroke.isEraser ? '#000000' : pendingStroke.color}
                         opacity={pendingStroke.opacity || 1}
+                        globalCompositeOperation={pendingStroke.isEraser ? 'destination-out' : 'source-over'}
                       />
                     )
                   })}
+                  
+                  {/* Render current stroke being drawn (including eraser) */}
+                  {isDrawing && currentStroke.length > 0 && activeLayerId === 'painting-layer' && (
+                    <Path
+                      data={getStrokePathData({
+                        points: currentStroke,
+                        color,
+                        size,
+                        opacity,
+                        isLive: true,
+                        isEraser: selectedTool === 'eraser',
+                      })}
+                      fill={selectedTool === 'eraser' ? '#000000' : color}
+                      opacity={opacity}
+                      listening={false}
+                      globalCompositeOperation={selectedTool === 'eraser' ? 'destination-out' : 'source-over'}
+                    />
+                  )}
                 </Layer>
               )
             }
@@ -625,8 +677,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
 
           {/* Drawing layer for live strokes and cursors */}
           <Layer ref={drawingLayerRef}>
-            {/* Current stroke being drawn */}
-            {isDrawing && currentStroke.length > 0 && (
+            {/* Current stroke being drawn (only for non-eraser tools on non-paint layers) */}
+            {isDrawing && currentStroke.length > 0 && selectedTool === 'brush' && activeLayerId !== 'painting-layer' && (
               <Path
                 data={getStrokePathData({
                   points: currentStroke,
