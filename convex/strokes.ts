@@ -17,6 +17,7 @@ export const addStroke = mutation({
     brushColor: v.string(),
     brushSize: v.number(),
     opacity: v.number(),
+    isEraser: v.optional(v.boolean()),
   },
   returns: v.id("strokes"),
   handler: async (ctx, args) => {
@@ -42,6 +43,7 @@ export const addStroke = mutation({
       brushSize: args.brushSize,
       opacity: args.opacity,
       strokeOrder,
+      isEraser: args.isEraser,
     });
 
     return strokeId;
@@ -70,6 +72,7 @@ export const getSessionStrokes = query({
     brushSize: v.number(),
     opacity: v.number(),
     strokeOrder: v.number(),
+    isEraser: v.optional(v.boolean()),
   })),
   handler: async (ctx, args) => {
     return await ctx.db
@@ -102,6 +105,7 @@ export const getStrokesAfter = query({
     brushSize: v.number(),
     opacity: v.number(),
     strokeOrder: v.number(),
+    isEraser: v.optional(v.boolean()),
   })),
   handler: async (ctx, args) => {
     return await ctx.db
@@ -154,6 +158,7 @@ export const removeLastStroke = mutation({
       brushSize: lastStroke.brushSize,
       opacity: lastStroke.opacity,
       strokeOrder: lastStroke.strokeOrder,
+      isEraser: lastStroke.isEraser,
       deletedAt: Date.now(),
     });
 
@@ -204,6 +209,7 @@ export const restoreLastDeletedStroke = mutation({
       brushSize: lastDeletedStroke.brushSize,
       opacity: lastDeletedStroke.opacity,
       strokeOrder: lastDeletedStroke.strokeOrder,
+      isEraser: lastDeletedStroke.isEraser,
     });
 
     // Remove from deleted strokes
@@ -238,6 +244,7 @@ export const deleteStroke = mutation({
       brushSize: stroke.brushSize,
       opacity: stroke.opacity,
       strokeOrder: stroke.strokeOrder,
+      isEraser: stroke.isEraser,
       deletedAt: Date.now(),
     });
 

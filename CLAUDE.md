@@ -118,6 +118,7 @@ Set these in the Convex dashboard (Settings > Environment Variables):
 
 5. **Tools Available**
    - **Brush (B)**: Drawing tool for creating strokes
+   - **Eraser (E)**: Eraser tool that works on all layer types
    - **Pan/Hand (H)**: Move individual image/AI layers by dragging
    - **Upload (U)**: Upload images to the canvas
    - **AI Generation (G)**: Generate AI images based on canvas content
@@ -129,6 +130,32 @@ Set these in the Convex dashboard (Settings > Environment Variables):
    - **Data Source**: Both `PaintingView` and `Canvas` components must use strokes from the same source (`usePaintingSession` hook) to ensure consistency
    - **Layer Ordering**: Higher order numbers appear on top (painted last)
    - **Pan Tool Limitations**: The stroke/painting layer cannot be moved as it would require updating all stroke positions in the database
+   - **Active Layer System**: Clicking on a layer in the layers panel makes it active (highlighted in blue). The eraser tool works on the active layer
+   - **Cursor Indicators**: Brush and eraser tools show a semi-transparent circle indicating the tool size. Eraser shows in red
+
+### Eraser Tool Implementation
+
+1. **Database Schema**
+   - Strokes table includes `isEraser: boolean` field to distinguish eraser strokes from paint strokes
+   - Eraser strokes on the paint layer are stored in the database like regular strokes
+
+2. **Rendering Strategy**
+   - **Paint Layer**: Eraser strokes use `globalCompositeOperation: 'destination-out'` to remove pixels
+   - **Image/AI Layers**: Uses local mask system - eraser strokes are stored in `imageMasks` state
+   - Live preview works by rendering the current stroke directly on the target layer
+
+3. **Stroke Management**
+   - Fixed issue where old strokes would disappear/reappear by:
+     - Using stroke IDs for tracking instead of coordinate matching
+     - Storing pending stroke IDs in a ref map
+     - Reducing aggressive cleanup from 5 seconds to 30 seconds
+     - Only cleaning up when more than 20 pending strokes exist
+
+4. **UI Features**
+   - Cursor shows semi-transparent circle indicating eraser size
+   - Red color scheme for eraser (cursor and stroke preview)
+   - Active layer system determines which layer gets erased
+   - Eraser masks are cleaned up when layers are deleted
 
 ### AI Image Generation
 - Uses Replicate's Flux Kontext Pro model for AI image editing

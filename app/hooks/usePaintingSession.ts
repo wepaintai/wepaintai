@@ -21,6 +21,7 @@ export interface Stroke {
   brushSize: number;
   opacity: number;
   strokeOrder: number;
+  isEraser?: boolean;
 }
 
 export interface UserPresence {
@@ -176,7 +177,8 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     points: PaintPoint[],
     brushColor: string,
     brushSize: number,
-    opacity: number = 1
+    opacity: number = 1,
+    isEraser: boolean = false
   ) => {
     if (!sessionId) return;
     
@@ -188,6 +190,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
       brushColor,
       brushSize,
       opacity,
+      isEraser,
     });
   }, [sessionId, addStroke, currentUser]);
 
