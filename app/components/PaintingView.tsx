@@ -122,6 +122,7 @@ export function PaintingView() {
   const [showImageUpload, setShowImageUpload] = useState(false)
   const [showAIGeneration, setShowAIGeneration] = useState(false)
   const [selectedTool, setSelectedTool] = useState('brush')
+  const [activeLayerId, setActiveLayerId] = useState<string>('painting-layer')
   // Check if admin features should be shown based on environment
   const adminFeaturesEnabled = shouldShowAdminFeatures()
   const [isAdminPanelVisible, setIsAdminPanelVisible] = useState(adminFeaturesEnabled)
@@ -350,6 +351,10 @@ export function PaintingView() {
           case 'b':
             event.preventDefault()
             setSelectedTool('brush')
+            break
+          case 'e':
+            event.preventDefault()
+            setSelectedTool('eraser')
             break
           case 'h':
             event.preventDefault()
@@ -598,6 +603,7 @@ export function PaintingView() {
             opacity={opacity}
             layers={layers}
             selectedTool={selectedTool}
+            activeLayerId={activeLayerId}
             // perfect-freehand options
             smoothing={smoothing}
             thinning={thinning}
@@ -677,6 +683,8 @@ export function PaintingView() {
         selectedTool={selectedTool}
         onToolChange={handleToolChange}
         layers={layers}
+        activeLayerId={activeLayerId}
+        onActiveLayerChange={setActiveLayerId}
         onLayerVisibilityChange={handleLayerVisibilityChange}
         onLayerReorder={handleLayerReorder}
         onLayerDelete={handleLayerDelete}
