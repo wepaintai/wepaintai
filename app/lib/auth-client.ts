@@ -45,6 +45,11 @@ function getAuthBaseURL() {
       const prodSiteUrl = 'https://actions.wepaint.ai';
       console.log('[Auth Client] Production custom domain - using actions subdomain for auth:', prodSiteUrl);
       return prodSiteUrl;
+    } else if (convexUrl.includes('convex.cloud')) {
+      // Handle any Convex cloud URL (including staging)
+      const siteUrl = convexUrl.replace('.convex.cloud', '.convex.site');
+      console.log('[Auth Client] Derived site URL from Convex cloud URL:', siteUrl);
+      return siteUrl;
     } else {
       // For other custom domains, log a warning
       console.warn('[Auth Client] Custom domain detected but no VITE_CONVEX_SITE_URL set:', convexUrl);
@@ -282,6 +287,7 @@ export const authClient = Object.assign(baseAuthClient, {
   convex: {
     token: async () => {
       console.log('[Auth Client] Fetching Convex token...');
+      console.log('[Auth Client] Auth base URL:', getAuthBaseURL());
       
       // Return mock token if auth is disabled
       if (authDisabled) {
@@ -295,7 +301,19 @@ export const authClient = Object.assign(baseAuthClient, {
       }
       
       try {
-        const response = await customFetch(`${getAuthBaseURL()}/api/auth/convex/token`, {
+        // First check if we have a session
+        const sessionCheck = await baseAuthClient.getSession();
+        console.log('[Auth Client] Session check before token fetch:', sessionCheck?.data ? 'Session exists' : 'No session');
+        
+        if (!sessionCheck?.data?.session) {
+          console.error('[Auth Client] No session available, cannot fetch token');
+          return { data: null, error: { message: 'No session available' } };
+        }
+        
+        const tokenUrl = `${getAuthBaseURL()}/api/auth/convex/token`;
+        console.log('[Auth Client] Fetching token from:', tokenUrl);
+        
+        const response = await customFetch(tokenUrl, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
@@ -323,6 +341,13 @@ export const authClient = Object.assign(baseAuthClient, {
         
         const data = await response.json();
         console.log('[Auth Client] Token received:', data);
+        
+        // Validate token response
+        if (!data || !data.token) {
+          console.error('[Auth Client] Invalid token response:', data);
+          return { data: null, error: { message: 'Invalid token response' } };
+        }
+        
         return { data, error: null };
       } catch (error) {
         console.error('[Auth Client] Token fetch error:', error);
