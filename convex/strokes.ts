@@ -7,6 +7,7 @@ import { v } from "convex/values";
 export const addStroke = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
+    layerId: v.optional(v.id("paintLayers")), // Layer to add stroke to
     userId: v.optional(v.id("users")),
     userColor: v.string(),
     points: v.array(v.object({
@@ -33,9 +34,35 @@ export const addStroke = mutation({
       strokeCounter: strokeOrder,
     });
 
+    // If no layerId provided, ensure a default layer exists
+    let layerId = args.layerId;
+    if (!layerId) {
+      // Check for existing paint layers
+      const defaultLayer = await ctx.db
+        .query("paintLayers")
+        .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+        .first();
+      
+      if (defaultLayer) {
+        layerId = defaultLayer._id;
+      } else {
+        // Create a default layer if none exists
+        layerId = await ctx.db.insert("paintLayers", {
+          sessionId: args.sessionId,
+          name: "Layer 1",
+          layerOrder: 0,
+          visible: true,
+          opacity: 1,
+          createdBy: args.userId,
+          createdAt: Date.now(),
+        });
+      }
+    }
+
     // Insert the stroke
     const strokeId = await ctx.db.insert("strokes", {
       sessionId: args.sessionId,
+      layerId,
       userId: args.userId,
       userColor: args.userColor,
       points: args.points,
@@ -61,6 +88,7 @@ export const getSessionStrokes = query({
     _id: v.id("strokes"),
     _creationTime: v.number(),
     sessionId: v.id("paintingSessions"),
+    layerId: v.optional(v.id("paintLayers")),
     userId: v.optional(v.id("users")),
     userColor: v.string(),
     points: v.array(v.object({
@@ -83,6 +111,42 @@ export const getSessionStrokes = query({
 });
 
 /**
+ * Get strokes for a specific layer
+ */
+export const getLayerStrokes = query({
+  args: {
+    sessionId: v.id("paintingSessions"),
+    layerId: v.id("paintLayers"),
+  },
+  returns: v.array(v.object({
+    _id: v.id("strokes"),
+    _creationTime: v.number(),
+    sessionId: v.id("paintingSessions"),
+    layerId: v.optional(v.id("paintLayers")),
+    userId: v.optional(v.id("users")),
+    userColor: v.string(),
+    points: v.array(v.object({
+      x: v.number(),
+      y: v.number(),
+      pressure: v.optional(v.number()),
+    })),
+    brushColor: v.string(),
+    brushSize: v.number(),
+    opacity: v.number(),
+    strokeOrder: v.number(),
+    isEraser: v.optional(v.boolean()),
+  })),
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("strokes")
+      .withIndex("by_layer", (q) => 
+        q.eq("sessionId", args.sessionId).eq("layerId", args.layerId)
+      )
+      .collect();
+  },
+});
+
+/**
  * Get strokes after a certain order number (for incremental updates)
  */
 export const getStrokesAfter = query({
@@ -94,6 +158,7 @@ export const getStrokesAfter = query({
     _id: v.id("strokes"),
     _creationTime: v.number(),
     sessionId: v.id("paintingSessions"),
+    layerId: v.optional(v.id("paintLayers")),
     userId: v.optional(v.id("users")),
     userColor: v.string(),
     points: v.array(v.object({
@@ -151,6 +216,7 @@ export const removeLastStroke = mutation({
     // Save the stroke to deletedStrokes before deleting
     await ctx.db.insert("deletedStrokes", {
       sessionId: lastStroke.sessionId,
+      layerId: lastStroke.layerId,
       userId: lastStroke.userId,
       userColor: lastStroke.userColor,
       points: lastStroke.points,
@@ -202,6 +268,7 @@ export const restoreLastDeletedStroke = mutation({
     // Restore the stroke to the strokes table
     await ctx.db.insert("strokes", {
       sessionId: lastDeletedStroke.sessionId,
+      layerId: lastDeletedStroke.layerId,
       userId: lastDeletedStroke.userId,
       userColor: lastDeletedStroke.userColor,
       points: lastDeletedStroke.points,
@@ -237,6 +304,7 @@ export const deleteStroke = mutation({
     // Save the stroke to deletedStrokes before deleting
     await ctx.db.insert("deletedStrokes", {
       sessionId: stroke.sessionId,
+      layerId: stroke.layerId,
       userId: stroke.userId,
       userColor: stroke.userColor,
       points: stroke.points,

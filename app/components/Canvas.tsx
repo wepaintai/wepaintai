@@ -76,6 +76,7 @@ interface CanvasProps {
   opacity: number
   onStrokeEnd?: () => void
   layers: Layer[] // Layers from PaintingView
+  activePaintLayerId?: string | null // Active paint layer for new strokes
   // perfect-freehand options
   smoothing?: number
   thinning?: number
@@ -104,6 +105,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
       opacity,
       onStrokeEnd,
       layers,
+      activePaintLayerId,
       // perfect-freehand options
       smoothing = 0.75, // Increased for smoother lines
       thinning = 0.5,  // Default value
@@ -830,7 +832,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
         }
         setPendingStrokes(prev => new Map(prev).set(tempId, newPendingStroke))
         
-        addStrokeToSession(finalStrokePoints, color, size, opacity)
+        addStrokeToSession(finalStrokePoints, color, size, opacity, false, activePaintLayerId)
         
         // P2P only - no need to clear Convex live strokes
         
@@ -886,7 +888,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(
         }
         setPendingStrokes(prev => new Map(prev).set(tempId, newPendingStroke))
         
-        addStrokeToSession(finalStrokePoints, color, size, opacity)
+        addStrokeToSession(finalStrokePoints, color, size, opacity, false, activePaintLayerId)
         
         // Mark stroke layer as dirty to trigger redraw
         setCanvasLayers(prev => {

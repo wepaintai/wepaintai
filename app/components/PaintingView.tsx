@@ -140,6 +140,14 @@ export function PaintingView() {
   const updatePaintLayerVisibility = useMutation(api.paintLayer.updatePaintLayerVisibility)
   const paintLayerSettings = useQuery(api.paintLayer.getPaintLayerSettings, sessionId ? { sessionId } : 'skip')
   
+  // Multiple paint layers support
+  const paintLayers = useQuery(api.paintLayers.getPaintLayers, sessionId ? { sessionId } : 'skip')
+  const createPaintLayer = useMutation(api.paintLayers.createPaintLayer)
+  const updatePaintLayer = useMutation(api.paintLayers.updatePaintLayer)
+  const deletePaintLayer = useMutation(api.paintLayers.deletePaintLayer)
+  const ensureDefaultPaintLayer = useMutation(api.paintLayers.ensureDefaultPaintLayer)
+  const [activePaintLayerId, setActivePaintLayerId] = useState<string | null>(null)
+  
   // Unified layer reordering
   const reorderLayer = useMutation(api.layers.reorderLayer)
   
@@ -191,7 +199,21 @@ export function PaintingView() {
     }
   }, []);
 
-;
+  // Ensure default paint layer exists
+  useEffect(() => {
+    if (sessionId && paintLayers !== undefined) {
+      if (!paintLayers || paintLayers.length === 0) {
+        ensureDefaultPaintLayer({ sessionId })
+      }
+    }
+  }, [sessionId, paintLayers, ensureDefaultPaintLayer])
+
+  // Set active paint layer when layers are loaded
+  useEffect(() => {
+    if (paintLayers && paintLayers.length > 0 && !activePaintLayerId) {
+      setActivePaintLayerId(paintLayers[0]._id)
+    }
+  }, [paintLayers, activePaintLayerId])
 
   // Create a new session or join existing one on mount
   useEffect(() => {
@@ -397,23 +419,32 @@ export function PaintingView() {
   const layers = useMemo<Layer[]>(() => {
     const allLayers: Layer[] = []
     
-    // Add painting layer (all strokes combined)
-    // Always show the painting layer, even if there are no strokes yet
-    const hasStrokes = Array.isArray(strokes) && strokes.length > 0
-    console.log('[Layers] Computing layers:', {
-      strokesInMemo: strokes,
-      strokesLength: strokes?.length,
-      hasStrokes,
-      isArray: Array.isArray(strokes)
-    })
-    allLayers.push({
-      id: 'painting-layer',
-      type: 'stroke',
-      name: hasStrokes ? 'Painting' : 'Painting (empty)',
-      visible: paintingLayerVisible,
-      opacity: 1,
-      order: paintingLayerOrder,
-    })
+    // Add multiple paint layers
+    if (paintLayers && paintLayers.length > 0) {
+      // Use existing paint layers
+      paintLayers.forEach((paintLayer) => {
+        allLayers.push({
+          id: paintLayer._id,
+          type: 'paint',
+          name: paintLayer.name,
+          visible: paintLayer.visible,
+          opacity: paintLayer.opacity,
+          order: paintLayer.layerOrder,
+        })
+      })
+    } else {
+      // Fallback to single paint layer for backward compatibility
+      const hasStrokes = Array.isArray(strokes) && strokes.length > 0
+      console.log('[Layers] No paint layers found, using fallback single layer')
+      allLayers.push({
+        id: 'painting-layer',
+        type: 'stroke',
+        name: hasStrokes ? 'Painting' : 'Painting (empty)',
+        visible: paintingLayerVisible,
+        opacity: 1,
+        order: paintingLayerOrder,
+      })
+    }
     
     // Add uploaded images
     const uploadedImages = images.filter(img => !(img as any).type || (img as any).type === 'uploaded')
@@ -447,15 +478,24 @@ export function PaintingView() {
     }
     
     return allLayers
-  }, [strokes, images, aiImages, paintingLayerVisible, paintingLayerOrder])
+  }, [strokes, images, aiImages, paintingLayerVisible, paintingLayerOrder, paintLayers])
 
   // Handle layer operations
   const handleLayerVisibilityChange = useCallback(async (layerId: string, visible: boolean) => {
-    // Check if it's the painting layer
+    // Check if it's the old single painting layer
     if (layerId === 'painting-layer') {
       if (sessionId) {
         await updatePaintLayerVisibility({ sessionId, visible })
       }
+      // Force canvas redraw
+      canvasRef.current?.forceRedraw?.()
+      return
+    }
+    
+    // Check if it's a paint layer
+    const paintLayer = paintLayers?.find(layer => layer._id === layerId)
+    if (paintLayer) {
+      await updatePaintLayer({ layerId: layerId as any, visible })
       // Force canvas redraw
       canvasRef.current?.forceRedraw?.()
       return
@@ -482,11 +522,27 @@ export function PaintingView() {
 
   const handleLayerDelete = useCallback(async (layerId: string) => {
     console.log('[PaintingView] handleLayerDelete called with layerId:', layerId)
+    console.log('[PaintingView] Available paint layers:', paintLayers)
+    console.log('[PaintingView] Available layers:', layers)
     
-    // Check if it's the painting layer
+    // Check if it's the old single painting layer
     if (layerId === 'painting-layer') {
       // Clear all strokes
       await clearSession()
+      return
+    }
+    
+    // Check if it's a paint layer
+    const paintLayer = paintLayers?.find(layer => layer._id === layerId)
+    console.log('[PaintingView] Found paint layer:', paintLayer)
+    if (paintLayer) {
+      console.log('[PaintingView] Deleting paint layer:', layerId)
+      try {
+        await deletePaintLayer({ layerId: layerId as Id<"paintLayers"> })
+        console.log('[PaintingView] Paint layer deleted successfully')
+      } catch (error) {
+        console.error('[PaintingView] Error deleting paint layer:', error)
+      }
       return
     }
     
@@ -518,7 +574,7 @@ export function PaintingView() {
     } else {
       console.warn('[PaintingView] Layer not found for deletion:', layerId)
     }
-  }, [images, aiImages, clearSession, deleteImage, deleteAIImageMutation])
+  }, [images, aiImages, paintLayers, clearSession, deleteImage, deletePaintLayer, deleteAIImageMutation])
 
   const handleLayerReorder = useCallback(async (layerId: string, newOrder: number) => {
     if (!sessionId) return
@@ -539,10 +595,19 @@ export function PaintingView() {
   }, [sessionId, layers, reorderLayer])
 
   const handleLayerOpacityChange = useCallback(async (layerId: string, opacity: number) => {
-    // Check if it's the painting layer
+    // Check if it's the old single painting layer
     if (layerId === 'painting-layer') {
       // TODO: Implement painting layer opacity
       console.log('Painting layer opacity not yet implemented')
+      return
+    }
+    
+    // Check if it's a paint layer
+    const paintLayer = paintLayers?.find(layer => layer._id === layerId)
+    if (paintLayer) {
+      await updatePaintLayer({ layerId: layerId as any, opacity })
+      // Force canvas redraw
+      canvasRef.current?.forceRedraw?.()
       return
     }
     
@@ -562,6 +627,22 @@ export function PaintingView() {
       })
     }
   }, [images, aiImages, updateImageTransform, updateAIImageTransformMutation])
+
+  // Handle creating new paint layer
+  const handleCreatePaintLayer = useCallback(async () => {
+    if (!sessionId) return
+    
+    // Generate a name for the new layer
+    const paintLayerCount = paintLayers?.filter(l => l.name.startsWith('Layer')).length || 0
+    const newLayerName = `Layer ${paintLayerCount + 2}` // +2 because we already have Layer 1
+    
+    const layerId = await createPaintLayer({ sessionId, name: newLayerName })
+    
+    // Set the new layer as active
+    if (layerId) {
+      setActivePaintLayerId(layerId)
+    }
+  }, [sessionId, paintLayers, createPaintLayer])
 
   return (
     <div className="relative w-full h-full bg-gray-50">
@@ -604,6 +685,7 @@ export function PaintingView() {
             layers={layers}
             selectedTool={selectedTool}
             activeLayerId={activeLayerId}
+            activePaintLayerId={activePaintLayerId}
             // perfect-freehand options
             smoothing={smoothing}
             thinning={thinning}
@@ -623,6 +705,7 @@ export function PaintingView() {
             size={size}
             opacity={opacity}
             layers={layers}
+            activePaintLayerId={activePaintLayerId}
             // perfect-freehand options
             smoothing={smoothing}
             thinning={thinning}
@@ -684,11 +767,19 @@ export function PaintingView() {
         onToolChange={handleToolChange}
         layers={layers}
         activeLayerId={activeLayerId}
-        onActiveLayerChange={setActiveLayerId}
+        onActiveLayerChange={(layerId) => {
+          setActiveLayerId(layerId)
+          // If a paint layer is selected, update the active paint layer
+          const layer = layers.find(l => l.id === layerId)
+          if (layer && (layer.type === 'paint' || (layer.type === 'stroke' && layerId === 'painting-layer'))) {
+            setActivePaintLayerId(layerId)
+          }
+        }}
         onLayerVisibilityChange={handleLayerVisibilityChange}
         onLayerReorder={handleLayerReorder}
         onLayerDelete={handleLayerDelete}
         onLayerOpacityChange={handleLayerOpacityChange}
+        onCreatePaintLayer={handleCreatePaintLayer}
       />
       {showImageUpload && (
         <ImageUploadModal

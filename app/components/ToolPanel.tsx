@@ -21,14 +21,15 @@ import {
   Trash2,
   GripVertical,
   Hand,
-  Eraser
+  Eraser,
+  Plus
 } from 'lucide-react'
 import { AuthModal } from './AuthModal'
 
 // Types
 export interface Layer {
   id: string
-  type: 'stroke' | 'image' | 'ai-image'
+  type: 'stroke' | 'image' | 'ai-image' | 'paint'
   name: string
   visible: boolean
   opacity: number
@@ -58,6 +59,7 @@ interface ToolPanelProps {
   onLayerReorder?: (layerId: string, newOrder: number) => void
   onLayerDelete?: (layerId: string) => void
   onLayerOpacityChange?: (layerId: string, opacity: number) => void
+  onCreatePaintLayer?: () => void
 }
 
 interface Tool {
@@ -338,6 +340,7 @@ const LayerItem = React.memo(({
           <button
             onClick={(e) => {
               e.stopPropagation()
+              console.log('[LayerItem] Delete button clicked for layer:', layer.id, layer.name)
               onDelete()
             }}
             className="p-0.5 hover:bg-white/20 rounded transition-colors"
@@ -391,6 +394,7 @@ export function ToolPanel({
   onLayerReorder,
   onLayerDelete,
   onLayerOpacityChange,
+  onCreatePaintLayer,
 }: ToolPanelProps) {
   const [internalSelectedTool, setInternalSelectedTool] = React.useState('brush')
   const selectedTool = externalSelectedTool || internalSelectedTool
@@ -711,7 +715,20 @@ export function ToolPanel({
                     <p className="text-xs text-white/60 text-center py-4">No layers yet</p>
                   ) : (
                     <>
-                      <div className="text-xs font-medium text-white/80 mb-1">Layers ({layers.length})</div>
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="text-xs font-medium text-white/80">Layers ({layers.length})</div>
+                        {onCreatePaintLayer && (
+                          <button
+                            onClick={onCreatePaintLayer}
+                            className="p-0.5 hover:bg-white/20 rounded transition-colors flex items-center gap-1"
+                            aria-label="Add new paint layer"
+                            title="Add new paint layer"
+                          >
+                            <Plus className="w-3.5 h-3.5 text-white/60 hover:text-white" />
+                            <span className="text-[10px] text-white/60">New</span>
+                          </button>
+                        )}
+                      </div>
                       <div className="space-y-1 max-h-[300px] overflow-y-auto">
                         {[...layers].sort((a, b) => b.order - a.order).map((layer, index) => (
                           <LayerItem

@@ -16,6 +16,7 @@ const schema = defineSchema({
 
   strokes: defineTable({
     sessionId: v.id("paintingSessions"),
+    layerId: v.optional(v.id("paintLayers")), // Reference to paint layer (optional for backward compatibility)
     userId: v.optional(v.id("users")),
     userColor: v.string(), // For anonymous users
     points: v.array(v.object({
@@ -28,7 +29,8 @@ const schema = defineSchema({
     opacity: v.number(),
     strokeOrder: v.number(), // For ordering strokes
     isEraser: v.optional(v.boolean()), // True if this stroke is an eraser stroke
-  }).index("by_session", ["sessionId", "strokeOrder"]),
+  }).index("by_session", ["sessionId", "strokeOrder"])
+    .index("by_layer", ["sessionId", "layerId", "strokeOrder"]),
 
   userPresence: defineTable({
     sessionId: v.id("paintingSessions"),
@@ -148,6 +150,7 @@ const schema = defineSchema({
   // Deleted strokes for undo/redo functionality
   deletedStrokes: defineTable({
     sessionId: v.id("paintingSessions"),
+    layerId: v.optional(v.id("paintLayers")), // Reference to paint layer
     userId: v.optional(v.id("users")),
     userColor: v.string(),
     points: v.array(v.object({
@@ -162,6 +165,17 @@ const schema = defineSchema({
     isEraser: v.optional(v.boolean()),
     deletedAt: v.number(),
   }).index("by_session_deleted", ["sessionId", "deletedAt"]),
+
+  // Paint layers for multi-layer painting support
+  paintLayers: defineTable({
+    sessionId: v.id("paintingSessions"),
+    name: v.string(),
+    layerOrder: v.number(),
+    visible: v.boolean(),
+    opacity: v.number(),
+    createdBy: v.optional(v.id("users")),
+    createdAt: v.number(),
+  }).index("by_session", ["sessionId", "layerOrder"]),
 });
 
 export default schema;

@@ -24,7 +24,13 @@ export const reorderLayer = mutation({
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
       .collect();
     
-    // Get current paint layer order
+    // Get all paint layers
+    const paintLayers = await ctx.db
+      .query("paintLayers")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+    
+    // Get current paint layer order (for backward compatibility)
     const currentPaintOrder = session.paintLayerOrder ?? 0;
     
     // Create a unified layer list
@@ -32,11 +38,27 @@ export const reorderLayer = mutation({
       id: string;
       type: 'paint' | 'uploaded' | 'ai';
       order: number;
-      dbId?: Id<"uploadedImages"> | Id<"aiGeneratedImages">;
+      dbId?: Id<"uploadedImages"> | Id<"aiGeneratedImages"> | Id<"paintLayers">;
     };
     
-    const allLayers: UnifiedLayer[] = [
-      { id: 'painting-layer', type: 'paint', order: currentPaintOrder },
+    const allLayers: UnifiedLayer[] = [];
+    
+    // Add paint layers
+    if (paintLayers.length > 0) {
+      // Use new paint layers
+      allLayers.push(...paintLayers.map(layer => ({
+        id: layer._id,
+        type: 'paint' as const,
+        order: layer.layerOrder,
+        dbId: layer._id
+      })));
+    } else {
+      // Fallback to old single paint layer for backward compatibility
+      allLayers.push({ id: 'painting-layer', type: 'paint', order: currentPaintOrder });
+    }
+    
+    // Add image layers
+    allLayers.push(
       ...uploadedImages.map(img => ({ 
         id: img._id, 
         type: 'uploaded' as const, 
@@ -49,7 +71,7 @@ export const reorderLayer = mutation({
         order: img.layerOrder,
         dbId: img._id 
       }))
-    ];
+    );
     
     // Sort by current order
     allLayers.sort((a, b) => a.order - b.order);
@@ -97,9 +119,15 @@ export const reorderLayer = mutation({
     await Promise.all(
       updates.map(async ({ layer, newOrder }) => {
         if (layer.type === 'paint') {
-          await ctx.db.patch(args.sessionId, {
-            paintLayerOrder: newOrder,
-          });
+          if (layer.dbId) {
+            // New paint layer from paintLayers table
+            await ctx.db.patch(layer.dbId, { layerOrder: newOrder });
+          } else {
+            // Old single paint layer (backward compatibility)
+            await ctx.db.patch(args.sessionId, {
+              paintLayerOrder: newOrder,
+            });
+          }
         } else if (layer.type === 'uploaded' && layer.dbId) {
           await ctx.db.patch(layer.dbId, { layerOrder: newOrder });
         } else if (layer.type === 'ai' && layer.dbId) {
