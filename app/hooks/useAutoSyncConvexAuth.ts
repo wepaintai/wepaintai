@@ -53,15 +53,16 @@ export function useAutoSyncConvexAuth() {
         const session = await authClient.getSession()
         console.log('[useAutoSyncConvexAuth] getSession result:', JSON.stringify(session, null, 2))
         
-        // Check for user in either session.user or session.data.user
-        const user = session?.user || session?.data?.user
+        // Better Auth client returns {data: {user, session}, error: null}
+        const sessionData = session?.data
+        const user = sessionData?.user
         
-        if (!user) {
+        if (!user || !sessionData?.session) {
           console.log('[useAutoSyncConvexAuth] No Better Auth session found - session structure:', {
             hasSession: !!session,
             hasData: !!session?.data,
-            hasUser: !!session?.user,
-            hasDataUser: !!session?.data?.user,
+            hasUser: !!user,
+            hasSessionData: !!sessionData?.session,
             fullSession: session
           })
           hasTriggeredRef.current = false
