@@ -13,7 +13,7 @@ export function AuthDebug() {
   // Test direct session fetch
   React.useEffect(() => {
     console.log('[AuthDebug] Testing direct session fetch...');
-    fetch('https://actions.wepaint.ai/api/auth/get-session', {
+    fetch('https://actions.wepaint.ai/api/auth/session', {
       credentials: 'include',
       headers: {
         'Content-Type': 'application/json',

@@ -49,8 +49,9 @@ export function useAutoSyncConvexAuth() {
     // Check for Better Auth session and sync if needed
     async function checkAndSync() {
       try {
+        console.log('[useAutoSyncConvexAuth] Starting session check...')
         const session = await authClient.getSession()
-        console.log('[useAutoSyncConvexAuth] getSession result:', session)
+        console.log('[useAutoSyncConvexAuth] getSession result:', JSON.stringify(session, null, 2))
         
         // Check for user in either session.user or session.data.user
         const user = session?.user || session?.data?.user
@@ -80,6 +81,20 @@ export function useAutoSyncConvexAuth() {
             // Get the Convex URL and construct the storage key
             const convexUrl = import.meta.env.VITE_CONVEX_URL
             const storageKey = `convex-auth:${convexUrl}`
+            
+            // Check if token is already stored
+            const existingToken = localStorage.getItem(storageKey)
+            if (existingToken) {
+              try {
+                const parsed = JSON.parse(existingToken)
+                if (parsed.token === tokenResult.data.token) {
+                  console.log('[useAutoSyncConvexAuth] Token already stored, skipping reload')
+                  return
+                }
+              } catch (e) {
+                // Continue if parse fails
+              }
+            }
             
             // Store the token in the format Convex expects
             localStorage.setItem(storageKey, JSON.stringify({

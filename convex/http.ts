@@ -182,4 +182,33 @@ http.route({
   handler: sessionHandler,
 });
 
+// Add a debug endpoint to test auth configuration
+const debugHandler = httpAction(async (ctx, request) => {
+  console.log('[AUTH DEBUG] Test endpoint hit');
+  
+  const corsHeaders = await getCorsHeaders(request);
+  const responseHeaders = new Headers(corsHeaders);
+  responseHeaders.set('Content-Type', 'application/json');
+  
+  const auth = createAuth(ctx);
+  
+  return new Response(JSON.stringify({
+    message: 'Auth debug endpoint',
+    baseURL: auth.options.baseURL,
+    hasSecret: !!process.env.BETTER_AUTH_SECRET,
+    convexSiteUrl: process.env.CONVEX_SITE_URL,
+    clientOrigin: process.env.CLIENT_ORIGIN,
+    requestOrigin: request.headers.get('Origin'),
+  }), {
+    status: 200,
+    headers: responseHeaders,
+  });
+});
+
+http.route({
+  path: `/api/auth/debug`,
+  method: "GET", 
+  handler: debugHandler,
+});
+
 export default http
