@@ -12,8 +12,8 @@ importers:
         specifier: ^0.0.87
         version: 0.0.87(@auth/core@0.37.4)(convex@1.25.2(react@19.1.0))(react@19.1.0)
       '@convex-dev/better-auth':
-        specifier: ^0.6.2
-        version: 0.6.2(better-auth@1.2.12)(convex@1.25.2(react@19.1.0))(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(typescript@5.8.3)
+        specifier: 0.7.0-alpha.13
+        version: 0.7.0-alpha.13(better-auth@1.2.12)(convex@1.25.2(react@19.1.0))(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(typescript@5.8.3)
       '@tailwindcss/forms':
         specifier: ^0.5.10
         version: 0.5.10(tailwindcss@4.1.7)
@@ -233,10 +233,10 @@ packages:
       react:
         optional: true
 
-  '@convex-dev/better-auth@0.6.2':
-    resolution: {integrity: sha512-16ehxLCcDc8rtc/Tfyq0TOz2erCQYE5JQhvxMLkpdUmqQU62HHGRY7Tm3TMyfhJFiwa0fP7xk28DSQjTwfowLQ==}
+  '@convex-dev/better-auth@0.7.0-alpha.13':
+    resolution: {integrity: sha512-1CEwvsRD0qAaHcQ/8xXuddrr+gfYYAUUvghZTujqt0WxXA7FD8s/0+ETkSdVqLZGDNsWMGHfuKSiZsUB9ELlvQ==}
     peerDependencies:
-      better-auth: 1.2.7
+      better-auth: ^1.2.12
       convex: ~1.16.5 || >=1.17.0 <1.35.0
       react: ^18.3.1 || ^19.0.0
       react-dom: ^18.3.1 || ^19.0.0
@@ -2146,8 +2146,8 @@ packages:
   convert-source-map@2.0.0:
     resolution: {integrity: sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg==}
 
-  convex-helpers@0.1.94:
-    resolution: {integrity: sha512-35o9TzEUdze3wGHxksk9Ynutw8ekxp/kbjs1dlfK6iZwPJeKbv9sqRXIyvPytTGvMmoi40fGm09f/z22gg6L+A==}
+  convex-helpers@0.1.99:
+    resolution: {integrity: sha512-W4sV9676vWWIwfYvG76Dxf7biDgpYggvwTLW5fJgLhXIb/XUCacO2AOXu+HrW85GvPRb1LLjhWgWPH8byHiTsw==}
     hasBin: true
     peerDependencies:
       '@standard-schema/spec': ^1.0.0
@@ -4794,13 +4794,13 @@ snapshots:
     optionalDependencies:
       react: 19.1.0
 
-  '@convex-dev/better-auth@0.6.2(better-auth@1.2.12)(convex@1.25.2(react@19.1.0))(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(typescript@5.8.3)':
+  '@convex-dev/better-auth@0.7.0-alpha.13(better-auth@1.2.12)(convex@1.25.2(react@19.1.0))(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(typescript@5.8.3)':
     dependencies:
       '@better-auth/utils': 0.2.5
       better-auth: 1.2.12
       better-call: 1.0.9
       convex: 1.25.2(react@19.1.0)
-      convex-helpers: 0.1.94(convex@1.25.2(react@19.1.0))(react@19.1.0)(typescript@5.8.3)(zod@3.25.32)
+      convex-helpers: 0.1.99(convex@1.25.2(react@19.1.0))(react@19.1.0)(typescript@5.8.3)(zod@3.25.32)
       is-network-error: 1.1.0
       react: 19.1.0
       react-dom: 19.1.0(react@19.1.0)
@@ -6877,7 +6877,7 @@ snapshots:
 
   convert-source-map@2.0.0: {}
 
-  convex-helpers@0.1.94(convex@1.25.2(react@19.1.0))(react@19.1.0)(typescript@5.8.3)(zod@3.25.32):
+  convex-helpers@0.1.99(convex@1.25.2(react@19.1.0))(react@19.1.0)(typescript@5.8.3)(zod@3.25.32):
     dependencies:
       convex: 1.25.2(react@19.1.0)
     optionalDependencies:
