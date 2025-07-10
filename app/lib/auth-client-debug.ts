@@ -23,7 +23,7 @@ export async function debugGetSession() {
     
     // 4. Try manual session fetch to compare
     console.log('4. Trying manual session fetch...');
-    const manualResponse = await authClient.$fetch('/api/auth/get-session', {
+    const manualResponse = await authClient.$fetch('/get-session', {
       method: 'GET',
     });
     console.log('   Manual fetch response:', manualResponse);
