@@ -14,8 +14,9 @@
     "start": "vinxi start"
   },
   "dependencies": {
+    "@clerk/clerk-react": "^5.33.0",
+    "@clerk/tanstack-start": "^0.11.5",
     "@convex-dev/auth": "^0.0.87",
-    "@convex-dev/better-auth": "0.7.0-alpha.13",
     "@tailwindcss/forms": "^0.5.10",
     "@tailwindcss/postcss": "^4.1.7",
     "@tailwindcss/vite": "^4.1.7",
@@ -23,9 +24,9 @@
     "@tanstack/react-start": "^1.117.2",
     "@vercel/analytics": "^1.5.0",
     "autoprefixer": "^10.4.21",
-    "better-auth": "^1.2.12",
     "clsx": "^2.1.1",
     "convex": "^1.25.2",
+    "convex-helpers": "^0.1.99",
     "framer-motion": "^12.15.0",
     "konva": "^9.3.20",
     "lucide-react": "^0.511.0",

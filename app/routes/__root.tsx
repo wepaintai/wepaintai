@@ -5,27 +5,13 @@ import {
   createRootRoute,
 } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
-import { getCookie, getWebRequest } from '@tanstack/react-start/server'
 import type { ReactNode } from 'react'
 import { ConvexClientProvider } from '../lib/convex'
 import { PasswordProtection } from '../components/PasswordProtection'
 import { Analytics } from '@vercel/analytics/react'
 import appCss from '../styles/app.css?url'
-import {
-  fetchSession,
-  getCookieName,
-} from '@convex-dev/better-auth/react-start'
-import { createAuth } from '../../convex/auth'
-import { AuthSyncWrapper } from '../components/AuthSyncWrapper'
-
-// Simple in-memory cache for auth state
-let authCache: { userId: string | null; token: string | null; timestamp: number } | null = null
-const AUTH_CACHE_TTL = 5000 // 5 seconds
-
-// Clear cache on initial load
-if (typeof window === 'undefined') {
-  authCache = null
-}
+import { ClerkProvider } from '@clerk/tanstack-start'
+import { clerkClient } from '@clerk/tanstack-start/server'
 
 function NotFoundComponent() {
   return (
@@ -47,62 +33,13 @@ function NotFoundComponent() {
   )
 }
 
-// Server side session request - memoized to prevent repeated calls
-const fetchAuth = createServerFn({ method: 'GET' }).handler(async () => {
-  try {
-    // Check cache first
-    if (authCache && Date.now() - authCache.timestamp < AUTH_CACHE_TTL) {
-      return authCache
-    }
-    
-    const sessionCookieName = await getCookieName(createAuth)
-    const token = getCookie(sessionCookieName)
-    
-    // Debug logging
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[fetchAuth] Cookie name:', sessionCookieName)
-      console.log('[fetchAuth] Token exists:', !!token)
-    }
-    
-    // If no token, skip the session fetch
-    if (!token) {
-      const result = {
-        userId: null,
-        token: null,
-        timestamp: Date.now()
-      }
-      authCache = result
-      return result
-    }
-    
-    const request = getWebRequest()
-    const { session } = await fetchSession(createAuth, request)
-    
-    // Debug logging
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[fetchAuth] Session:', session)
-      console.log('[fetchAuth] User ID:', session?.user?.id)
-    }
-    
-    const result = {
-      userId: session?.user?.id || null,
-      token: token || null,
-      timestamp: Date.now()
-    }
-    authCache = result
-    return result
-  } catch (error) {
-    // Only log errors in development
-    if (process.env.NODE_ENV === 'development') {
-      console.error('Error fetching auth:', error)
-    }
-    const result = {
-      userId: null,
-      token: null,
-      timestamp: Date.now()
-    }
-    authCache = result
-    return result
+// Server function to get auth state
+const getAuth = createServerFn({ method: 'GET' }).handler(async (ctx) => {
+  const user = await clerkClient().users.getUser(ctx.user?.id ?? "")
+    .catch(() => null)
+  
+  return {
+    userId: user?.id ?? null,
   }
 })
 
@@ -127,17 +64,9 @@ export const Route = createRootRoute({
       },
     ],
   }),
-  beforeLoad: async ({ context }) => {
-    // Return cached auth if available
-    if (context?.userId !== undefined) {
-      return { userId: context.userId, token: context.token }
-    }
-    
-    // Get auth state for the app
-    const auth = await fetchAuth()
-    const { userId, token } = auth
-
-    return { userId, token }
+  beforeLoad: async () => {
+    const auth = await getAuth()
+    return auth
   },
   component: RootComponent,
   notFoundComponent: NotFoundComponent,
@@ -145,15 +74,15 @@ export const Route = createRootRoute({
 
 function RootComponent() {
   return (
-    <ConvexClientProvider>
-      <AuthSyncWrapper>
+    <ClerkProvider>
+      <ConvexClientProvider>
         <RootDocument>
           <PasswordProtection>
             <Outlet />
           </PasswordProtection>
         </RootDocument>
-      </AuthSyncWrapper>
-    </ConvexClientProvider>
+      </ConvexClientProvider>
+    </ClerkProvider>
   )
 }
 
