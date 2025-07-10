@@ -6,14 +6,28 @@ import { Id } from "./_generated/dataModel";
 export const getTokenBalance = query({
   args: {},
   handler: async (ctx) => {
+    // Return null immediately if running in an environment without auth
+    // This prevents any auth-related errors from being thrown
+    if (typeof ctx.auth === 'undefined') {
+      console.log("[getTokenBalance] Running without auth context");
+      return null;
+    }
+    
     try {
       // Check if auth is available
-      if (!ctx.auth || !ctx.auth.getUserIdentity) {
-        console.log("[getTokenBalance] Auth not available");
+      if (!ctx.auth || typeof ctx.auth.getUserIdentity !== 'function') {
+        console.log("[getTokenBalance] Auth not properly configured");
         return null;
       }
       
-      const identity = await ctx.auth.getUserIdentity();
+      let identity;
+      try {
+        identity = await ctx.auth.getUserIdentity();
+      } catch (authError) {
+        console.log("[getTokenBalance] Auth error:", authError);
+        return null;
+      }
+      
       if (!identity) {
         // Return null for unauthenticated users
         return null;
@@ -172,14 +186,27 @@ export const hasEnoughTokens = query({
     requiredTokens: v.number(),
   },
   handler: async (ctx, args) => {
+    // Return false immediately if running in an environment without auth
+    if (typeof ctx.auth === 'undefined') {
+      console.log("[hasEnoughTokens] Running without auth context");
+      return false;
+    }
+    
     try {
       // Check if auth is available
-      if (!ctx.auth || !ctx.auth.getUserIdentity) {
-        console.log("[hasEnoughTokens] Auth not available");
+      if (!ctx.auth || typeof ctx.auth.getUserIdentity !== 'function') {
+        console.log("[hasEnoughTokens] Auth not properly configured");
         return false;
       }
       
-      const identity = await ctx.auth.getUserIdentity();
+      let identity;
+      try {
+        identity = await ctx.auth.getUserIdentity();
+      } catch (authError) {
+        console.log("[hasEnoughTokens] Auth error:", authError);
+        return false;
+      }
+      
       if (!identity) return false;
 
       const user = await ctx.db

@@ -4,17 +4,30 @@ import { v } from "convex/values";
 export const getCurrentUser = query({
   args: {},
   handler: async (ctx) => {
+    // Return null immediately if running in an environment without auth
+    if (typeof ctx.auth === 'undefined') {
+      console.log("[getCurrentUser] Running without auth context");
+      return null;
+    }
+    
     try {
       console.log("[getCurrentUser] Starting auth check...");
       
       // Check if auth is available
-      if (!ctx.auth || !ctx.auth.getUserIdentity) {
-        console.log("[getCurrentUser] Auth not available");
+      if (!ctx.auth || typeof ctx.auth.getUserIdentity !== 'function') {
+        console.log("[getCurrentUser] Auth not properly configured");
         return null;
       }
       
       // Get the user identity from Clerk
-      const identity = await ctx.auth.getUserIdentity();
+      let identity;
+      try {
+        identity = await ctx.auth.getUserIdentity();
+      } catch (authError) {
+        console.log("[getCurrentUser] Auth error:", authError);
+        return null;
+      }
+      
       console.log("[getCurrentUser] Identity from ctx.auth:", identity);
       
       if (!identity) {

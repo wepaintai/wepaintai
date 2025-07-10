@@ -13,7 +13,10 @@ export function TokenDisplay({ className = '' }: TokenDisplayProps) {
   const [showPurchaseModal, setShowPurchaseModal] = useState(false)
   const [purchasing, setPurchasing] = useState(false)
   
-  const tokenBalance = useQuery(api.tokens.getTokenBalance)
+  // Only query for token balance if user is authenticated
+  const tokenBalance = useQuery(
+    userId ? api.tokens.getTokenBalance : undefined
+  )
   const createCheckout = useAction(api.polar.createCheckout)
   
   const handlePurchase = async () => {
