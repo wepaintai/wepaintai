@@ -213,6 +213,17 @@ export function AIGenerationModal({
                   </button>
                 </span>
               )}
+              {error.includes('Please sign in') && (
+                <span>
+                  {' '}
+                  <a
+                    href="/login"
+                    className="underline hover:text-red-300"
+                  >
+                    Sign in
+                  </a>
+                </span>
+              )}
             </p>
           </div>
         )}

@@ -6,20 +6,32 @@ import { Id } from "./_generated/dataModel";
 export const getTokenBalance = query({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return null;
+    try {
+      const identity = await ctx.auth.getUserIdentity();
+      if (!identity) {
+        // Return null for unauthenticated users
+        return null;
+      }
 
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
-      .first();
+      const user = await ctx.db
+        .query("users")
+        .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+        .first();
 
-    if (!user) return null;
+      if (!user) {
+        // User not found in database
+        return null;
+      }
 
-    return {
-      tokens: user.tokens ?? 0,
-      lifetimeUsed: user.lifetimeTokensUsed ?? 0,
-    };
+      return {
+        tokens: user.tokens ?? 0,
+        lifetimeUsed: user.lifetimeTokensUsed ?? 0,
+      };
+    } catch (error) {
+      console.error("[getTokenBalance] Error:", error);
+      // Return null on any error to prevent crashes
+      return null;
+    }
   },
 });
 

@@ -76,6 +76,12 @@ export const generateImage = action({
     // return { success: true, imageUrl: "https://example.com/test.jpg" };
     
     const identity = await ctx.auth.getUserIdentity();
+    
+    // Check if user is authenticated
+    if (!identity) {
+      console.error('[AI-GEN] User not authenticated');
+      return { success: false, error: "Please sign in to use AI generation." };
+    }
 
     // Check if user has enough tokens (1 token per generation)
     const tokenCost = 1;

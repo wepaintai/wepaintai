@@ -25,6 +25,7 @@ import {
   Plus
 } from 'lucide-react'
 import { AuthModal } from './AuthModal'
+import { useAuth } from '@clerk/tanstack-start'
 
 // Types
 export interface Layer {
@@ -140,25 +141,31 @@ Slider.displayName = 'Slider'
 const ToolButton = React.memo(({ 
   tool, 
   isSelected, 
-  onClick 
+  onClick,
+  disabled = false
 }: { 
   tool: Tool, 
   isSelected: boolean, 
-  onClick: () => void 
+  onClick: () => void,
+  disabled?: boolean
 }) => (
   <button
     key={tool.id}
     onClick={onClick}
+    disabled={disabled}
     className={`w-8 h-8 flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-blue-400 ${
-      isSelected 
+      disabled
+        ? 'bg-white/5 text-white/30 cursor-not-allowed'
+        : isSelected 
         ? 'bg-blue-500 text-white' 
         : 'bg-white/10 text-white hover:bg-white/20'
     }`}
-    title={`${tool.label}${tool.keyboardShortcut ? ` (${tool.keyboardShortcut})` : ''}`}
+    title={`${tool.label}${tool.keyboardShortcut ? ` (${tool.keyboardShortcut})` : ''}${disabled ? ' (Sign in required)' : ''}`}
     aria-label={tool.ariaLabel}
     aria-pressed={isSelected}
+    aria-disabled={disabled}
   >
-    <tool.icon className={`w-4 h-4 ${isSelected ? 'scale-110 transition-transform' : ''}`} />
+    <tool.icon className={`w-4 h-4 ${isSelected && !disabled ? 'scale-110 transition-transform' : ''}`} />
   </button>
 ))
 
@@ -396,6 +403,7 @@ export function ToolPanel({
   onLayerOpacityChange,
   onCreatePaintLayer,
 }: ToolPanelProps) {
+  const { userId } = useAuth()
   const [internalSelectedTool, setInternalSelectedTool] = React.useState('brush')
   const selectedTool = externalSelectedTool || internalSelectedTool
   const [isCollapsed, setIsCollapsed] = React.useState(false)
@@ -500,6 +508,13 @@ export function ToolPanel({
 
   // Handle tool selection
   const handleToolSelect = React.useCallback((toolId: string) => {
+    // Check if AI tool requires authentication
+    if (toolId === 'ai' && !userId) {
+      // Don't select the tool, just show a message or do nothing
+      console.log('AI tool requires authentication')
+      return
+    }
+    
     // For upload tool, don't change the selected tool state
     // It will be handled by the parent component after upload/cancel
     if (toolId === 'upload' && onImageUpload) {
@@ -518,7 +533,7 @@ export function ToolPanel({
     } else {
       setInternalSelectedTool(toolId)
     }
-  }, [onToolChange, onImageUpload, onAIGenerate])
+  }, [onToolChange, onImageUpload, onAIGenerate, userId])
 
   // Keyboard shortcuts for tools
   React.useEffect(() => {
@@ -531,13 +546,17 @@ export function ToolPanel({
       const tool = tools.find(t => t.keyboardShortcut === key)
       
       if (tool) {
+        // Skip AI tool if not authenticated
+        if (tool.id === 'ai' && !userId) {
+          return
+        }
         handleToolSelect(tool.id)
       }
     }
     
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [handleToolSelect])
+  }, [handleToolSelect, userId])
 
   // Handle menu toggle
   const handleMenuToggle = React.useCallback((e: React.MouseEvent) => {
@@ -655,6 +674,7 @@ export function ToolPanel({
                           tool={tool}
                           isSelected={selectedTool === tool.id}
                           onClick={() => handleToolSelect(tool.id)}
+                          disabled={tool.id === 'ai' && !userId}
                         />
                       </div>
                     ))}

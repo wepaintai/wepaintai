@@ -34,14 +34,18 @@ export function TokenDisplay({ className = '' }: TokenDisplayProps) {
     }
   }
   
-  if (!userId) return null
+  // Don't show token display if user is not authenticated or balance is not loaded
+  if (!userId || tokenBalance === undefined) return null
+  
+  // Also hide if tokenBalance is null (user not found in database)
+  if (tokenBalance === null) return null
   
   return (
     <>
       <div className={`flex items-center gap-2 ${className}`}>
         <Coins className="w-4 h-4 text-yellow-500" />
         <span className="text-sm font-medium">
-          {tokenBalance?.tokens ?? 0} tokens
+          {tokenBalance.tokens} tokens
         </span>
         <button
           onClick={() => setShowPurchaseModal(true)}
@@ -62,11 +66,11 @@ export function TokenDisplay({ className = '' }: TokenDisplayProps) {
                 <div className="flex justify-between items-center mb-2">
                   <span className="font-medium">Current Balance</span>
                   <span className="text-lg font-bold text-gray-700">
-                    {tokenBalance?.tokens ?? 0} tokens
+                    {tokenBalance.tokens} tokens
                   </span>
                 </div>
                 <div className="text-sm text-gray-600">
-                  Lifetime used: {tokenBalance?.lifetimeUsed ?? 0} tokens
+                  Lifetime used: {tokenBalance.lifetimeUsed} tokens
                 </div>
               </div>
               
