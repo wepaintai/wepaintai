@@ -2,10 +2,8 @@ import { ReactNode } from 'react'
 import { useAutoSyncConvexAuth } from '../hooks/useAutoSyncConvexAuth'
 
 export function AuthSyncWrapper({ children }: { children: ReactNode }) {
-  // Temporarily disabled - ConvexBetterAuthProvider should handle this
-  // useAutoSyncConvexAuth()
-  
-  console.log('[AuthSyncWrapper] Disabled - ConvexBetterAuthProvider handles auth sync')
+  // Re-enabling manual sync since ConvexBetterAuthProvider isn't working
+  useAutoSyncConvexAuth()
   
   return <>{children}</>
 }

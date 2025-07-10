@@ -14,6 +14,16 @@ export function useAutoSyncConvexAuth() {
   const authDisabled = import.meta.env.VITE_AUTH_DISABLED === 'true'
   const reloadingRef = useRef(false)
   
+  // Log initial state
+  useEffect(() => {
+    console.log('[useAutoSyncConvexAuth] Initial state:', {
+      hasConvexAuth,
+      convexLoading,
+      authDisabled,
+      convexUrl: import.meta.env.VITE_CONVEX_URL
+    })
+  }, [])
+  
   useEffect(() => {
     // Don't run on server or when auth is disabled
     if (typeof window === 'undefined' || authDisabled) return
@@ -34,7 +44,10 @@ export function useAutoSyncConvexAuth() {
     }
     
     // Don't run if Convex is still loading
-    if (convexLoading) return
+    if (convexLoading) {
+      console.log('[useAutoSyncConvexAuth] Convex is still loading, waiting...')
+      return
+    }
     
     // If Convex is authenticated, we're done
     if (hasConvexAuth) {
