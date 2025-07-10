@@ -1,139 +1,85 @@
-import React from 'react'
-import { useQuery } from 'convex/react'
+import { useUser, useAuth as useClerkAuth } from '@clerk/tanstack-start'
+import { useConvexAuth, useQuery, useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
-import { authClient, debugAuthState } from '../lib/auth-client'
-
-console.log('[AuthDebug Component] Loading...');
+import { useState } from 'react'
 
 export function AuthDebug() {
-  console.log('[AuthDebug Component] Rendering...');
-  const { data: session, isPending: sessionPending } = authClient.useSession()
+  // Clerk auth state
+  const { isSignedIn, user } = useUser()
+  const { userId: clerkUserId } = useClerkAuth()
+  
+  // Convex auth state
+  const { isAuthenticated, isLoading } = useConvexAuth()
   const currentUser = useQuery(api.auth.getCurrentUser)
+  const storeUser = useMutation(api.auth.storeUser)
   
-  // Test direct session fetch
-  React.useEffect(() => {
-    console.log('[AuthDebug] Testing direct session fetch...');
-    fetch('https://actions.wepaint.ai/api/auth/session', {
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/json',
-      }
-    })
-    .then(res => {
-      console.log('[AuthDebug] Session response status:', res.status);
-      return res.json();
-    })
-    .then(data => {
-      console.log('[AuthDebug] Session response data:', data);
-    })
-    .catch(err => {
-      console.error('[AuthDebug] Session fetch error:', err);
-    });
-  }, [])
+  const [storeUserResult, setStoreUserResult] = useState<string>('')
   
-  // Monitor network requests
-  React.useEffect(() => {
-    const originalFetch = window.fetch
-    window.fetch = async (...args) => {
-      const [url, options] = args
-      
-      // Log Convex requests
-      if (typeof url === 'string' && url.includes('convex')) {
-        console.log('[Network Debug] Convex Request:', {
-          url,
-          method: options?.method || 'GET',
-          headers: options?.headers,
-          hasBody: !!options?.body
-        })
-      }
-      
-      const response = await originalFetch(...args)
-      
-      // Log response status
-      if (typeof url === 'string' && url.includes('convex')) {
-        console.log('[Network Debug] Convex Response:', {
-          url,
-          status: response.status,
-          ok: response.ok
-        })
-      }
-      
-      return response
+  // Only show in development
+  if (import.meta.env.PROD) return null
+  
+  const handleStoreUser = async () => {
+    try {
+      const userId = await storeUser()
+      setStoreUserResult(`✅ User stored with ID: ${userId}`)
+    } catch (error) {
+      setStoreUserResult(`❌ Error: ${error}`)
     }
-    
-    return () => {
-      window.fetch = originalFetch
-    }
-  }, [])
+  }
   
   return (
-    <div style={{
-      position: 'fixed',
-      top: 10,
-      right: 10,
-      background: 'rgba(0, 0, 0, 0.9)',
-      color: 'white',
-      padding: '15px',
-      borderRadius: '8px',
-      fontSize: '12px',
-      maxWidth: '400px',
-      zIndex: 9999,
-      fontFamily: 'monospace'
-    }}>
-      <h3 style={{ margin: '0 0 10px 0', fontSize: '14px' }}>🔍 Auth Debug Panel</h3>
+    <div className="fixed bottom-4 left-4 bg-black/90 text-white p-4 rounded-lg text-xs font-mono max-w-sm z-50">
+      <h3 className="font-bold mb-2">🔐 Auth Debug</h3>
       
-      <div style={{ marginBottom: '10px' }}>
-        <strong>Window Origin:</strong>
-        <pre style={{ margin: '5px 0', whiteSpace: 'pre-wrap' }}>
-          {typeof window !== 'undefined' ? window.location.origin : 'N/A'}
-        </pre>
+      <div className="space-y-2">
+        <div>
+          <strong>Clerk Status:</strong>
+          <div className="ml-2">
+            - Signed In: {isSignedIn ? '✅' : '❌'}
+            - User ID: {clerkUserId || 'none'}
+            - Email: {user?.primaryEmailAddress?.emailAddress || 'none'}
+          </div>
+        </div>
+        
+        <div>
+          <strong>Convex Status:</strong>
+          <div className="ml-2">
+            - Authenticated: {isAuthenticated ? '✅' : '❌'}
+            - Loading: {isLoading ? '⏳' : '✅'}
+            - User Query: {currentUser ? '✅ Has user data' : '❌ No user data'}
+            - User ID: {currentUser?._id || 'none'}
+          </div>
+        </div>
+        
+        <div>
+          <strong>Integration Status:</strong>
+          <div className="ml-2">
+            {isSignedIn && isAuthenticated ? (
+              <span className="text-green-400">✅ Fully integrated</span>
+            ) : isSignedIn && !isAuthenticated && isLoading ? (
+              <span className="text-yellow-400">⏳ Syncing...</span>
+            ) : isSignedIn && !isAuthenticated ? (
+              <span className="text-red-400">❌ Clerk signed in but Convex not authenticated</span>
+            ) : (
+              <span className="text-gray-400">👤 Not signed in</span>
+            )}
+          </div>
+        </div>
+        
+        {isAuthenticated && (
+          <div className="mt-2 space-y-1">
+            <button
+              onClick={handleStoreUser}
+              className="bg-blue-500 hover:bg-blue-600 px-2 py-1 rounded text-xs"
+            >
+              Store User in DB
+            </button>
+            {storeUserResult && (
+              <div className="text-xs">{storeUserResult}</div>
+            )}
+          </div>
+        )}
       </div>
-      
-      <div style={{ marginBottom: '10px' }}>
-        <strong>Client Session:</strong>
-        <pre style={{ margin: '5px 0', whiteSpace: 'pre-wrap' }}>
-          {sessionPending ? 'Loading...' : JSON.stringify(session, null, 2)}
-        </pre>
-      </div>
-      
-      <div style={{ marginBottom: '10px' }}>
-        <strong>Convex User Query:</strong>
-        <pre style={{ margin: '5px 0', whiteSpace: 'pre-wrap' }}>
-          {currentUser === undefined ? 'Loading...' : JSON.stringify(currentUser, null, 2)}
-        </pre>
-      </div>
-      
-      <div style={{ marginBottom: '10px' }}>
-        <strong>LocalStorage Tokens:</strong>
-        <pre style={{ margin: '5px 0', whiteSpace: 'pre-wrap', fontSize: '10px' }}>
-          {Object.keys(localStorage)
-            .filter(k => k.includes('convex'))
-            .map(k => `${k}: ${localStorage.getItem(k)?.substring(0, 30)}...`)
-            .join('\n')}
-        </pre>
-      </div>
-      
-      <button
-        onClick={() => {
-          console.log('=== Full Auth State Debug ===')
-          console.log('Window Origin:', window.location.origin)
-          console.log('Session:', session)
-          console.log('Convex User:', currentUser)
-          console.log('LocalStorage:', Object.keys(localStorage).filter(k => k.includes('convex')))
-          debugAuthState()
-        }}
-        style={{
-          background: '#4CAF50',
-          color: 'white',
-          border: 'none',
-          padding: '5px 10px',
-          borderRadius: '4px',
-          cursor: 'pointer',
-          fontSize: '12px'
-        }}
-      >
-        Log Full Debug Info
-      </button>
     </div>
   )
 }

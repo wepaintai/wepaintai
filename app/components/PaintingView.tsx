@@ -152,10 +152,10 @@ export function PaintingView() {
   const reorderLayer = useMutation(api.layers.reorderLayer)
   
   // Debug: Log both image sources
-  useEffect(() => {
-    console.log('[PaintingView] Images from useSessionImages:', images)
-    console.log('[PaintingView] AI images filtered from images:', aiGeneratedImages)
-  }, [images, aiGeneratedImages])
+  // useEffect(() => {
+  //   console.log('[PaintingView] Images from useSessionImages:', images)
+  //   console.log('[PaintingView] AI images filtered from images:', aiGeneratedImages)
+  // }, [images, aiGeneratedImages])
   
   // Debug strokes from usePaintingSession
   useEffect(() => {

@@ -63,11 +63,17 @@ const schema = defineSchema({
     .index("by_user_session", ["userId", "sessionId"]),
 
   users: defineTable({
-    // Fields are optional - Better Auth manages user metadata
-    // Add any application-specific fields here
-    name: v.optional(v.string()), // For existing data compatibility
-    email: v.optional(v.string()), // For existing data compatibility
-  }),
+    // Clerk integration fields
+    clerkId: v.optional(v.string()), // Clerk user ID (subject)
+    
+    // User profile fields
+    name: v.optional(v.string()),
+    email: v.optional(v.string()),
+    
+    // Timestamps
+    createdAt: v.optional(v.number()),
+    updatedAt: v.optional(v.number()),
+  }).index("by_clerk_id", ["clerkId"]),
 
   viewerStates: defineTable({
     sessionId: v.id("paintingSessions"),
