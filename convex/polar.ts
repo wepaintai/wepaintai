@@ -1,6 +1,19 @@
-import { action, mutation } from "./_generated/server";
+import { action } from "./_generated/server";
 import { v } from "convex/values";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
+
+interface PolarCheckoutResponse {
+  id: string;
+  checkout_url?: string;
+  url?: string;
+  amount: number;
+  currency: string;
+}
+
+interface CheckoutResult {
+  checkoutUrl: string;
+  checkoutId: string;
+}
 
 // Create a Polar checkout session
 export const createCheckout = action({
@@ -8,7 +21,7 @@ export const createCheckout = action({
     productId: v.string(),
     tokens: v.number(),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<CheckoutResult> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) {
       throw new Error("Not authenticated");
@@ -50,10 +63,10 @@ export const createCheckout = action({
         throw new Error("Failed to create checkout session");
       }
 
-      const data = await response.json();
+      const data: PolarCheckoutResponse = await response.json();
       
       // Create pending purchase record
-      await ctx.runMutation(api.polarWebhook.createPendingPurchase, {
+      await ctx.runMutation(internal.polarWebhook.createPendingPurchase, {
         userId: user._id,
         checkoutId: data.id,
         productId: args.productId,
@@ -64,7 +77,7 @@ export const createCheckout = action({
       });
 
       return {
-        checkoutUrl: data.checkout_url || data.url,
+        checkoutUrl: data.checkout_url || data.url || '',
         checkoutId: data.id,
       };
     } catch (error) {
@@ -74,10 +87,20 @@ export const createCheckout = action({
   },
 });
 
+interface TokenPackage {
+  id: string;
+  name: string;
+  tokens: number;
+  price: number;
+  currency: string;
+  description: string;
+  pricePerToken: number;
+}
+
 // Get available token packages
 export const getTokenPackages = action({
   args: {},
-  handler: async (ctx) => {
+  handler: async (ctx): Promise<TokenPackage[]> => {
     // For now, return hardcoded packages. Later this could fetch from Polar
     return [
       {
