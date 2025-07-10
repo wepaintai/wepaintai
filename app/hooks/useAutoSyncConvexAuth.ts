@@ -12,6 +12,7 @@ export function useAutoSyncConvexAuth() {
   const hasTriggeredRef = useRef(false)
   const checkIntervalRef = useRef<number>()
   const authDisabled = import.meta.env.VITE_AUTH_DISABLED === 'true'
+  const reloadingRef = useRef(false)
   
   useEffect(() => {
     // Don't run on server or when auth is disabled
@@ -105,8 +106,16 @@ export function useAutoSyncConvexAuth() {
             
             console.log('[useAutoSyncConvexAuth] Token stored, reloading to apply...')
             
-            // Reload to make Convex pick up the new token
-            window.location.reload()
+            // Prevent multiple reloads
+            if (!reloadingRef.current) {
+              reloadingRef.current = true
+              // Clear interval before reload
+              if (checkIntervalRef.current) {
+                clearInterval(checkIntervalRef.current)
+              }
+              // Reload to make Convex pick up the new token
+              window.location.reload()
+            }
           } else {
             console.error('[useAutoSyncConvexAuth] No token in response:', tokenResult)
             hasTriggeredRef.current = false
@@ -122,8 +131,9 @@ export function useAutoSyncConvexAuth() {
     checkAndSync()
     
     // Also check periodically in case the session appears later
-    if (!checkIntervalRef.current) {
-      checkIntervalRef.current = window.setInterval(checkAndSync, 2000)
+    // Only set up interval if we haven't found a session yet
+    if (!checkIntervalRef.current && !hasTriggeredRef.current) {
+      checkIntervalRef.current = window.setInterval(checkAndSync, 5000) // Check every 5 seconds instead of 2
     }
   }, [hasConvexAuth, convexLoading, authDisabled])
 }
