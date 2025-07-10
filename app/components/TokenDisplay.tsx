@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useQuery, useAction } from 'convex/react'
-import { api } from '@/convex/_generated/api'
+import { api } from '../../convex/_generated/api'
 import { Coins, Loader2 } from 'lucide-react'
 import { useAuth } from '@clerk/tanstack-start'
 
