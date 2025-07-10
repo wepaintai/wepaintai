@@ -1,6 +1,6 @@
 import React from 'react'
 import { X, User } from 'lucide-react'
-import { SignIn, SignUp, UserButton, useUser, useClerk } from '@clerk/clerk-react'
+import { SignIn, SignUp, UserButton, useUser, useClerk } from '@clerk/tanstack-start'
 
 interface AuthModalProps {
   isOpen: boolean

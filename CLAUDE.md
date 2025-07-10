@@ -71,8 +71,8 @@ Note: No test or lint commands are currently configured.
 ### Environment Variables
 - `VITE_CONVEX_URL`: Backend URL (auto-set by dev commands)
 - `VITE_CLERK_PUBLISHABLE_KEY`: Clerk publishable key for authentication
-- `CLERK_SECRET_KEY`: Clerk secret key (server-side only)
-- `CLERK_ISSUER_URL`: Clerk issuer URL for JWT validation (used in Convex auth config)
+- `VITE_CLERK_FRONTEND_API_URL`: Clerk Frontend API URL (e.g., https://your-app.clerk.accounts.dev)
+- `CLERK_SECRET_KEY`: Clerk secret key (for production deployments)
 - `VITE_INTERNAL_HIDE_ADMIN_PANEL`: Hide debug panel in production
 - `VITE_PASSWORD_PROTECTION_ENABLED`: Enable/disable password protection (set to 'true' for production, 'false' for local dev)
 - `VITE_AUTH_DISABLED`: Disable all auth for local dev (set to 'true' to bypass auth, 'false' or unset for normal auth flow)
@@ -86,12 +86,16 @@ Set these in the Convex dashboard (Settings > Environment Variables):
 ### Authentication Setup
 1. **Create a Clerk account** at https://clerk.com
 2. **Create a new application** in Clerk dashboard
-3. **Copy environment variables**:
-   - `VITE_CLERK_PUBLISHABLE_KEY` from Clerk dashboard
-   - `CLERK_SECRET_KEY` from Clerk dashboard
-   - `CLERK_ISSUER_URL` from JWT Templates → Convex template
-4. **Configure Convex**:
-   - Set `CLERK_ISSUER_URL` in Convex dashboard environment variables
+3. **Create a JWT Template**:
+   - Go to JWT Templates in Clerk dashboard
+   - Create a new template named "convex" (must be exactly this name)
+   - Copy the Issuer URL (Frontend API URL)
+4. **Set environment variables**:
+   - `VITE_CLERK_PUBLISHABLE_KEY` from Clerk dashboard → API Keys
+   - `VITE_CLERK_FRONTEND_API_URL` from JWT Templates → Issuer URL
+   - `CLERK_SECRET_KEY` from Clerk dashboard → API Keys (for production)
+5. **Configure Convex**:
+   - Set `CLERK_FRONTEND_API_URL` in Convex dashboard environment variables
    - The auth config in `convex/auth.config.ts` uses this for JWT validation
 
 ### Development Notes

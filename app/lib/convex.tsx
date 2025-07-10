@@ -1,5 +1,5 @@
 import { ConvexReactClient } from "convex/react";
-import { ConvexProviderWithClerk } from "convex-helpers/react/clerk";
+import { ConvexProviderWithClerk } from "convex/react-clerk";
 import { useAuth } from "@clerk/tanstack-start";
 import type { ReactNode } from "react";
 

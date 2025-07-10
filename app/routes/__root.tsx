@@ -11,7 +11,7 @@ import { PasswordProtection } from '../components/PasswordProtection'
 import { Analytics } from '@vercel/analytics/react'
 import appCss from '../styles/app.css?url'
 import { ClerkProvider } from '@clerk/tanstack-start'
-import { clerkClient } from '@clerk/tanstack-start/server'
+import { AuthSync } from '../components/AuthSync'
 
 function NotFoundComponent() {
   return (
@@ -34,12 +34,11 @@ function NotFoundComponent() {
 }
 
 // Server function to get auth state
-const getAuth = createServerFn({ method: 'GET' }).handler(async (ctx) => {
-  const user = await clerkClient().users.getUser(ctx.user?.id ?? "")
-    .catch(() => null)
-  
+const getAuth = createServerFn({ method: 'GET' }).handler(async () => {
+  // For now, we'll handle auth state client-side
+  // Clerk handles authentication automatically
   return {
-    userId: user?.id ?? null,
+    userId: null,
   }
 })
 
@@ -74,8 +73,9 @@ export const Route = createRootRoute({
 
 function RootComponent() {
   return (
-    <ClerkProvider>
+    <ClerkProvider publishableKey={import.meta.env.VITE_CLERK_PUBLISHABLE_KEY}>
       <ConvexClientProvider>
+        <AuthSync />
         <RootDocument>
           <PasswordProtection>
             <Outlet />
