@@ -24,7 +24,15 @@ console.log('[Auth Client] Auth disabled:', authDisabled);
 // Get the base URL for auth - handle different environments
 function getAuthBaseURL() {
   console.log('[Auth Client] getAuthBaseURL called');
-  // Use the Convex site URL from environment if available (preferred for production)
+  
+  // For production/staging, always use actions.wepaint.ai for auth
+  if (typeof window !== 'undefined' && window.location.hostname.includes('wepaint.ai')) {
+    const authUrl = 'https://actions.wepaint.ai';
+    console.log('[Auth Client] Production environment detected - using:', authUrl);
+    return authUrl;
+  }
+  
+  // Use the Convex site URL from environment if available (for local dev)
   const convexSiteUrl = import.meta.env.VITE_CONVEX_SITE_URL;
   if (convexSiteUrl) {
     console.log('[Auth Client] Using Convex site URL from env:', convexSiteUrl);
@@ -33,30 +41,11 @@ function getAuthBaseURL() {
   
   // Derive from Convex URL if site URL not available
   const convexUrl = String(import.meta.env.VITE_CONVEX_URL || '');
-  if (convexUrl) {
-    // Handle standard Convex cloud URLs
-    if (convexUrl.includes('.convex.cloud')) {
-      // Convert .cloud to .site for standard Convex URLs
-      const siteUrl = convexUrl.replace('.convex.cloud', '.convex.site');
-      console.log('[Auth Client] Derived site URL from Convex URL:', siteUrl);
-      return siteUrl;
-    } else if (convexUrl === 'https://api.wepaint.ai') {
-      // Production with custom domain: Use the actions subdomain for HTTP endpoints
-      const prodSiteUrl = 'https://actions.wepaint.ai';
-      console.log('[Auth Client] Production custom domain - using actions subdomain for auth:', prodSiteUrl);
-      return prodSiteUrl;
-    } else if (convexUrl.includes('convex.cloud')) {
-      // Handle any Convex cloud URL (including staging)
-      const siteUrl = convexUrl.replace('.convex.cloud', '.convex.site');
-      console.log('[Auth Client] Derived site URL from Convex cloud URL:', siteUrl);
-      return siteUrl;
-    } else {
-      // For other custom domains, log a warning
-      console.warn('[Auth Client] Custom domain detected but no VITE_CONVEX_SITE_URL set:', convexUrl);
-      console.warn('Please set VITE_CONVEX_SITE_URL in your environment variables');
-      // Try to use it anyway
-      return convexUrl;
-    }
+  if (convexUrl && convexUrl.includes('.convex.cloud')) {
+    // Convert .cloud to .site for standard Convex URLs
+    const siteUrl = convexUrl.replace('.convex.cloud', '.convex.site');
+    console.log('[Auth Client] Derived site URL from Convex URL:', siteUrl);
+    return siteUrl;
   }
   
   // Default fallback for development
