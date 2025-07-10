@@ -86,9 +86,11 @@ export function useAutoSyncConvexAuth() {
         // We have a Better Auth session but no Convex auth
         if (!hasTriggeredRef.current) {
           console.log('[useAutoSyncConvexAuth] Better Auth session found, fetching Convex token...')
+          console.log('[useAutoSyncConvexAuth] User:', user.email)
           hasTriggeredRef.current = true
           
           const tokenResult = await authClient.convex.token()
+          console.log('[useAutoSyncConvexAuth] Token result:', tokenResult)
           
           if (tokenResult.data?.token) {
             console.log('[useAutoSyncConvexAuth] Token fetched successfully, storing...')
