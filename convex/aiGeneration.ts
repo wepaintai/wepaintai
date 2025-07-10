@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { mutation, action } from "./_generated/server";
+import { mutation, action, query } from "./_generated/server";
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 
@@ -76,6 +76,17 @@ export const generateImage = action({
     // return { success: true, imageUrl: "https://example.com/test.jpg" };
     
     const identity = await ctx.auth.getUserIdentity();
+
+    // Check if user has enough tokens (1 token per generation)
+    const tokenCost = 1;
+    const hasTokens = await ctx.runQuery(api.tokens.hasEnoughTokens, {
+      requiredTokens: tokenCost,
+    });
+    
+    if (!hasTokens) {
+      console.error('[AI-GEN] User does not have enough tokens');
+      return { success: false, error: "Insufficient tokens. Please purchase more tokens to continue." };
+    }
 
     // Get Replicate API token from environment
     const replicateToken = process.env.REPLICATE_API_TOKEN;
@@ -315,6 +326,13 @@ export const generateImage = action({
                 status: "completed",
                 resultImageUrl: finalUrl,
               });
+              
+              // Consume tokens after successful generation
+              await ctx.runMutation(api.tokens.useTokensForGeneration, {
+                generationId,
+                tokenCost,
+              });
+              
               const result = { success: true, imageUrl: finalUrl };
               console.log('Returning result:', JSON.stringify(result));
               return result;
@@ -335,6 +353,13 @@ export const generateImage = action({
                 status: "completed",
                 resultImageUrl: imageUrl,
               });
+              
+              // Consume tokens after successful generation
+              await ctx.runMutation(api.tokens.useTokensForGeneration, {
+                generationId,
+                tokenCost,
+              });
+              
               console.log('ERROR: Using fallback due to storage error');
               console.log('Fallback imageUrl value:', imageUrl);
               console.log('Fallback imageUrl type:', typeof imageUrl);

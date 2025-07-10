@@ -55,16 +55,28 @@ export const storeUser = mutation({
       return existingUser._id;
     }
     
-    // Create new user
+    // Create new user with initial tokens
     const userId = await ctx.db.insert("users", {
       clerkId: identity.subject,
       email: identity.email,
       name: identity.name || identity.givenName || identity.email?.split("@")[0] || "User",
+      tokens: 10, // Initial 10 tokens for new users
+      lifetimeTokensUsed: 0,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     });
     
     console.log("[storeUser] Created new user with ID:", userId);
+    
+    // Record initial token grant
+    await ctx.db.insert("tokenTransactions", {
+      userId,
+      type: "initial",
+      amount: 10,
+      balance: 10,
+      description: "Welcome bonus - 10 free tokens",
+      createdAt: Date.now(),
+    });
     
     return userId;
   },

@@ -195,7 +195,25 @@ export function AIGenerationModal({
         {/* Error message */}
         {error && (
           <div className="mb-4 p-3 bg-red-500/20 border border-red-500/40 rounded-md">
-            <p className="text-sm text-red-400">{error}</p>
+            <p className="text-sm text-red-400">
+              {error}
+              {error.includes('Insufficient tokens') && (
+                <span>
+                  {' '}
+                  <button
+                    onClick={() => {
+                      onClose()
+                      // Trigger token purchase modal by clicking the buy more link
+                      const buyMoreBtn = document.querySelector('[data-token-buy-more]') as HTMLButtonElement
+                      if (buyMoreBtn) buyMoreBtn.click()
+                    }}
+                    className="underline hover:text-red-300"
+                  >
+                    Buy more tokens
+                  </button>
+                </span>
+              )}
+            </p>
           </div>
         )}
 

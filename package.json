@@ -17,6 +17,7 @@
     "@clerk/clerk-react": "^5.33.0",
     "@clerk/tanstack-start": "^0.11.5",
     "@convex-dev/auth": "^0.0.87",
+    "@polar-sh/nextjs": "^0.4.2",
     "@tailwindcss/forms": "^0.5.10",
     "@tailwindcss/postcss": "^4.1.7",
     "@tailwindcss/vite": "^4.1.7",
@@ -37,7 +38,8 @@
     "react-konva": "^19.0.7",
     "tailwind-merge": "^3.3.0",
     "tailwindcss": "^4.1.7",
-    "vinxi": "0.5.1"
+    "vinxi": "0.5.1",
+    "zod": "^4.0.4"
   },
   "devDependencies": {
     "@types/react": "^19.0.8",

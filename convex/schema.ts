@@ -70,6 +70,10 @@ const schema = defineSchema({
     name: v.optional(v.string()),
     email: v.optional(v.string()),
     
+    // Token system
+    tokens: v.optional(v.number()), // Current token balance
+    lifetimeTokensUsed: v.optional(v.number()), // Total tokens ever used
+    
     // Timestamps
     createdAt: v.optional(v.number()),
     updatedAt: v.optional(v.number()),
@@ -182,6 +186,36 @@ const schema = defineSchema({
     createdBy: v.optional(v.id("users")),
     createdAt: v.number(),
   }).index("by_session", ["sessionId", "layerOrder"]),
+
+  // Token transactions
+  tokenTransactions: defineTable({
+    userId: v.id("users"),
+    type: v.union(v.literal("initial"), v.literal("purchase"), v.literal("usage"), v.literal("refund")),
+    amount: v.number(), // Positive for credits, negative for usage
+    balance: v.number(), // Balance after transaction
+    description: v.string(),
+    metadata: v.optional(v.object({
+      polarCheckoutId: v.optional(v.string()),
+      polarProductId: v.optional(v.string()),
+      aiGenerationId: v.optional(v.id("aiGenerations")),
+    })),
+    createdAt: v.number(),
+  }).index("by_user", ["userId", "createdAt"]),
+
+  // Polar purchase records
+  polarPurchases: defineTable({
+    userId: v.id("users"),
+    checkoutId: v.string(),
+    productId: v.string(),
+    productName: v.string(),
+    amount: v.number(), // Amount in cents
+    currency: v.string(),
+    tokens: v.number(), // Number of tokens purchased
+    status: v.union(v.literal("pending"), v.literal("completed"), v.literal("failed")),
+    createdAt: v.number(),
+    completedAt: v.optional(v.number()),
+  }).index("by_user", ["userId"])
+    .index("by_checkout", ["checkoutId"]),
 });
 
 export default schema;

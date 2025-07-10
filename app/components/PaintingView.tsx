@@ -9,6 +9,7 @@ import { P2PDebugPanel } from './P2PDebugPanel'
 import { ImageUploadModal } from './ImageUploadModal'
 import { AIGenerationModal } from './AIGenerationModal'
 import { UserProfile } from './UserProfile'
+import { TokenDisplay } from './TokenDisplay'
 import { usePaintingSession } from '../hooks/usePaintingSession'
 import { useP2PPainting } from '../hooks/useP2PPainting'
 import { useSessionImages } from '../hooks/useSessionImages'
@@ -833,6 +834,11 @@ export function PaintingView() {
       
       {/* User profile display */}
       <UserProfile />
+      
+      {/* Token display */}
+      <div className="absolute top-4 right-4 z-10">
+        <TokenDisplay />
+      </div>
     </div>
   )
 }
