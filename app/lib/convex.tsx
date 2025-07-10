@@ -20,13 +20,23 @@ export function ConvexClientProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     console.log('[ConvexClientProvider] Mounted, checking auth state...')
     console.log('[ConvexClientProvider] Convex URL:', convexUrl)
+    console.log('[ConvexClientProvider] Auth disabled:', import.meta.env.VITE_AUTH_DISABLED)
     debugAuthState()
+    
+    // Additional debug: Check if ConvexReactClient has auth
+    console.log('[ConvexClientProvider] Convex client auth state:', convex.auth)
   }, [])
 
   return (
-    <ConvexBetterAuthProvider client={convex} authClient={authClient}>
-      {children}
-    </ConvexBetterAuthProvider>
+    <ConvexProvider client={convex}>
+      <ConvexBetterAuthProvider 
+        client={convex} 
+        authClient={authClient}
+        verbose={true}
+      >
+        {children}
+      </ConvexBetterAuthProvider>
+    </ConvexProvider>
   );
 }
 
