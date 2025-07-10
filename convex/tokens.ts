@@ -7,6 +7,12 @@ export const getTokenBalance = query({
   args: {},
   handler: async (ctx) => {
     try {
+      // Check if auth is available
+      if (!ctx.auth || !ctx.auth.getUserIdentity) {
+        console.log("[getTokenBalance] Auth not available");
+        return null;
+      }
+      
       const identity = await ctx.auth.getUserIdentity();
       if (!identity) {
         // Return null for unauthenticated users
@@ -28,7 +34,12 @@ export const getTokenBalance = query({
         lifetimeUsed: user.lifetimeTokensUsed ?? 0,
       };
     } catch (error) {
-      console.error("[getTokenBalance] Error:", error);
+      // Log error details for debugging
+      console.error("[getTokenBalance] Error details:", {
+        message: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
+        error
+      });
       // Return null on any error to prevent crashes
       return null;
     }
@@ -161,16 +172,27 @@ export const hasEnoughTokens = query({
     requiredTokens: v.number(),
   },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return false;
+    try {
+      // Check if auth is available
+      if (!ctx.auth || !ctx.auth.getUserIdentity) {
+        console.log("[hasEnoughTokens] Auth not available");
+        return false;
+      }
+      
+      const identity = await ctx.auth.getUserIdentity();
+      if (!identity) return false;
 
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
-      .first();
+      const user = await ctx.db
+        .query("users")
+        .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+        .first();
 
-    if (!user) return false;
+      if (!user) return false;
 
-    return (user.tokens ?? 0) >= args.requiredTokens;
+      return (user.tokens ?? 0) >= args.requiredTokens;
+    } catch (error) {
+      console.error("[hasEnoughTokens] Error:", error);
+      return false;
+    }
   },
 });

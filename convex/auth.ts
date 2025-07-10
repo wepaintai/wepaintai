@@ -4,26 +4,38 @@ import { v } from "convex/values";
 export const getCurrentUser = query({
   args: {},
   handler: async (ctx) => {
-    console.log("[getCurrentUser] Starting auth check...");
-    
-    // Get the user identity from Clerk
-    const identity = await ctx.auth.getUserIdentity();
-    console.log("[getCurrentUser] Identity from ctx.auth:", identity);
-    
-    if (!identity) {
-      console.log("[getCurrentUser] No identity found");
+    try {
+      console.log("[getCurrentUser] Starting auth check...");
+      
+      // Check if auth is available
+      if (!ctx.auth || !ctx.auth.getUserIdentity) {
+        console.log("[getCurrentUser] Auth not available");
+        return null;
+      }
+      
+      // Get the user identity from Clerk
+      const identity = await ctx.auth.getUserIdentity();
+      console.log("[getCurrentUser] Identity from ctx.auth:", identity);
+      
+      if (!identity) {
+        console.log("[getCurrentUser] No identity found");
+        return null;
+      }
+      
+      // Look up user by Clerk's subject (user ID)
+      const user = await ctx.db
+        .query("users")
+        .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+        .first();
+      
+      console.log("[getCurrentUser] User from database:", user);
+      
+      return user;
+    } catch (error) {
+      console.error("[getCurrentUser] Error:", error);
+      // Return null on any error to prevent crashes
       return null;
     }
-    
-    // Look up user by Clerk's subject (user ID)
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
-      .first();
-    
-    console.log("[getCurrentUser] User from database:", user);
-    
-    return user;
   },
 });
 
@@ -31,12 +43,19 @@ export const getCurrentUser = query({
 export const storeUser = mutation({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    console.log("[storeUser] Identity:", identity);
-    
-    if (!identity) {
-      throw new Error("Not authenticated");
-    }
+    try {
+      // Check if auth is available
+      if (!ctx.auth || !ctx.auth.getUserIdentity) {
+        console.log("[storeUser] Auth not available");
+        throw new Error("Auth not configured");
+      }
+      
+      const identity = await ctx.auth.getUserIdentity();
+      console.log("[storeUser] Identity:", identity);
+      
+      if (!identity) {
+        throw new Error("Not authenticated");
+      }
     
     // Check if user already exists
     const existingUser = await ctx.db
@@ -79,5 +98,9 @@ export const storeUser = mutation({
     });
     
     return userId;
+    } catch (error) {
+      console.error("[storeUser] Error:", error);
+      throw error; // Re-throw for mutations since they need explicit error handling
+    }
   },
 });
