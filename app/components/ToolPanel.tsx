@@ -148,26 +148,42 @@ const ToolButton = React.memo(({
   isSelected: boolean, 
   onClick: () => void,
   disabled?: boolean
-}) => (
-  <button
-    key={tool.id}
-    onClick={onClick}
-    disabled={disabled}
-    className={`w-8 h-8 flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-blue-400 ${
-      disabled
-        ? 'bg-white/5 text-white/30 cursor-not-allowed'
-        : isSelected 
-        ? 'bg-blue-500 text-white' 
-        : 'bg-white/10 text-white hover:bg-white/20'
-    }`}
-    title={`${tool.label}${tool.keyboardShortcut ? ` (${tool.keyboardShortcut})` : ''}${disabled ? ' (Sign in required)' : ''}`}
-    aria-label={tool.ariaLabel}
-    aria-pressed={isSelected}
-    aria-disabled={disabled}
-  >
-    <tool.icon className={`w-4 h-4 ${isSelected && !disabled ? 'scale-110 transition-transform' : ''}`} />
-  </button>
-))
+}) => {
+  // Debug logging for AI tool
+  if (tool.id === 'ai') {
+    console.log('[ToolButton] AI tool rendering:', {
+      disabled,
+      isSelected,
+      className: disabled ? 'disabled' : isSelected ? 'selected' : 'normal'
+    })
+  }
+  
+  return (
+    <button
+      key={tool.id}
+      onClick={(e) => {
+        if (tool.id === 'ai') {
+          console.log('[ToolButton] AI tool clicked, disabled:', disabled)
+        }
+        onClick()
+      }}
+      disabled={disabled}
+      className={`w-8 h-8 flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-blue-400 ${
+        disabled
+          ? 'bg-white/5 text-white/30 cursor-not-allowed'
+          : isSelected 
+          ? 'bg-blue-500 text-white' 
+          : 'bg-white/10 text-white hover:bg-white/20'
+      }`}
+      title={`${tool.label}${tool.keyboardShortcut ? ` (${tool.keyboardShortcut})` : ''}${disabled ? ' (Sign in required)' : ''}`}
+      aria-label={tool.ariaLabel}
+      aria-pressed={isSelected}
+      aria-disabled={disabled}
+    >
+      <tool.icon className={`w-4 h-4 ${isSelected && !disabled ? 'scale-110 transition-transform' : ''}`} />
+    </button>
+  )
+})
 
 ToolButton.displayName = 'ToolButton'
 
@@ -543,9 +559,23 @@ export function ToolPanel({
       return
     }
     
-    // For AI tool, trigger AI generation
-    if (toolId === 'ai' && onAIGenerate) {
-      onAIGenerate()
+    // For AI tool, trigger AI generation AND set it as selected
+    if (toolId === 'ai') {
+      console.log('[handleToolSelect] AI tool selected, onAIGenerate:', !!onAIGenerate)
+      
+      // Set AI as the selected tool
+      if (onToolChange) {
+        onToolChange(toolId)
+      } else {
+        setInternalSelectedTool(toolId)
+      }
+      
+      // Then trigger AI generation
+      if (onAIGenerate) {
+        onAIGenerate()
+      } else {
+        console.warn('[handleToolSelect] onAIGenerate callback is not defined!')
+      }
       return
     }
     
