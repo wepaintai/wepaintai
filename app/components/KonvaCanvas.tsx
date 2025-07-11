@@ -71,6 +71,7 @@ interface KonvaCanvasProps {
   layers: LayerType[]
   selectedTool?: string
   activeLayerId?: string
+  activePaintLayerId?: string | null
   // perfect-freehand options
   smoothing?: number
   thinning?: number
@@ -98,6 +99,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     opacity,
     onStrokeEnd,
     layers,
+    activePaintLayerId,
     selectedTool = 'brush',
     activeLayerId = 'painting-layer',
     // perfect-freehand options
@@ -478,7 +480,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
         
         // Track the pending stroke and update when we get the backend ID
         pendingStrokeIdsRef.current.set(tempId, null)
-        addStrokeToSession(finalStrokePoints, color, size, opacity, selectedTool === 'eraser').then(strokeId => {
+        addStrokeToSession(finalStrokePoints, color, size, opacity, selectedTool === 'eraser', activePaintLayerId).then(strokeId => {
           if (strokeId) {
             pendingStrokeIdsRef.current.set(tempId, strokeId)
           }
@@ -489,7 +491,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     setCurrentStroke([])
     setCurrentStrokeId(null)
     onStrokeEnd?.()
-  }, [isDrawing, currentStroke, getPointerPosition, color, size, opacity, addStrokeToSession, onStrokeEnd, selectedTool])
+  }, [isDrawing, currentStroke, getPointerPosition, color, size, opacity, addStrokeToSession, onStrokeEnd, selectedTool, activeLayerId, activePaintLayerId])
 
   // Fallback global listener to ensure drawing stops if pointer capture fails
   useEffect(() => {
@@ -622,12 +624,17 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
           .map((layer) => {
             if (!layer.visible) return null
 
-            // Stroke layer
-            if (layer.type === 'stroke') {
+            // Paint layer (supports both 'stroke' for backward compatibility and 'paint' for new multi-layer)
+            if (layer.type === 'stroke' || layer.type === 'paint') {
+              // Filter strokes for this specific paint layer
+              const layerStrokes = layer.type === 'paint' 
+                ? strokes.filter(stroke => stroke.layerId === layer.id)
+                : strokes // For backward compatibility, show all strokes on the single stroke layer
+                
               return (
                 <Layer key={layer.id} ref={strokeLayerRef} listening={selectedTool === 'pan'} opacity={layer.opacity}>
                   {/* Render confirmed strokes */}
-                  {strokes
+                  {layerStrokes
                     .sort((a, b) => a.strokeOrder - b.strokeOrder)
                     .map((stroke) => {
                       const pathData = getStrokePathData({
@@ -668,7 +675,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                   })}
                   
                   {/* Render current stroke being drawn (including eraser) */}
-                  {isDrawing && currentStroke.length > 0 && activeLayerId === 'painting-layer' && (
+                  {isDrawing && currentStroke.length > 0 && (layer.id === activePaintLayerId || (layer.type === 'stroke' && activeLayerId === 'painting-layer')) && (
                     <Path
                       data={getStrokePathData({
                         points: currentStroke,

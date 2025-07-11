@@ -1,7 +1,7 @@
-# iPaintAI - Project Brief
+# wepaintAI - Project Brief
 
 ## Project Overview
-iPaintAI is a web-based painting application that combines freehand drawing with AI-powered inpainting capabilities. The application prioritizes immediate usability - users can start painting without any authentication, with optional sign-up for saving work.
+wepaintAI is a web-based painting application that combines freehand drawing with AI-powered inpainting capabilities. The application prioritizes immediate usability - users can start painting without any authentication, with optional sign-up for saving work.
 
 ## Core Requirements
 

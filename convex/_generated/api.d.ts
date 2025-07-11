@@ -15,11 +15,18 @@ import type * as http from "../http.js";
 import type * as images from "../images.js";
 import type * as layers from "../layers.js";
 import type * as liveStrokes from "../liveStrokes.js";
+import type * as migrations_addDefaultPaintLayers from "../migrations/addDefaultPaintLayers.js";
+import type * as migrations_addInitialTokensToUsers from "../migrations/addInitialTokensToUsers.js";
 import type * as migrations_normalizeLayerOrders from "../migrations/normalizeLayerOrders.js";
 import type * as paintLayer from "../paintLayer.js";
+import type * as paintLayers from "../paintLayers.js";
 import type * as paintingSessions from "../paintingSessions.js";
+import type * as polar from "../polar.js";
+import type * as polarWebhook from "../polarWebhook.js";
 import type * as presence from "../presence.js";
 import type * as strokes from "../strokes.js";
+import type * as test from "../test.js";
+import type * as tokens from "../tokens.js";
 import type * as users from "../users.js";
 import type * as viewerAcks from "../viewerAcks.js";
 import type * as webrtc from "../webrtc.js";
@@ -46,11 +53,18 @@ declare const fullApi: ApiFromModules<{
   images: typeof images;
   layers: typeof layers;
   liveStrokes: typeof liveStrokes;
+  "migrations/addDefaultPaintLayers": typeof migrations_addDefaultPaintLayers;
+  "migrations/addInitialTokensToUsers": typeof migrations_addInitialTokensToUsers;
   "migrations/normalizeLayerOrders": typeof migrations_normalizeLayerOrders;
   paintLayer: typeof paintLayer;
+  paintLayers: typeof paintLayers;
   paintingSessions: typeof paintingSessions;
+  polar: typeof polar;
+  polarWebhook: typeof polarWebhook;
   presence: typeof presence;
   strokes: typeof strokes;
+  test: typeof test;
+  tokens: typeof tokens;
   users: typeof users;
   viewerAcks: typeof viewerAcks;
   webrtc: typeof webrtc;
@@ -66,301 +80,4 @@ export declare const internal: FilterApi<
   FunctionReference<any, "internal">
 >;
 
-export declare const components: {
-  betterAuth: {
-    adapterTest: {
-      count: FunctionReference<"query", "internal", any, any>;
-      create: FunctionReference<"mutation", "internal", any, any>;
-      delete: FunctionReference<"mutation", "internal", any, any>;
-      deleteMany: FunctionReference<"mutation", "internal", any, any>;
-      findMany: FunctionReference<"query", "internal", any, any>;
-      findOne: FunctionReference<"query", "internal", any, any>;
-      isAuthenticated: FunctionReference<"query", "internal", {}, any>;
-      update: FunctionReference<"mutation", "internal", any, any>;
-      updateMany: FunctionReference<"mutation", "internal", any, any>;
-    };
-    lib: {
-      create: FunctionReference<
-        "mutation",
-        "internal",
-        {
-          input:
-            | {
-                createdAt: number;
-                email: string;
-                emailVerified: boolean;
-                image?: string;
-                name: string;
-                table: string;
-                twoFactorEnabled?: boolean;
-                updatedAt: number;
-                userId: string;
-              }
-            | {
-                createdAt: number;
-                expiresAt: number;
-                ipAddress?: string;
-                table: string;
-                token: string;
-                updatedAt: number;
-                userAgent?: string;
-                userId: string;
-              }
-            | {
-                accessToken?: string;
-                accessTokenExpiresAt?: number;
-                accountId: string;
-                createdAt: number;
-                idToken?: string;
-                password?: string;
-                providerId: string;
-                refreshToken?: string;
-                refreshTokenExpiresAt?: number;
-                scope?: string;
-                table: string;
-                updatedAt: number;
-                userId: string;
-              }
-            | {
-                backupCodes: string;
-                secret: string;
-                table: string;
-                userId: string;
-              }
-            | {
-                createdAt?: number;
-                expiresAt: number;
-                identifier: string;
-                table: string;
-                updatedAt?: number;
-                value: string;
-              }
-            | {
-                createdAt: number;
-                id?: string;
-                privateKey: string;
-                publicKey: string;
-                table: string;
-              };
-        },
-        any
-      >;
-      deleteAllForUser: FunctionReference<
-        "action",
-        "internal",
-        { table: string; userId: string },
-        any
-      >;
-      deleteAllForUserPage: FunctionReference<
-        "mutation",
-        "internal",
-        {
-          paginationOpts?: {
-            cursor: string | null;
-            endCursor?: string | null;
-            id?: number;
-            maximumBytesRead?: number;
-            maximumRowsRead?: number;
-            numItems: number;
-          };
-          table: string;
-          userId: string;
-        },
-        any
-      >;
-      deleteBy: FunctionReference<
-        "mutation",
-        "internal",
-        {
-          field: string;
-          table: string;
-          unique?: boolean;
-          value:
-            | string
-            | number
-            | boolean
-            | Array<string>
-            | Array<number>
-            | null;
-        },
-        any
-      >;
-      deleteOldVerifications: FunctionReference<
-        "action",
-        "internal",
-        { currentTimestamp: number },
-        any
-      >;
-      deleteOldVerificationsPage: FunctionReference<
-        "mutation",
-        "internal",
-        {
-          currentTimestamp: number;
-          paginationOpts?: {
-            cursor: string | null;
-            endCursor?: string | null;
-            id?: number;
-            maximumBytesRead?: number;
-            maximumRowsRead?: number;
-            numItems: number;
-          };
-        },
-        any
-      >;
-      getAccountByAccountIdAndProviderId: FunctionReference<
-        "query",
-        "internal",
-        { accountId: string; providerId: string },
-        any
-      >;
-      getAccountsByUserId: FunctionReference<
-        "query",
-        "internal",
-        { limit?: number; userId: string },
-        any
-      >;
-      getBy: FunctionReference<
-        "query",
-        "internal",
-        {
-          field: string;
-          table: string;
-          unique?: boolean;
-          value:
-            | string
-            | number
-            | boolean
-            | Array<string>
-            | Array<number>
-            | null;
-        },
-        any
-      >;
-      getByQuery: FunctionReference<
-        "query",
-        "internal",
-        {
-          field: string;
-          table: string;
-          unique?: boolean;
-          value:
-            | string
-            | number
-            | boolean
-            | Array<string>
-            | Array<number>
-            | null;
-        },
-        any
-      >;
-      getCurrentSession: FunctionReference<"query", "internal", {}, any>;
-      getJwks: FunctionReference<"query", "internal", { limit?: number }, any>;
-      listVerificationsByIdentifier: FunctionReference<
-        "query",
-        "internal",
-        {
-          identifier: string;
-          limit?: number;
-          sortBy?: { direction: "asc" | "desc"; field: string };
-        },
-        any
-      >;
-      update: FunctionReference<
-        "mutation",
-        "internal",
-        {
-          input:
-            | {
-                table: "account";
-                value: Record<string, any>;
-                where: {
-                  field: string;
-                  value:
-                    | string
-                    | number
-                    | boolean
-                    | Array<string>
-                    | Array<number>
-                    | null;
-                };
-              }
-            | {
-                table: "session";
-                value: Record<string, any>;
-                where: {
-                  field: string;
-                  value:
-                    | string
-                    | number
-                    | boolean
-                    | Array<string>
-                    | Array<number>
-                    | null;
-                };
-              }
-            | {
-                table: "verification";
-                value: Record<string, any>;
-                where: {
-                  field: string;
-                  value:
-                    | string
-                    | number
-                    | boolean
-                    | Array<string>
-                    | Array<number>
-                    | null;
-                };
-              }
-            | {
-                table: "user";
-                value: Record<string, any>;
-                where: {
-                  field: string;
-                  value:
-                    | string
-                    | number
-                    | boolean
-                    | Array<string>
-                    | Array<number>
-                    | null;
-                };
-              };
-        },
-        any
-      >;
-      updateTwoFactor: FunctionReference<
-        "mutation",
-        "internal",
-        {
-          update: { backupCodes?: string; secret?: string; userId?: string };
-          userId: string;
-        },
-        any
-      >;
-      updateUserProviderAccounts: FunctionReference<
-        "mutation",
-        "internal",
-        {
-          providerId: string;
-          update: {
-            accessToken?: string;
-            accessTokenExpiresAt?: number;
-            accountId?: string;
-            createdAt?: number;
-            idToken?: string;
-            password?: string;
-            providerId?: string;
-            refreshToken?: string;
-            refreshTokenExpiresAt?: number;
-            scope?: string;
-            updatedAt?: number;
-            userId?: string;
-          };
-          userId: string;
-        },
-        any
-      >;
-    };
-  };
-};
+export declare const components: {};

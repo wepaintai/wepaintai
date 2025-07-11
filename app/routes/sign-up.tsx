@@ -1,14 +1,14 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { SignIn } from '@clerk/tanstack-start'
+import { SignUp } from '@clerk/tanstack-start'
 
-export const Route = createFileRoute('/login')({
-  component: LoginComponent,
+export const Route = createFileRoute('/sign-up')({
+  component: SignUpComponent,
 })
 
-function LoginComponent() {
+function SignUpComponent() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-      <SignIn
+      <SignUp
         appearance={{
           elements: {
             rootBox: "mx-auto",
@@ -16,8 +16,8 @@ function LoginComponent() {
           }
         }}
         routing="path"
-        path="/login"
-        signUpUrl="/sign-up"
+        path="/sign-up"
+        signInUrl="/login"
         redirectUrl="/"
       />
     </div>

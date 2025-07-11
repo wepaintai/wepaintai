@@ -6,7 +6,7 @@ interface PasswordProtectionProps {
 }
 
 const CORRECT_PASSWORD = 'renderatl'
-const AUTH_STORAGE_KEY = 'ipaintai-auth'
+const AUTH_STORAGE_KEY = 'wepaintai-auth'
 
 export function PasswordProtection({ children }: PasswordProtectionProps) {
   const [isAuthenticated, setIsAuthenticated] = useState(false)

@@ -118,11 +118,11 @@ export const addAIGeneratedImage = mutation({
     const scaleY = canvasHeight / args.height;
     const scale = Math.min(scaleX, scaleY); // Use min to fit within canvas
     
-    // Calculate position to center the image if it doesn't fill the entire canvas
-    const scaledWidth = args.width * scale;
-    const scaledHeight = args.height * scale;
-    const x = (canvasWidth - scaledWidth) / 2;
-    const y = (canvasHeight - scaledHeight) / 2;
+    // Center the image on the canvas
+    // Since KonvaImage uses offsetX/offsetY to center the image anchor,
+    // we position at the canvas center directly
+    const x = canvasWidth / 2;
+    const y = canvasHeight / 2;
     
     // Store the original AI image dimensions and calculate scale/position
     const imageId = await ctx.db.insert("aiGeneratedImages", {

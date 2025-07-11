@@ -1,14 +1,15 @@
 import { useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
-import { authClient } from '../lib/auth-client'
+import { useClerk } from '@clerk/tanstack-start'
 import { useRouter } from '@tanstack/react-router'
 
 export function UserProfile() {
   const user = useQuery(api.auth.getCurrentUser)
+  const { signOut } = useClerk()
   const router = useRouter()
 
   const handleLogout = async () => {
-    await authClient.signOut()
+    await signOut()
     // Force a full page reload to ensure auth state is cleared
     window.location.href = '/login'
   }

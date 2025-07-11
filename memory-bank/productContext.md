@@ -1,7 +1,7 @@
-# iPaintAI - Product Context
+# wepaintAI - Product Context
 
 ## Why This Project Exists
-iPaintAI addresses the gap between simple drawing tools and complex professional software. Many users want to create digital art without the steep learning curve or subscription costs of professional tools. By combining intuitive painting with AI capabilities, iPaintAI makes digital art creation accessible and fun.
+wepaintAI addresses the gap between simple drawing tools and complex professional software. Many users want to create digital art without the steep learning curve or subscription costs of professional tools. By combining intuitive painting with AI capabilities, wepaintAI makes digital art creation accessible and fun.
 
 ## Problems It Solves
 1. **Barrier to Entry** - Most painting software requires downloads, installations, or sign-ups before use

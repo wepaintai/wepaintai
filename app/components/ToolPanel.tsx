@@ -21,14 +21,16 @@ import {
   Trash2,
   GripVertical,
   Hand,
-  Eraser
+  Eraser,
+  Plus
 } from 'lucide-react'
 import { AuthModal } from './AuthModal'
+import { useAuth, useUser } from '@clerk/tanstack-start'
 
 // Types
 export interface Layer {
   id: string
-  type: 'stroke' | 'image' | 'ai-image'
+  type: 'stroke' | 'image' | 'ai-image' | 'paint'
   name: string
   visible: boolean
   opacity: number
@@ -58,6 +60,7 @@ interface ToolPanelProps {
   onLayerReorder?: (layerId: string, newOrder: number) => void
   onLayerDelete?: (layerId: string) => void
   onLayerOpacityChange?: (layerId: string, opacity: number) => void
+  onCreatePaintLayer?: () => void
 }
 
 interface Tool {
@@ -138,27 +141,49 @@ Slider.displayName = 'Slider'
 const ToolButton = React.memo(({ 
   tool, 
   isSelected, 
-  onClick 
+  onClick,
+  disabled = false
 }: { 
   tool: Tool, 
   isSelected: boolean, 
-  onClick: () => void 
-}) => (
-  <button
-    key={tool.id}
-    onClick={onClick}
-    className={`w-8 h-8 flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-blue-400 ${
-      isSelected 
-        ? 'bg-blue-500 text-white' 
-        : 'bg-white/10 text-white hover:bg-white/20'
-    }`}
-    title={`${tool.label}${tool.keyboardShortcut ? ` (${tool.keyboardShortcut})` : ''}`}
-    aria-label={tool.ariaLabel}
-    aria-pressed={isSelected}
-  >
-    <tool.icon className={`w-4 h-4 ${isSelected ? 'scale-110 transition-transform' : ''}`} />
-  </button>
-))
+  onClick: () => void,
+  disabled?: boolean
+}) => {
+  // Debug logging for AI tool
+  if (tool.id === 'ai') {
+    console.log('[ToolButton] AI tool rendering:', {
+      disabled,
+      isSelected,
+      className: disabled ? 'disabled' : isSelected ? 'selected' : 'normal'
+    })
+  }
+  
+  return (
+    <button
+      key={tool.id}
+      onClick={(e) => {
+        if (tool.id === 'ai') {
+          console.log('[ToolButton] AI tool clicked, disabled:', disabled)
+        }
+        onClick()
+      }}
+      disabled={disabled}
+      className={`w-8 h-8 flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-blue-400 ${
+        disabled
+          ? 'bg-white/5 text-white/30 cursor-not-allowed'
+          : isSelected 
+          ? 'bg-blue-500 text-white' 
+          : 'bg-white/10 text-white hover:bg-white/20'
+      }`}
+      title={`${tool.label}${tool.keyboardShortcut ? ` (${tool.keyboardShortcut})` : ''}${disabled ? ' (Sign in required)' : ''}`}
+      aria-label={tool.ariaLabel}
+      aria-pressed={isSelected}
+      aria-disabled={disabled}
+    >
+      <tool.icon className={`w-4 h-4 ${isSelected && !disabled ? 'scale-110 transition-transform' : ''}`} />
+    </button>
+  )
+})
 
 ToolButton.displayName = 'ToolButton'
 
@@ -338,6 +363,7 @@ const LayerItem = React.memo(({
           <button
             onClick={(e) => {
               e.stopPropagation()
+              console.log('[LayerItem] Delete button clicked for layer:', layer.id, layer.name)
               onDelete()
             }}
             className="p-0.5 hover:bg-white/20 rounded transition-colors"
@@ -391,9 +417,32 @@ export function ToolPanel({
   onLayerReorder,
   onLayerDelete,
   onLayerOpacityChange,
+  onCreatePaintLayer,
 }: ToolPanelProps) {
+  const { userId, isLoaded } = useAuth()
+  const { isSignedIn, user } = useUser()
   const [internalSelectedTool, setInternalSelectedTool] = React.useState('brush')
   const selectedTool = externalSelectedTool || internalSelectedTool
+  
+  // Check if auth is disabled via environment variable
+  const authDisabled = import.meta.env.VITE_AUTH_DISABLED === 'true'
+  
+  // If auth is disabled, treat user as signed in
+  const effectiveIsSignedIn = authDisabled || isSignedIn
+  
+  // Debug logging
+  React.useEffect(() => {
+    console.log('[ToolPanel] Auth state:', {
+      userId,
+      isLoaded,
+      isSignedIn,
+      effectiveIsSignedIn,
+      authDisabled,
+      userEmail: user?.primaryEmailAddress?.emailAddress,
+      hasUser: !!user,
+      VITE_AUTH_DISABLED: import.meta.env.VITE_AUTH_DISABLED
+    })
+  }, [userId, isLoaded, isSignedIn, effectiveIsSignedIn, authDisabled, user])
   const [isCollapsed, setIsCollapsed] = React.useState(false)
   const [showMenu, setShowMenu] = React.useState(false)
   const [showAuthModal, setShowAuthModal] = React.useState(false)
@@ -496,6 +545,13 @@ export function ToolPanel({
 
   // Handle tool selection
   const handleToolSelect = React.useCallback((toolId: string) => {
+    // Check if AI tool requires authentication
+    if (toolId === 'ai' && !effectiveIsSignedIn) {
+      // Don't select the tool, just show a message or do nothing
+      console.log('AI tool requires authentication. effectiveIsSignedIn:', effectiveIsSignedIn, 'authDisabled:', authDisabled)
+      return
+    }
+    
     // For upload tool, don't change the selected tool state
     // It will be handled by the parent component after upload/cancel
     if (toolId === 'upload' && onImageUpload) {
@@ -503,9 +559,23 @@ export function ToolPanel({
       return
     }
     
-    // For AI tool, trigger AI generation
-    if (toolId === 'ai' && onAIGenerate) {
-      onAIGenerate()
+    // For AI tool, trigger AI generation AND set it as selected
+    if (toolId === 'ai') {
+      console.log('[handleToolSelect] AI tool selected, onAIGenerate:', !!onAIGenerate)
+      
+      // Set AI as the selected tool
+      if (onToolChange) {
+        onToolChange(toolId)
+      } else {
+        setInternalSelectedTool(toolId)
+      }
+      
+      // Then trigger AI generation
+      if (onAIGenerate) {
+        onAIGenerate()
+      } else {
+        console.warn('[handleToolSelect] onAIGenerate callback is not defined!')
+      }
       return
     }
     
@@ -514,7 +584,7 @@ export function ToolPanel({
     } else {
       setInternalSelectedTool(toolId)
     }
-  }, [onToolChange, onImageUpload, onAIGenerate])
+  }, [onToolChange, onImageUpload, onAIGenerate, effectiveIsSignedIn, authDisabled])
 
   // Keyboard shortcuts for tools
   React.useEffect(() => {
@@ -527,13 +597,17 @@ export function ToolPanel({
       const tool = tools.find(t => t.keyboardShortcut === key)
       
       if (tool) {
+        // Skip AI tool if not authenticated
+        if (tool.id === 'ai' && !effectiveIsSignedIn) {
+          return
+        }
         handleToolSelect(tool.id)
       }
     }
     
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [handleToolSelect])
+  }, [handleToolSelect, effectiveIsSignedIn])
 
   // Handle menu toggle
   const handleMenuToggle = React.useCallback((e: React.MouseEvent) => {
@@ -642,18 +716,28 @@ export function ToolPanel({
                 <>
                   {/* Tool Selection */}
                   <div className="grid grid-cols-4 border-b border-white/20 mb-3">
-                    {tools.map((tool, index) => (
-                      <div 
-                        key={tool.id} 
-                        className={`${index < tools.length - 1 ? 'border-r border-white/20' : ''}`}
-                      >
-                        <ToolButton
-                          tool={tool}
-                          isSelected={selectedTool === tool.id}
-                          onClick={() => handleToolSelect(tool.id)}
-                        />
-                      </div>
-                    ))}
+                    {tools.map((tool, index) => {
+                      // Only disable AI tool for unauthenticated users
+                      const isAIDisabled = tool.id === 'ai' && !effectiveIsSignedIn
+                      
+                      if (tool.id === 'ai') {
+                        console.log('[ToolPanel] AI tool button - effectiveIsSignedIn:', effectiveIsSignedIn, 'authDisabled:', authDisabled, 'disabled:', isAIDisabled)
+                      }
+                      
+                      return (
+                        <div 
+                          key={tool.id} 
+                          className={`${index < tools.length - 1 ? 'border-r border-white/20' : ''}`}
+                        >
+                          <ToolButton
+                            tool={tool}
+                            isSelected={selectedTool === tool.id}
+                            onClick={() => handleToolSelect(tool.id)}
+                            disabled={isAIDisabled}
+                          />
+                        </div>
+                      )
+                    })}
                   </div>
 
                   {/* Color Mixer */}
@@ -711,7 +795,20 @@ export function ToolPanel({
                     <p className="text-xs text-white/60 text-center py-4">No layers yet</p>
                   ) : (
                     <>
-                      <div className="text-xs font-medium text-white/80 mb-1">Layers ({layers.length})</div>
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="text-xs font-medium text-white/80">Layers ({layers.length})</div>
+                        {onCreatePaintLayer && (
+                          <button
+                            onClick={onCreatePaintLayer}
+                            className="p-0.5 hover:bg-white/20 rounded transition-colors flex items-center gap-1"
+                            aria-label="Add new paint layer"
+                            title="Add new paint layer"
+                          >
+                            <Plus className="w-3.5 h-3.5 text-white/60 hover:text-white" />
+                            <span className="text-[10px] text-white/60">New</span>
+                          </button>
+                        )}
+                      </div>
                       <div className="space-y-1 max-h-[300px] overflow-y-auto">
                         {[...layers].sort((a, b) => b.order - a.order).map((layer, index) => (
                           <LayerItem
@@ -748,14 +845,30 @@ export function ToolPanel({
 
               {activeTab === 'ai' && (
                 <div className="space-y-2">
-                  <button
-                    onClick={onAIGenerate}
-                    className="w-full py-2 px-3 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-colors flex items-center justify-center gap-2"
-                  >
-                    <Sparkles className="w-4 h-4" />
-                    Generate AI Image
-                  </button>
-                  <p className="text-xs text-white/60 text-center">Use AI to transform your canvas</p>
+                  {!effectiveIsSignedIn ? (
+                    <>
+                      <div className="text-center py-4">
+                        <p className="text-sm text-white/60 mb-2">Sign in to use AI generation</p>
+                        <button
+                          onClick={() => setShowAuthModal(true)}
+                          className="text-blue-400 hover:text-blue-300 text-sm underline"
+                        >
+                          Sign in
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={onAIGenerate}
+                        className="w-full py-2 px-3 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                      >
+                        <Sparkles className="w-4 h-4" />
+                        Generate AI Image
+                      </button>
+                      <p className="text-xs text-white/60 text-center">Use AI to transform your canvas</p>
+                    </>
+                  )}
                 </div>
               )}
 

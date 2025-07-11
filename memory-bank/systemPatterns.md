@@ -1,4 +1,4 @@
-# iPaintAI - System Patterns
+# wepaintAI - System Patterns
 
 ## Real-time Collaboration Patterns
 

@@ -178,12 +178,14 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     brushColor: string,
     brushSize: number,
     opacity: number = 1,
-    isEraser: boolean = false
+    isEraser: boolean = false,
+    layerId?: string | null
   ) => {
     if (!sessionId) return;
     
     return await addStroke({
       sessionId,
+      layerId: layerId ? layerId as Id<"paintLayers"> : undefined,
       userId: currentUser.id || undefined,  // Allow undefined for guest users
       userColor: currentUser.color,
       points,

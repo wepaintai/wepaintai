@@ -1,4 +1,4 @@
-# iPaintAI - Active Context
+# wepaintAI - Active Context
 
 ## Current Implementation Status
 **Phase**: Real-time Collaborative Painting System (COMPLETED)

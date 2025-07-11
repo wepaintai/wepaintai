@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
-import { X, Sparkles, Loader2, Palette, Camera, Smile, Grid3X3 } from 'lucide-react'
-import { useAction } from 'convex/react'
+import { X, Sparkles, Loader2, Palette, Camera, Smile, Grid3X3, Coins } from 'lucide-react'
+import { useAction, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import type { Id } from '../../convex/_generated/dataModel'
 
@@ -29,6 +29,7 @@ export function AIGenerationModal({
   const [error, setError] = useState<string | null>(null)
   
   const generateImage = useAction(api.aiGeneration.generateImage)
+  const tokenBalance = useQuery(api.tokens.getTokenBalance)
 
   const handleGenerate = async () => {
     if (!prompt.trim()) {
@@ -170,32 +171,65 @@ export function AIGenerationModal({
           />
         </div>
 
-        {/* Weight slider */}
-        <div className="mb-4">
-          <label htmlFor="weight" className="block text-sm font-medium text-white mb-2">
-            Canvas influence: {weight.toFixed(2)}
-          </label>
-          <input
-            id="weight"
-            type="range"
-            min="0"
-            max="1"
-            step="0.05"
-            value={weight}
-            onChange={(e) => setWeight(parseFloat(e.target.value))}
-            disabled={isGenerating}
-            className="ai-modal-slider"
-          />
-          <div className="flex justify-between text-xs text-white/60 mt-1">
-            <span>0 (ignore canvas)</span>
-            <span>1 (preserve canvas)</span>
+        {/* Token balance */}
+        <div className="mb-4 p-3 bg-white/10 rounded-md border border-white/20">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Coins className="w-4 h-4 text-yellow-400" />
+              <span className="text-sm font-medium text-white">AI Generation Tokens</span>
+            </div>
+            <div className="text-right">
+              <p className="text-lg font-semibold text-white">
+                {tokenBalance?.tokens ?? 0}
+              </p>
+              <p className="text-xs text-white/60">1 token per generation</p>
+            </div>
           </div>
+          <button
+            onClick={() => {
+              onClose()
+              const buyMoreBtn = document.querySelector('[data-token-buy-more]') as HTMLButtonElement
+              if (buyMoreBtn) buyMoreBtn.click()
+            }}
+            className="mt-2 w-full px-3 py-1.5 text-xs font-medium text-black bg-yellow-400 hover:bg-yellow-500 rounded transition-colors"
+          >
+            Buy more tokens
+          </button>
         </div>
 
         {/* Error message */}
         {error && (
           <div className="mb-4 p-3 bg-red-500/20 border border-red-500/40 rounded-md">
-            <p className="text-sm text-red-400">{error}</p>
+            <p className="text-sm text-red-400">
+              {error}
+              {error.includes('Insufficient tokens') && (
+                <span>
+                  {' '}
+                  <button
+                    onClick={() => {
+                      onClose()
+                      // Trigger token purchase modal by clicking the buy more link
+                      const buyMoreBtn = document.querySelector('[data-token-buy-more]') as HTMLButtonElement
+                      if (buyMoreBtn) buyMoreBtn.click()
+                    }}
+                    className="underline hover:text-red-300"
+                  >
+                    Buy more tokens
+                  </button>
+                </span>
+              )}
+              {error.includes('Please sign in') && (
+                <span>
+                  {' '}
+                  <a
+                    href="/login"
+                    className="underline hover:text-red-300"
+                  >
+                    Sign in
+                  </a>
+                </span>
+              )}
+            </p>
           </div>
         )}
 

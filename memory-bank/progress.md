@@ -1,4 +1,4 @@
-# iPaintAI Core - Development Progress
+# wepaintAI Core - Development Progress
 
 ## Completed Features ✅
 
