@@ -6,6 +6,8 @@ import { Id } from "./_generated/dataModel";
 export const getTokenBalance = query({
   args: {},
   handler: async (ctx) => {
+    console.log("[getTokenBalance] Starting query");
+    
     // Return null immediately if running in an environment without auth
     // This prevents any auth-related errors from being thrown
     if (typeof ctx.auth === 'undefined') {
@@ -30,9 +32,11 @@ export const getTokenBalance = query({
       
       if (!identity) {
         // Return null for unauthenticated users
+        console.log("[getTokenBalance] No identity found");
         return null;
       }
 
+      console.log("[getTokenBalance] Querying for user with clerkId:", identity.subject);
       const user = await ctx.db
         .query("users")
         .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
@@ -40,7 +44,43 @@ export const getTokenBalance = query({
 
       if (!user) {
         // User not found in database
-        return null;
+        console.log("[getTokenBalance] User not found in database for clerkId:", identity.subject);
+        
+        // Try to create the user (this handles the case where AuthSync hasn't run yet)
+        try {
+          console.log("[getTokenBalance] Attempting to create user...");
+          
+          // Create new user with initial tokens
+          const userId = await ctx.db.insert("users", {
+            clerkId: identity.subject,
+            email: identity.email,
+            name: identity.name || identity.givenName || identity.email?.split("@")[0] || "User",
+            tokens: 10, // Initial 10 tokens for new users
+            lifetimeTokensUsed: 0,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          });
+          
+          console.log("[getTokenBalance] Created new user with ID:", userId);
+          
+          // Record initial token grant
+          await ctx.db.insert("tokenTransactions", {
+            userId,
+            type: "initial",
+            amount: 10,
+            balance: 10,
+            description: "Welcome bonus - 10 free tokens",
+            createdAt: Date.now(),
+          });
+          
+          return {
+            tokens: 10,
+            lifetimeUsed: 0,
+          };
+        } catch (createError) {
+          console.error("[getTokenBalance] Failed to create user:", createError);
+          return null;
+        }
       }
 
       return {
