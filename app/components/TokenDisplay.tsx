@@ -13,13 +13,19 @@ export function TokenDisplay({ className = '' }: TokenDisplayProps) {
   const [showPurchaseModal, setShowPurchaseModal] = useState(false)
   const [purchasing, setPurchasing] = useState(false)
   
-  // Only query for token balance if user is authenticated
+  // Only query for token balance if user is authenticated and the query exists
   const tokenBalance = useQuery(
-    userId ? api.tokens.getTokenBalance : undefined
+    userId && api.tokens?.getTokenBalance ? api.tokens.getTokenBalance : undefined
   )
-  const createCheckout = useAction(api.polar.createCheckout)
+  const createCheckout = useAction(api.polar?.createCheckout)
   
   const handlePurchase = async () => {
+    if (!createCheckout) {
+      console.error('Checkout action not available')
+      alert('Purchase feature is not available at the moment.')
+      return
+    }
+    
     setPurchasing(true)
     try {
       const { checkoutUrl } = await createCheckout({

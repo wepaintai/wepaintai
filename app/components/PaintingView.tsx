@@ -835,10 +835,10 @@ export function PaintingView() {
       {/* User profile display */}
       <UserProfile />
       
-      {/* Token display */}
-      <div className="absolute top-4 right-4 z-10">
+      {/* Token display - temporarily disabled until Convex functions are deployed */}
+      {/* <div className="absolute top-4 right-4 z-10">
         <TokenDisplay />
-      </div>
+      </div> */}
     </div>
   )
 }
