@@ -193,7 +193,7 @@ Set these in the Convex dashboard (Settings > Environment Variables):
 ### Debugging Tips
 - For noisy Convex logs, use the `[AI-GEN]` prefix to filter AI generation logs
 - Check both development and production deployments - they use different URLs
-- Production logs: https://dashboard.convex.dev/t/travis-irby/ipaintai-core/graceful-blackbird-369/logs
+- Production logs: https://dashboard.convex.dev/t/travis-irby/wepaintai-core/graceful-blackbird-369/logs
 - Development logs: https://dashboard.convex.dev/d/polished-flamingo-936
 
 ## AI Generation Implementation Details

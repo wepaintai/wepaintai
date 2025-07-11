@@ -2,7 +2,7 @@
 
 ## Implementation Summary
 
-We've implemented a complete P2P Preview Layer for iPaintAI that provides sub-40ms latency for live paint strokes. The implementation includes:
+We've implemented a complete P2P Preview Layer for wepaintAI that provides sub-40ms latency for live paint strokes. The implementation includes:
 
 ### Core Components
 
