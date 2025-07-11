@@ -403,7 +403,7 @@ export function ToolPanel({
   onLayerOpacityChange,
   onCreatePaintLayer,
 }: ToolPanelProps) {
-  const { userId } = useAuth()
+  const { userId, isLoaded } = useAuth()
   const [internalSelectedTool, setInternalSelectedTool] = React.useState('brush')
   const selectedTool = externalSelectedTool || internalSelectedTool
   const [isCollapsed, setIsCollapsed] = React.useState(false)
@@ -508,10 +508,10 @@ export function ToolPanel({
 
   // Handle tool selection
   const handleToolSelect = React.useCallback((toolId: string) => {
-    // Check if AI tool requires authentication
-    if (toolId === 'ai' && !userId) {
+    // Check if AI tool requires authentication (only after auth has loaded)
+    if (toolId === 'ai' && isLoaded && !userId) {
       // Don't select the tool, just show a message or do nothing
-      console.log('AI tool requires authentication')
+      console.log('AI tool requires authentication. Current userId:', userId, 'isLoaded:', isLoaded)
       return
     }
     
@@ -533,7 +533,7 @@ export function ToolPanel({
     } else {
       setInternalSelectedTool(toolId)
     }
-  }, [onToolChange, onImageUpload, onAIGenerate, userId])
+  }, [onToolChange, onImageUpload, onAIGenerate, userId, isLoaded])
 
   // Keyboard shortcuts for tools
   React.useEffect(() => {
@@ -546,8 +546,8 @@ export function ToolPanel({
       const tool = tools.find(t => t.keyboardShortcut === key)
       
       if (tool) {
-        // Skip AI tool if not authenticated
-        if (tool.id === 'ai' && !userId) {
+        // Skip AI tool if not authenticated (only after auth has loaded)
+        if (tool.id === 'ai' && isLoaded && !userId) {
           return
         }
         handleToolSelect(tool.id)
@@ -556,7 +556,7 @@ export function ToolPanel({
     
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [handleToolSelect, userId])
+  }, [handleToolSelect, userId, isLoaded])
 
   // Handle menu toggle
   const handleMenuToggle = React.useCallback((e: React.MouseEvent) => {
@@ -665,19 +665,28 @@ export function ToolPanel({
                 <>
                   {/* Tool Selection */}
                   <div className="grid grid-cols-4 border-b border-white/20 mb-3">
-                    {tools.map((tool, index) => (
-                      <div 
-                        key={tool.id} 
-                        className={`${index < tools.length - 1 ? 'border-r border-white/20' : ''}`}
-                      >
-                        <ToolButton
-                          tool={tool}
-                          isSelected={selectedTool === tool.id}
-                          onClick={() => handleToolSelect(tool.id)}
-                          disabled={tool.id === 'ai' && !userId}
-                        />
-                      </div>
-                    ))}
+                    {tools.map((tool, index) => {
+                      // Only disable AI tool for truly unauthenticated users after auth has loaded
+                      const isAIDisabled = tool.id === 'ai' && isLoaded && !userId
+                      
+                      if (tool.id === 'ai') {
+                        console.log('[ToolPanel] AI tool check - userId:', userId, 'isLoaded:', isLoaded, 'disabled:', isAIDisabled)
+                      }
+                      
+                      return (
+                        <div 
+                          key={tool.id} 
+                          className={`${index < tools.length - 1 ? 'border-r border-white/20' : ''}`}
+                        >
+                          <ToolButton
+                            tool={tool}
+                            isSelected={selectedTool === tool.id}
+                            onClick={() => handleToolSelect(tool.id)}
+                            disabled={isAIDisabled}
+                          />
+                        </div>
+                      )
+                    })}
                   </div>
 
                   {/* Color Mixer */}
@@ -785,14 +794,34 @@ export function ToolPanel({
 
               {activeTab === 'ai' && (
                 <div className="space-y-2">
-                  <button
-                    onClick={onAIGenerate}
-                    className="w-full py-2 px-3 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-colors flex items-center justify-center gap-2"
-                  >
-                    <Sparkles className="w-4 h-4" />
-                    Generate AI Image
-                  </button>
-                  <p className="text-xs text-white/60 text-center">Use AI to transform your canvas</p>
+                  {!isLoaded ? (
+                    <div className="text-center py-4">
+                      <p className="text-sm text-white/60">Loading...</p>
+                    </div>
+                  ) : !userId ? (
+                    <>
+                      <div className="text-center py-4">
+                        <p className="text-sm text-white/60 mb-2">Sign in to use AI generation</p>
+                        <button
+                          onClick={() => setShowAuthModal(true)}
+                          className="text-blue-400 hover:text-blue-300 text-sm underline"
+                        >
+                          Sign in
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={onAIGenerate}
+                        className="w-full py-2 px-3 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                      >
+                        <Sparkles className="w-4 h-4" />
+                        Generate AI Image
+                      </button>
+                      <p className="text-xs text-white/60 text-center">Use AI to transform your canvas</p>
+                    </>
+                  )}
                 </div>
               )}
 

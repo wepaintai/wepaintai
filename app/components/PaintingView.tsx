@@ -9,7 +9,6 @@ import { P2PDebugPanel } from './P2PDebugPanel'
 import { ImageUploadModal } from './ImageUploadModal'
 import { AIGenerationModal } from './AIGenerationModal'
 import { UserProfile } from './UserProfile'
-import { TokenDisplay } from './TokenDisplay'
 import { usePaintingSession } from '../hooks/usePaintingSession'
 import { useP2PPainting } from '../hooks/useP2PPainting'
 import { useSessionImages } from '../hooks/useSessionImages'
@@ -457,7 +456,7 @@ export function PaintingView() {
         visible: img.opacity > 0,
         opacity: img.opacity,
         order: img.layerOrder,
-        thumbnailUrl: img.url,
+        thumbnailUrl: img.url || undefined,
       })
     })
     
@@ -798,7 +797,7 @@ export function PaintingView() {
       {showAIGeneration && sessionId && (
         <AIGenerationModalWrapper
           sessionId={sessionId}
-          canvasRef={canvasRef}
+          canvasRef={canvasRef as React.RefObject<CanvasRef>}
           onClose={() => {
             setShowAIGeneration(false)
             setSelectedTool('brush')
