@@ -39,6 +39,13 @@ function AIGenerationModalWrapper({
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
   
   useEffect(() => {
+    // Don't capture if we don't have strokes yet
+    if (!strokes || strokes.length === 0) {
+      console.log('[AIGenerationModalWrapper] Waiting for strokes to load...')
+      setIsLoading(true)
+      return
+    }
+    
     // Capture canvas data after a small delay to ensure layers are rendered
     const captureCanvas = () => {
       if (canvasRef.current) {
@@ -77,9 +84,9 @@ function AIGenerationModalWrapper({
     }
     
     // Initial delay to let canvas layers render
-    const timer = setTimeout(captureCanvas, 300) // Increased delay
+    const timer = setTimeout(captureCanvas, 500) // Increased delay
     return () => clearTimeout(timer)
-  }, [canvasRef])
+  }, [canvasRef, strokes, layers]) // Add layers as dependency too
   
   return (
     <AIGenerationModal
