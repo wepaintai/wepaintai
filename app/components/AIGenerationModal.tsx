@@ -102,32 +102,16 @@ export function AIGenerationModal({
           <h2 className="text-lg font-semibold text-white">AI Generation</h2>
         </div>
 
-        {/* Token balance */}
-        <div className="mb-4 p-3 bg-white/10 rounded-md border border-white/20">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Coins className="w-4 h-4 text-yellow-400" />
-              <span className="text-sm font-medium text-white">AI Generation Tokens</span>
-            </div>
-            <div className="text-right">
-              <p className="text-lg font-semibold text-white">
-                {tokenBalance?.tokens ?? 0}
-              </p>
-              <p className="text-xs text-white/60">1 token per generation</p>
-            </div>
+        {/* Preview */}
+        <div className="mb-4">
+          <p className="text-sm text-white/70 mb-2">Current canvas:</p>
+          <div className="relative w-full h-32 bg-white/10 rounded border border-white/20 overflow-hidden">
+            <img 
+              src={canvasDataUrl} 
+              alt="Canvas preview" 
+              className="w-full h-full object-contain"
+            />
           </div>
-          {((tokenBalance?.tokens ?? 0) < 5) && (
-            <button
-              onClick={() => {
-                onClose()
-                const buyMoreBtn = document.querySelector('[data-token-buy-more]') as HTMLButtonElement
-                if (buyMoreBtn) buyMoreBtn.click()
-              }}
-              className="mt-2 w-full px-3 py-1.5 text-xs font-medium text-black bg-yellow-400 hover:bg-yellow-500 rounded transition-colors"
-            >
-              Buy more tokens
-            </button>
-          )}
         </div>
 
         {/* Style presets */}
@@ -187,26 +171,30 @@ export function AIGenerationModal({
           />
         </div>
 
-        {/* Weight slider */}
-        <div className="mb-4">
-          <label htmlFor="weight" className="block text-sm font-medium text-white mb-2">
-            Canvas influence: {weight.toFixed(2)}
-          </label>
-          <input
-            id="weight"
-            type="range"
-            min="0"
-            max="1"
-            step="0.05"
-            value={weight}
-            onChange={(e) => setWeight(parseFloat(e.target.value))}
-            disabled={isGenerating}
-            className="ai-modal-slider"
-          />
-          <div className="flex justify-between text-xs text-white/60 mt-1">
-            <span>0 (ignore canvas)</span>
-            <span>1 (preserve canvas)</span>
+        {/* Token balance */}
+        <div className="mb-4 p-3 bg-white/10 rounded-md border border-white/20">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Coins className="w-4 h-4 text-yellow-400" />
+              <span className="text-sm font-medium text-white">AI Generation Tokens</span>
+            </div>
+            <div className="text-right">
+              <p className="text-lg font-semibold text-white">
+                {tokenBalance?.tokens ?? 0}
+              </p>
+              <p className="text-xs text-white/60">1 token per generation</p>
+            </div>
           </div>
+          <button
+            onClick={() => {
+              onClose()
+              const buyMoreBtn = document.querySelector('[data-token-buy-more]') as HTMLButtonElement
+              if (buyMoreBtn) buyMoreBtn.click()
+            }}
+            className="mt-2 w-full px-3 py-1.5 text-xs font-medium text-black bg-yellow-400 hover:bg-yellow-500 rounded transition-colors"
+          >
+            Buy more tokens
+          </button>
         </div>
 
         {/* Error message */}
