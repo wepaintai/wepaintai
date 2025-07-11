@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
-import { X, Sparkles, Loader2, Palette, Camera, Smile, Grid3X3 } from 'lucide-react'
-import { useAction } from 'convex/react'
+import { X, Sparkles, Loader2, Palette, Camera, Smile, Grid3X3, Coins } from 'lucide-react'
+import { useAction, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import type { Id } from '../../convex/_generated/dataModel'
 
@@ -29,6 +29,7 @@ export function AIGenerationModal({
   const [error, setError] = useState<string | null>(null)
   
   const generateImage = useAction(api.aiGeneration.generateImage)
+  const tokenBalance = useQuery(api.tokens.getTokenBalance)
 
   const handleGenerate = async () => {
     if (!prompt.trim()) {
@@ -101,16 +102,32 @@ export function AIGenerationModal({
           <h2 className="text-lg font-semibold text-white">AI Generation</h2>
         </div>
 
-        {/* Preview */}
-        <div className="mb-4">
-          <p className="text-sm text-white/70 mb-2">Current canvas:</p>
-          <div className="relative w-full h-32 bg-white/10 rounded border border-white/20 overflow-hidden">
-            <img 
-              src={canvasDataUrl} 
-              alt="Canvas preview" 
-              className="w-full h-full object-contain"
-            />
+        {/* Token balance */}
+        <div className="mb-4 p-3 bg-white/10 rounded-md border border-white/20">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Coins className="w-4 h-4 text-yellow-400" />
+              <span className="text-sm font-medium text-white">AI Generation Tokens</span>
+            </div>
+            <div className="text-right">
+              <p className="text-lg font-semibold text-white">
+                {tokenBalance?.tokens ?? 0}
+              </p>
+              <p className="text-xs text-white/60">1 token per generation</p>
+            </div>
           </div>
+          {tokenBalance && tokenBalance.tokens < 5 && (
+            <button
+              onClick={() => {
+                onClose()
+                const buyMoreBtn = document.querySelector('[data-token-buy-more]') as HTMLButtonElement
+                if (buyMoreBtn) buyMoreBtn.click()
+              }}
+              className="mt-2 w-full px-3 py-1.5 text-xs font-medium text-black bg-yellow-400 hover:bg-yellow-500 rounded transition-colors"
+            >
+              Buy more tokens
+            </button>
+          )}
         </div>
 
         {/* Style presets */}
