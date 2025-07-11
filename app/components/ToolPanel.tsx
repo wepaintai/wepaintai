@@ -150,13 +150,13 @@ const ToolButton = React.memo(({
   disabled?: boolean
 }) => {
   // Debug logging for AI tool
-  if (tool.id === 'ai') {
-    console.log('[ToolButton] AI tool rendering:', {
-      disabled,
-      isSelected,
-      className: disabled ? 'disabled' : isSelected ? 'selected' : 'normal'
-    })
-  }
+  // if (tool.id === 'ai') {
+  //   console.log('[ToolButton] AI tool rendering:', {
+  //     disabled,
+  //     isSelected,
+  //     className: disabled ? 'disabled' : isSelected ? 'selected' : 'normal'
+  //   })
+  // }
   
   return (
     <button
@@ -720,9 +720,9 @@ export function ToolPanel({
                       // Only disable AI tool for unauthenticated users
                       const isAIDisabled = tool.id === 'ai' && !effectiveIsSignedIn
                       
-                      if (tool.id === 'ai') {
-                        console.log('[ToolPanel] AI tool button - effectiveIsSignedIn:', effectiveIsSignedIn, 'authDisabled:', authDisabled, 'disabled:', isAIDisabled)
-                      }
+                      // if (tool.id === 'ai') {
+                      //   console.log('[ToolPanel] AI tool button - effectiveIsSignedIn:', effectiveIsSignedIn, 'authDisabled:', authDisabled, 'disabled:', isAIDisabled)
+                      // }
                       
                       return (
                         <div 

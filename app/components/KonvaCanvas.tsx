@@ -145,6 +145,15 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     updateLiveStrokeForUser,
     clearLiveStrokeForUser,
   } = usePaintingSession(sessionId)
+  
+  // Debug log strokes
+  useEffect(() => {
+    console.log('[KonvaCanvas] strokes updated:', {
+      sessionId,
+      strokesLength: strokes?.length || 0,
+      strokes: strokes?.slice(0, 2) // Log first 2 strokes
+    })
+  }, [strokes, sessionId])
 
   // Use the session images hook
   const { images } = useSessionImages(sessionId)
@@ -154,7 +163,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   
   // Mutations for updating positions
   const updateImageTransform = useMutation(api.images.updateImageTransform)
-  const updateAIImageTransform = useMutation(api.aiGeneration.updateImageTransform)
+  const updateAIImageTransform = useMutation(api.images.updateAIImageTransform)
 
   // P2P preview layer
   const {
@@ -402,7 +411,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
         const container = stage.container()
         if (container) {
           if (selectedTool === 'pan') {
-            container.style.cursor = isDragging ? 'grabbing' : 'grab'
+            container.style.cursor = isDrawing ? 'grabbing' : 'grab'
           } else if (selectedTool === 'eraser' || selectedTool === 'brush') {
             container.style.cursor = 'none' // Hide default cursor, we'll show our custom one
           } else {
@@ -582,22 +591,83 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     },
     getImageData: () => {
       const stage = stageRef.current
-      if (!stage) return ''
+      if (!stage) {
+        console.error('[KonvaCanvas] getImageData: No stage ref')
+        return ''
+      }
       
       try {
-        return stage.toDataURL({ pixelRatio: 1 })
+        // Log current state
+        console.log('[KonvaCanvas] getImageData called')
+        console.log('[KonvaCanvas] Stage dimensions:', stage.width(), 'x', stage.height())
+        console.log('[KonvaCanvas] Number of layers:', stage.children.length)
+        console.log('[KonvaCanvas] Visible layers:', stage.children.filter(l => l.visible()).length)
+        // Note: strokes array might be empty here due to closure, but the rendered paths are what matters
+        
+        // Log what's actually rendered in each layer
+        stage.children.forEach((layer, idx) => {
+          const childCount = layer.children.length
+          console.log(`[KonvaCanvas] Layer ${idx}: visible=${layer.visible()}, opacity=${layer.opacity()}, children=${childCount}`)
+          
+          // Log first few children details
+          if (childCount > 0) {
+            const firstChild = layer.children[0]
+            console.log(`  - First child type: ${firstChild.className}, visible: ${firstChild.visible()}`)
+          }
+        })
+        
+        // Force draw before capturing
+        stage.batchDraw()
+        
+        // Create a temporary canvas with white background
+        const tempCanvas = document.createElement('canvas')
+        tempCanvas.width = stage.width()
+        tempCanvas.height = stage.height()
+        const tempCtx = tempCanvas.getContext('2d')
+        
+        if (tempCtx) {
+          // Fill with white background
+          tempCtx.fillStyle = 'white'
+          tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height)
+          
+          // Draw the stage content on top
+          const stageCanvas = stage.toCanvas({ pixelRatio: 1 })
+          tempCtx.drawImage(stageCanvas, 0, 0)
+          
+          // Get data URL from temp canvas
+          const dataUrl = tempCanvas.toDataURL('image/png')
+          console.log('[KonvaCanvas] Data URL with white background length:', dataUrl.length)
+          return dataUrl
+        }
+        
+        // Fallback to original method
+        const dataUrl = stage.toDataURL({ 
+          pixelRatio: 1,
+          mimeType: 'image/png'
+        })
+        console.log('[KonvaCanvas] Data URL length:', dataUrl.length)
+        console.log('[KonvaCanvas] Data URL preview:', dataUrl.substring(0, 100))
+        
+        
+        return dataUrl
       } catch (err) {
-        console.error('Failed to get canvas data:', err)
+        console.error('[KonvaCanvas] Failed to get canvas data:', err)
         return ''
       }
     },
     getDimensions: () => dimensions,
     forceRedraw: () => {
       // Force redraw all layers
+      console.log('[KonvaCanvas] forceRedraw called')
       strokeLayerRef.current?.batchDraw()
       imageLayerRef.current?.batchDraw()
       aiImageLayerRef.current?.batchDraw()
       drawingLayerRef.current?.batchDraw()
+      
+      // Also force update stage
+      if (stageRef.current) {
+        stageRef.current.batchDraw()
+      }
     },
   }), [dimensions])
 
@@ -627,9 +697,21 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
             // Paint layer (supports both 'stroke' for backward compatibility and 'paint' for new multi-layer)
             if (layer.type === 'stroke' || layer.type === 'paint') {
               // Filter strokes for this specific paint layer
+              // For paint layers, filter by layerId
+              // For stroke layer (backward compatibility), show strokes without layerId
               const layerStrokes = layer.type === 'paint' 
                 ? strokes.filter(stroke => stroke.layerId === layer.id)
-                : strokes // For backward compatibility, show all strokes on the single stroke layer
+                : strokes.filter(stroke => !stroke.layerId) // Show only strokes without layerId on the default stroke layer
+              
+              console.log('[KonvaCanvas] Rendering paint layer:', {
+                layerId: layer.id,
+                layerType: layer.type,
+                allStrokesCount: strokes.length,
+                layerStrokesCount: layerStrokes.length,
+                firstStrokeLayerId: strokes[0]?.layerId,
+                strokesWithoutLayerId: strokes.filter(s => !s.layerId).length,
+                strokesWithLayerId: strokes.filter(s => s.layerId).length
+              })
                 
               return (
                 <Layer key={layer.id} ref={strokeLayerRef} listening={selectedTool === 'pan'} opacity={layer.opacity}>

@@ -14,6 +14,7 @@ export interface Stroke {
   _id: Id<"strokes">;
   _creationTime: number;
   sessionId: Id<"paintingSessions">;
+  layerId?: Id<"paintLayers">;
   userId?: Id<"users">;
   userColor: string;
   points: PaintPoint[];

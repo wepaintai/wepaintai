@@ -106,11 +106,17 @@ export function AIGenerationModal({
         <div className="mb-4">
           <p className="text-sm text-white/70 mb-2">Current canvas:</p>
           <div className="relative w-full h-32 bg-white/10 rounded border border-white/20 overflow-hidden">
-            <img 
-              src={canvasDataUrl} 
-              alt="Canvas preview" 
-              className="w-full h-full object-contain"
-            />
+            {canvasDataUrl ? (
+              <img 
+                src={canvasDataUrl} 
+                alt="Canvas preview" 
+                className="w-full h-full object-contain"
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-white/40">
+                <p className="text-sm">Loading canvas...</p>
+              </div>
+            )}
           </div>
         </div>
 

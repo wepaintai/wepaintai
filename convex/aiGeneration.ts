@@ -116,6 +116,22 @@ export const generateImage = action({
       
       console.log('[AI-GEN] Image data URL starts with:', imageDataUrl.substring(0, 100));
       console.log('[AI-GEN] Image data URL length:', imageDataUrl.length);
+      
+      // Check if the image is blank/empty by examining the base64 data
+      const base64Part = imageDataUrl.split(',')[1] || args.imageData;
+      // A blank canvas typically has a very small base64 string
+      if (base64Part.length < 1000) {
+        console.warn('[AI-GEN] WARNING: Image data seems very small, might be blank canvas');
+        console.log('[AI-GEN] Base64 data sample:', base64Part.substring(0, 200));
+      }
+      
+      // Check if it's a large image that might still be blank (all white/transparent)
+      // Large blank PNGs can still have significant size due to PNG headers and compression
+      console.log('[AI-GEN] Base64 length check:', {
+        totalLength: base64Part.length,
+        isLikelyBlank: base64Part.length < 5000,
+        sample: base64Part.substring(1000, 1100) // Sample from middle to check pattern
+      })
 
       // Convert base64 to URL by storing in Convex
       let imageUrl: string;
@@ -192,6 +208,13 @@ export const generateImage = action({
           ...requestBody.input,
           input_image: requestBody.input.input_image.substring(0, 100) + '...' // Log only first 100 chars
         }
+      });
+      
+      // Verify the URL is a valid Convex URL
+      console.log('[AI-GEN] Image URL validation:', {
+        isConvexUrl: imageUrl.includes('convex.cloud'),
+        urlLength: imageUrl.length,
+        hasHttps: imageUrl.startsWith('https://')
       });
       
       // Log the full API call for debugging
