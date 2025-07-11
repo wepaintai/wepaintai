@@ -45,42 +45,7 @@ export const getTokenBalance = query({
       if (!user) {
         // User not found in database
         console.log("[getTokenBalance] User not found in database for clerkId:", identity.subject);
-        
-        // Try to create the user (this handles the case where AuthSync hasn't run yet)
-        try {
-          console.log("[getTokenBalance] Attempting to create user...");
-          
-          // Create new user with initial tokens
-          const userId = await ctx.db.insert("users", {
-            clerkId: identity.subject,
-            email: identity.email,
-            name: identity.name || identity.givenName || identity.email?.split("@")[0] || "User",
-            tokens: 10, // Initial 10 tokens for new users
-            lifetimeTokensUsed: 0,
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-          });
-          
-          console.log("[getTokenBalance] Created new user with ID:", userId);
-          
-          // Record initial token grant
-          await ctx.db.insert("tokenTransactions", {
-            userId,
-            type: "initial",
-            amount: 10,
-            balance: 10,
-            description: "Welcome bonus - 10 free tokens",
-            createdAt: Date.now(),
-          });
-          
-          return {
-            tokens: 10,
-            lifetimeUsed: 0,
-          };
-        } catch (createError) {
-          console.error("[getTokenBalance] Failed to create user:", createError);
-          return null;
-        }
+        return null;
       }
 
       return {
