@@ -25,7 +25,7 @@ import {
   Plus
 } from 'lucide-react'
 import { AuthModal } from './AuthModal'
-import { useAuth } from '@clerk/tanstack-start'
+import { useAuth, useUser } from '@clerk/tanstack-start'
 
 // Types
 export interface Layer {
@@ -404,8 +404,29 @@ export function ToolPanel({
   onCreatePaintLayer,
 }: ToolPanelProps) {
   const { userId, isLoaded } = useAuth()
+  const { isSignedIn, user } = useUser()
   const [internalSelectedTool, setInternalSelectedTool] = React.useState('brush')
   const selectedTool = externalSelectedTool || internalSelectedTool
+  
+  // Check if auth is disabled via environment variable
+  const authDisabled = import.meta.env.VITE_AUTH_DISABLED === 'true'
+  
+  // If auth is disabled, treat user as signed in
+  const effectiveIsSignedIn = authDisabled || isSignedIn
+  
+  // Debug logging
+  React.useEffect(() => {
+    console.log('[ToolPanel] Auth state:', {
+      userId,
+      isLoaded,
+      isSignedIn,
+      effectiveIsSignedIn,
+      authDisabled,
+      userEmail: user?.primaryEmailAddress?.emailAddress,
+      hasUser: !!user,
+      VITE_AUTH_DISABLED: import.meta.env.VITE_AUTH_DISABLED
+    })
+  }, [userId, isLoaded, isSignedIn, effectiveIsSignedIn, authDisabled, user])
   const [isCollapsed, setIsCollapsed] = React.useState(false)
   const [showMenu, setShowMenu] = React.useState(false)
   const [showAuthModal, setShowAuthModal] = React.useState(false)
@@ -508,10 +529,10 @@ export function ToolPanel({
 
   // Handle tool selection
   const handleToolSelect = React.useCallback((toolId: string) => {
-    // Check if AI tool requires authentication (only after auth has loaded)
-    if (toolId === 'ai' && isLoaded && !userId) {
+    // Check if AI tool requires authentication
+    if (toolId === 'ai' && !effectiveIsSignedIn) {
       // Don't select the tool, just show a message or do nothing
-      console.log('AI tool requires authentication. Current userId:', userId, 'isLoaded:', isLoaded)
+      console.log('AI tool requires authentication. effectiveIsSignedIn:', effectiveIsSignedIn, 'authDisabled:', authDisabled)
       return
     }
     
@@ -533,7 +554,7 @@ export function ToolPanel({
     } else {
       setInternalSelectedTool(toolId)
     }
-  }, [onToolChange, onImageUpload, onAIGenerate, userId, isLoaded])
+  }, [onToolChange, onImageUpload, onAIGenerate, effectiveIsSignedIn, authDisabled])
 
   // Keyboard shortcuts for tools
   React.useEffect(() => {
@@ -546,8 +567,8 @@ export function ToolPanel({
       const tool = tools.find(t => t.keyboardShortcut === key)
       
       if (tool) {
-        // Skip AI tool if not authenticated (only after auth has loaded)
-        if (tool.id === 'ai' && isLoaded && !userId) {
+        // Skip AI tool if not authenticated
+        if (tool.id === 'ai' && !effectiveIsSignedIn) {
           return
         }
         handleToolSelect(tool.id)
@@ -556,7 +577,7 @@ export function ToolPanel({
     
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [handleToolSelect, userId, isLoaded])
+  }, [handleToolSelect, effectiveIsSignedIn])
 
   // Handle menu toggle
   const handleMenuToggle = React.useCallback((e: React.MouseEvent) => {
@@ -666,11 +687,11 @@ export function ToolPanel({
                   {/* Tool Selection */}
                   <div className="grid grid-cols-4 border-b border-white/20 mb-3">
                     {tools.map((tool, index) => {
-                      // Only disable AI tool for truly unauthenticated users after auth has loaded
-                      const isAIDisabled = tool.id === 'ai' && isLoaded && !userId
+                      // Only disable AI tool for unauthenticated users
+                      const isAIDisabled = tool.id === 'ai' && !effectiveIsSignedIn
                       
                       if (tool.id === 'ai') {
-                        console.log('[ToolPanel] AI tool check - userId:', userId, 'isLoaded:', isLoaded, 'disabled:', isAIDisabled)
+                        console.log('[ToolPanel] AI tool button - effectiveIsSignedIn:', effectiveIsSignedIn, 'authDisabled:', authDisabled, 'disabled:', isAIDisabled)
                       }
                       
                       return (
@@ -794,11 +815,7 @@ export function ToolPanel({
 
               {activeTab === 'ai' && (
                 <div className="space-y-2">
-                  {!isLoaded ? (
-                    <div className="text-center py-4">
-                      <p className="text-sm text-white/60">Loading...</p>
-                    </div>
-                  ) : !userId ? (
+                  {!effectiveIsSignedIn ? (
                     <>
                       <div className="text-center py-4">
                         <p className="text-sm text-white/60 mb-2">Sign in to use AI generation</p>
