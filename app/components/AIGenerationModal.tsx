@@ -116,7 +116,7 @@ export function AIGenerationModal({
               <p className="text-xs text-white/60">1 token per generation</p>
             </div>
           </div>
-          {tokenBalance && tokenBalance.tokens < 5 && (
+          {((tokenBalance?.tokens ?? 0) < 5) && (
             <button
               onClick={() => {
                 onClose()
