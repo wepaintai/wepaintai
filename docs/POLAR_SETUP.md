@@ -1,7 +1,7 @@
 # Polar Integration Setup Guide
 
 ## Prerequisites
-- A Polar account (https://polar.sh)
+- A Polar account (https://polar.sh for production, https://sandbox.polar.sh for testing)
 - A Polar organization created
 - Access to your Convex dashboard
 
@@ -30,6 +30,9 @@
 2. Add the following variables:
    - `POLAR_API_KEY`: Your Polar API key (from Polar dashboard → Settings → API)
    - `POLAR_WEBHOOK_SECRET`: The webhook secret from Step 2
+   - `POLAR_API_BASE_URL`: (Optional) API base URL
+     - For sandbox (default): Leave empty or set to `https://sandbox-api.polar.sh`
+     - For production: Set to `https://api.polar.sh`
 
 ### In your `.env.local` file (for local development):
 ```env
@@ -81,3 +84,36 @@ The webhook handler verifies signatures to ensure requests are from Polar:
 - Make sure you copied the webhook secret correctly (no extra spaces)
 - The secret should be set in Convex environment variables, not in `.env.local`
 - Check that the webhook signature header name matches what Polar sends
+
+## Sandbox Testing Setup
+
+For development and testing, you can use Polar's sandbox environment:
+
+### Step 1: Create Sandbox Account
+1. Go to https://sandbox.polar.sh/start
+2. Create a new account (separate from production)
+3. Create a new organization for testing
+
+### Step 2: Create Test Product
+1. In sandbox dashboard, create the same product structure:
+   - Name: "100 Token Pack"
+   - Price: $9.99
+   - Type: One-time purchase
+
+### Step 3: Configure Sandbox Environment
+1. In Convex Dashboard, set these environment variables for your development deployment:
+   - `POLAR_API_KEY`: Your sandbox API key
+   - `POLAR_WEBHOOK_SECRET`: Your sandbox webhook secret
+   - `POLAR_API_BASE_URL`: `https://sandbox-api.polar.sh`
+
+### Step 4: Test Payments
+- Use Stripe test card: `4242 4242 4242 4242`
+- Any future expiration date
+- Any CVC code
+- Subscriptions in sandbox are automatically canceled after 90 days
+
+### Switching Between Environments
+To switch between sandbox and production:
+1. Update the Convex environment variables
+2. Ensure you're using the correct API keys and webhook secrets
+3. The `POLAR_API_BASE_URL` determines which environment is used

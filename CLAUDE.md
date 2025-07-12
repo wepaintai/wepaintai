@@ -82,6 +82,11 @@ Note: No test or lint commands are currently configured.
 Set these in the Convex dashboard (Settings > Environment Variables):
 - `REPLICATE_API_TOKEN`: Your Replicate API token for AI image generation
 - `REPLICATE_MODEL_VERSION`: Replicate model version ID (default: `15589a1a9e6b240d246752fc688267b847db4858910cc390794703384b6a5443` for Flux Kontext Pro)
+- `POLAR_API_KEY`: Your Polar API key for payment processing
+- `POLAR_WEBHOOK_SECRET`: Webhook secret from Polar for signature verification
+- `POLAR_API_BASE_URL`: (Optional) API base URL
+  - For sandbox (default): Leave empty or set to `https://sandbox-api.polar.sh`
+  - For production: Set to `https://api.polar.sh`
 
 ### Authentication Setup
 1. **Create a Clerk account** at https://clerk.com
@@ -189,6 +194,18 @@ Set these in the Convex dashboard (Settings > Environment Variables):
 - Content moderation can sometimes flag benign content - users should try different prompts
 - API parameter naming: Uses `input_image` (not `image`) for the canvas URL
 - Production Convex URL: `https://graceful-blackbird-369.convex.cloud`
+
+### Polar Sandbox Configuration
+
+For testing payments without real money:
+
+1. **Create Sandbox Account**: Go to https://sandbox.polar.sh/start (separate from production)
+2. **Set Environment Variables** in Convex for development:
+   - `POLAR_API_KEY`: Your sandbox API key
+   - `POLAR_WEBHOOK_SECRET`: Your sandbox webhook secret  
+   - `POLAR_API_BASE_URL`: `https://sandbox-api.polar.sh`
+3. **Test Card**: Use `4242 4242 4242 4242` with any future date and CVC
+4. **Product ID**: Create the same product in sandbox and update `VITE_POLAR_PRODUCT_ID` in `.env.local`
 
 ### Debugging Tips
 - For noisy Convex logs, use the `[AI-GEN]` prefix to filter AI generation logs

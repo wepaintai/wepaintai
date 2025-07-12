@@ -38,9 +38,12 @@ export const createCheckout = action({
       throw new Error("Polar API key not configured");
     }
 
+    // Get API base URL (defaults to sandbox if not set)
+    const polarApiBaseUrl = process.env.POLAR_API_BASE_URL || 'https://sandbox-api.polar.sh';
+
     try {
       // Create checkout session with Polar
-      const response = await fetch("https://api.polar.sh/v1/checkouts", {
+      const response = await fetch(`${polarApiBaseUrl}/v1/checkouts`, {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${polarApiKey}`,

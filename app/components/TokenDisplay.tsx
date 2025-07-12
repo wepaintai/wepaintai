@@ -13,11 +13,9 @@ export function TokenDisplay({ className = '' }: TokenDisplayProps) {
   const [showPurchaseModal, setShowPurchaseModal] = useState(false)
   const [purchasing, setPurchasing] = useState(false)
   
-  // Only query for token balance if user is authenticated and the query exists
-  const tokenBalance = useQuery(
-    userId && api.tokens?.getTokenBalance ? api.tokens.getTokenBalance : undefined
-  )
-  const createCheckout = useAction(api.polar?.createCheckout)
+  // Always call hooks in the same order - this is a React requirement
+  const tokenBalance = useQuery(api.tokens.getTokenBalance)
+  const createCheckout = useAction(api.polar.createCheckout)
   
   const handlePurchase = async () => {
     if (!createCheckout) {
@@ -44,10 +42,8 @@ export function TokenDisplay({ className = '' }: TokenDisplayProps) {
   }
   
   // Don't show token display if user is not authenticated or balance is not loaded
-  if (!userId || tokenBalance === undefined) return null
-  
-  // Also hide if tokenBalance is null (user not found in database)
-  if (tokenBalance === null) return null
+  // The query returns null when user is not authenticated or not found
+  if (!tokenBalance) return null
   
   return (
     <>
