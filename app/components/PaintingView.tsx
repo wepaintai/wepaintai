@@ -39,10 +39,15 @@ function AIGenerationModalWrapper({
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
   
   useEffect(() => {
-    // Don't capture if we don't have strokes yet
-    if (!strokes || strokes.length === 0) {
-      console.log('[AIGenerationModalWrapper] Waiting for strokes to load...')
-      setIsLoading(true)
+    // Check if we have any content to capture (strokes OR images)
+    const hasStrokes = strokes && strokes.length > 0
+    const hasImages = layers.some(layer => layer.type === 'image' || layer.type === 'ai-image')
+    
+    if (!hasStrokes && !hasImages) {
+      console.log('[AIGenerationModalWrapper] No content to capture (no strokes or images)')
+      // Set a blank canvas data URL instead of staying in loading state
+      setCanvasData('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=')
+      setIsLoading(false)
       return
     }
     
@@ -52,6 +57,7 @@ function AIGenerationModalWrapper({
         console.log('[AIGenerationModalWrapper] About to capture canvas data')
         console.log('[AIGenerationModalWrapper] Layers available:', layers.length)
         console.log('[AIGenerationModalWrapper] Strokes available:', strokes?.length || 0)
+        console.log('[AIGenerationModalWrapper] Has images:', layers.some(layer => layer.type === 'image' || layer.type === 'ai-image'))
         
         // Force canvas redraw before capturing
         canvasRef.current.forceRedraw()
@@ -233,20 +239,26 @@ export function PaintingView() {
         if (existingSessionId) {
           // Join existing session
           setSessionId(existingSessionId)
-        } else {
-          // Create new session
+        } else if (createNewSession) {
+          // Create new session only if createNewSession is available
           const newSessionId = await createNewSession('Collaborative Painting', 800, 600)
-          setSessionId(newSessionId)
-          // Update URL with new session ID
-          window.history.replaceState({}, '', `?session=${newSessionId}`)
+          if (newSessionId) {
+            setSessionId(newSessionId)
+            // Update URL with new session ID
+            window.history.replaceState({}, '', `?session=${newSessionId}`)
+          }
         }
       } catch (error) {
         console.error('Failed to create/join session:', error)
+        // Don't set a fallback session ID - let the UI handle the loading state
       }
     }
     
-    initSession()
-  }, [createNewSession])
+    // Only run if we don't have a session yet
+    if (sessionId === null) {
+      initSession()
+    }
+  }, [createNewSession, sessionId])
 
   const handleStrokeEnd = () => {
     // Save canvas state for undo/redo
@@ -472,6 +484,7 @@ export function PaintingView() {
       console.log('[Layers] Adding AI images to layers:', aiImages.length)
       aiImages.forEach((img, index) => {
         console.log('[Layers] AI image:', img._id, img)
+        console.log('[Layers] AI image layerOrder:', img.layerOrder)
         allLayers.push({
           id: img._id,
           type: 'ai-image',
@@ -483,6 +496,14 @@ export function PaintingView() {
         })
       })
     }
+    
+    // Debug: Log all layers with their orders
+    console.log('[Layers] All layers computed:', allLayers.map(l => ({
+      id: l.id,
+      type: l.type,
+      name: l.name,
+      order: l.order
+    })))
     
     return allLayers
   }, [strokes, images, aiImages, paintingLayerVisible, paintingLayerOrder, paintLayers])
