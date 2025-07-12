@@ -131,6 +131,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   const pendingStrokeIdsRef = useRef<Map<string, Id<"strokes"> | null>>(new Map())
   // Cursor position for brush size indicator
   const [cursorPosition, setCursorPosition] = useState<Point | null>(null)
+  // Track if mouse is over the canvas stage
+  const [isMouseOverCanvas, setIsMouseOverCanvas] = useState(false)
   // Eraser masks for image layers - maps layer ID to array of eraser strokes
   const [imageMasks, setImageMasks] = useState<Map<string, LocalStroke[]>>(new Map())
 
@@ -564,9 +566,29 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     return () => document.removeEventListener('pointerup', handleGlobalPointerUp)
   }, [isDrawing, currentStroke, color, size, opacity, addStrokeToSession, onStrokeEnd, selectedTool, activeLayerId])
 
-  // Handle pointer leave - hide cursor
+  // Handle pointer leave - hide cursor  
   const handlePointerLeave = useCallback(() => {
-    setCursorPosition(null)
+    // Stage pointer leave handled by container div now
+  }, [])
+
+  // Handle document mouse leave - hide cursor when mouse leaves window
+  useEffect(() => {
+    const handleDocumentMouseLeave = (e: MouseEvent) => {
+      // Check if mouse is leaving the document/window
+      if (e.clientY <= 0 || e.clientX <= 0 || 
+          e.clientX >= window.innerWidth || e.clientY >= window.innerHeight) {
+        setCursorPosition(null)
+        setIsMouseOverCanvas(false)
+      }
+    }
+
+    document.addEventListener('mouseleave', handleDocumentMouseLeave)
+    document.addEventListener('mouseout', handleDocumentMouseLeave)
+    
+    return () => {
+      document.removeEventListener('mouseleave', handleDocumentMouseLeave)
+      document.removeEventListener('mouseout', handleDocumentMouseLeave)
+    }
   }, [])
 
   // Expose methods via ref
@@ -702,7 +724,15 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   }, [layers])
 
   return (
-    <div ref={containerRef} className="relative w-full h-full">
+    <div 
+      ref={containerRef} 
+      className="relative w-full h-full"
+      onMouseEnter={() => setIsMouseOverCanvas(true)}
+      onMouseLeave={() => {
+        setIsMouseOverCanvas(false)
+        setCursorPosition(null)
+      }}
+    >
       {/* Debug overlay to show layer order */}
       {process.env.NODE_ENV === 'development' && (
         <div className="absolute top-2 right-2 bg-black/80 text-white text-xs p-2 z-50 rounded">
@@ -1083,7 +1113,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
             })}
             
             {/* Cursor size indicator */}
-            {cursorPosition && (selectedTool === 'brush' || selectedTool === 'eraser') && (
+            {cursorPosition && isMouseOverCanvas && (selectedTool === 'brush' || selectedTool === 'eraser') && (
               <Circle
                 x={cursorPosition.x}
                 y={cursorPosition.y}

@@ -859,8 +859,8 @@ export function PaintingView() {
         />
       )}
       
-      {/* User profile display */}
-      <UserProfile />
+      {/* User profile display - only show if admin features are enabled */}
+      {adminFeaturesEnabled && <UserProfile />}
       
       {/* Token display - temporarily disabled until Convex functions are deployed */}
       {/* <div className="absolute top-4 right-4 z-10">
