@@ -18,6 +18,7 @@
     "@clerk/tanstack-start": "^0.11.5",
     "@convex-dev/auth": "^0.0.87",
     "@polar-sh/nextjs": "^0.4.2",
+    "@polar-sh/sdk": "^0.34.3",
     "@tailwindcss/forms": "^0.5.10",
     "@tailwindcss/postcss": "^4.1.7",
     "@tailwindcss/vite": "^4.1.7",
