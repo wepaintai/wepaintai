@@ -3,56 +3,70 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 
-// Custom webhook verification for Convex environment
+// Custom webhook verification for Convex environment following Standard Webhooks spec
 async function verifyPolarWebhook(body: string, headers: Record<string, string>, secret: string) {
-  const signature = headers['x-polar-signature'] || headers['X-Polar-Signature'];
+  // Standard Webhooks uses these headers
+  const webhookId = headers['webhook-id'] || headers['Webhook-Id'];
+  const webhookTimestamp = headers['webhook-timestamp'] || headers['Webhook-Timestamp'];
+  const webhookSignature = headers['webhook-signature'] || headers['Webhook-Signature'];
   
-  if (!signature) {
-    throw new Error('No signature header found');
+  if (!webhookId || !webhookTimestamp || !webhookSignature) {
+    console.error('[Polar Webhook] Missing required headers:', {
+      'webhook-id': webhookId,
+      'webhook-timestamp': webhookTimestamp,
+      'webhook-signature': webhookSignature
+    });
+    throw new Error('Missing required webhook headers');
   }
   
-  // Extract timestamp and signature from header
-  const parts = signature.split(',');
-  let timestamp = '';
-  let receivedSig = '';
+  // Decode base64 secret (remove whsec_ prefix if present)
+  const secretKey = secret.startsWith('whsec_') ? secret.slice(6) : secret;
+  const decodedSecret = Uint8Array.from(atob(secretKey), c => c.charCodeAt(0));
   
-  for (const part of parts) {
-    const [key, value] = part.split('=');
-    if (key === 't') timestamp = value;
-    if (key === 'v1') receivedSig = value;
-  }
-  
-  if (!timestamp || !receivedSig) {
-    throw new Error('Invalid signature format');
-  }
-  
-  // Create the signed payload
-  const signedPayload = `${timestamp}.${body}`;
+  // Create the signed content: msg_id.timestamp.payload
+  const signedContent = `${webhookId}.${webhookTimestamp}.${body}`;
   
   // Use Web Crypto API to compute HMAC
   const encoder = new TextEncoder();
   const key = await crypto.subtle.importKey(
     'raw',
-    encoder.encode(secret),
+    decodedSecret,
     { name: 'HMAC', hash: 'SHA-256' },
     false,
     ['sign']
   );
   
-  const signature_bytes = await crypto.subtle.sign(
+  const signatureBytes = await crypto.subtle.sign(
     'HMAC',
     key,
-    encoder.encode(signedPayload)
+    encoder.encode(signedContent)
   );
   
-  // Convert to hex string
-  const computedSig = Array.from(new Uint8Array(signature_bytes))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
+  // Convert to base64
+  const computedSignature = btoa(String.fromCharCode(...new Uint8Array(signatureBytes)));
+  const expectedSig = `v1,${computedSignature}`;
   
-  // Compare signatures
-  if (computedSig !== receivedSig) {
+  // Extract signatures from header (can be space-delimited)
+  const signatures = webhookSignature.split(' ');
+  let isValid = false;
+  
+  for (const sig of signatures) {
+    if (sig === expectedSig) {
+      isValid = true;
+      break;
+    }
+  }
+  
+  if (!isValid) {
+    console.error('[Polar Webhook] Signature verification failed');
     throw new Error('Invalid signature');
+  }
+  
+  // Check timestamp to prevent replay attacks (5 minute window)
+  const timestamp = parseInt(webhookTimestamp);
+  const currentTime = Math.floor(Date.now() / 1000);
+  if (Math.abs(currentTime - timestamp) > 300) {
+    throw new Error('Webhook timestamp too old');
   }
   
   // Parse and return the event
@@ -70,6 +84,9 @@ export const handlePolarWebhook = httpAction(async (ctx, request) => {
     request.headers.forEach((value, key) => {
       headers[key] = value;
     });
+    
+    // Log all headers for debugging
+    console.log("[Polar Webhook] Received headers:", headers);
     
     // Verify webhook signature and parse the event
     const event = await verifyPolarWebhook(
