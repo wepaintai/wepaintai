@@ -9,6 +9,7 @@ import { Id } from '../../convex/_generated/dataModel'
 import { Layer as LayerType } from './ToolPanel'
 import { useQuery, useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
+import { shouldShowAdminFeatures } from '../utils/environment'
 
 const average = (a: number, b: number): number => (a + b) / 2
 
@@ -131,6 +132,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   const pendingStrokeIdsRef = useRef<Map<string, Id<"strokes"> | null>>(new Map())
   // Cursor position for brush size indicator
   const [cursorPosition, setCursorPosition] = useState<Point | null>(null)
+  // Track if mouse is over the canvas stage
+  const [isMouseOverCanvas, setIsMouseOverCanvas] = useState(false)
   // Eraser masks for image layers - maps layer ID to array of eraser strokes
   const [imageMasks, setImageMasks] = useState<Map<string, LocalStroke[]>>(new Map())
 
@@ -147,13 +150,13 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   } = usePaintingSession(sessionId)
   
   // Debug log strokes
-  useEffect(() => {
-    console.log('[KonvaCanvas] strokes updated:', {
-      sessionId,
-      strokesLength: strokes?.length || 0,
-      strokes: strokes?.slice(0, 2) // Log first 2 strokes
-    })
-  }, [strokes, sessionId])
+  // useEffect(() => {
+  //   console.log('[KonvaCanvas] strokes updated:', {
+  //     sessionId,
+  //     strokesLength: strokes?.length || 0,
+  //     strokes: strokes?.slice(0, 2) // Log first 2 strokes
+  //   })
+  // }, [strokes, sessionId])
 
   // Use the session images hook
   const { images } = useSessionImages(sessionId)
@@ -564,9 +567,29 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     return () => document.removeEventListener('pointerup', handleGlobalPointerUp)
   }, [isDrawing, currentStroke, color, size, opacity, addStrokeToSession, onStrokeEnd, selectedTool, activeLayerId])
 
-  // Handle pointer leave - hide cursor
+  // Handle pointer leave - hide cursor  
   const handlePointerLeave = useCallback(() => {
-    setCursorPosition(null)
+    // Stage pointer leave handled by container div now
+  }, [])
+
+  // Handle document mouse leave - hide cursor when mouse leaves window
+  useEffect(() => {
+    const handleDocumentMouseLeave = (e: MouseEvent) => {
+      // Check if mouse is leaving the document/window
+      if (e.clientY <= 0 || e.clientX <= 0 || 
+          e.clientX >= window.innerWidth || e.clientY >= window.innerHeight) {
+        setCursorPosition(null)
+        setIsMouseOverCanvas(false)
+      }
+    }
+
+    document.addEventListener('mouseleave', handleDocumentMouseLeave)
+    document.addEventListener('mouseout', handleDocumentMouseLeave)
+    
+    return () => {
+      document.removeEventListener('mouseleave', handleDocumentMouseLeave)
+      document.removeEventListener('mouseout', handleDocumentMouseLeave)
+    }
   }, [])
 
   // Expose methods via ref
@@ -598,16 +621,16 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       
       try {
         // Log current state
-        console.log('[KonvaCanvas] getImageData called')
-        console.log('[KonvaCanvas] Stage dimensions:', stage.width(), 'x', stage.height())
-        console.log('[KonvaCanvas] Number of layers:', stage.children.length)
-        console.log('[KonvaCanvas] Visible layers:', stage.children.filter(l => l.visible()).length)
+        // console.log('[KonvaCanvas] getImageData called')
+        // console.log('[KonvaCanvas] Stage dimensions:', stage.width(), 'x', stage.height())
+        // console.log('[KonvaCanvas] Number of layers:', stage.children.length)
+        // console.log('[KonvaCanvas] Visible layers:', stage.children.filter(l => l.visible()).length)
         // Note: strokes array might be empty here due to closure, but the rendered paths are what matters
         
         // Log what's actually rendered in each layer
         stage.children.forEach((layer, idx) => {
           const childCount = layer.children.length
-          console.log(`[KonvaCanvas] Layer ${idx}: visible=${layer.visible()}, opacity=${layer.opacity()}, children=${childCount}`)
+          // console.log(`[KonvaCanvas] Layer ${idx}: visible=${layer.visible()}, opacity=${layer.opacity()}, children=${childCount}`)
           
           // Log first few children details
           if (childCount > 0) {
@@ -636,7 +659,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
           
           // Get data URL from temp canvas
           const dataUrl = tempCanvas.toDataURL('image/png')
-          console.log('[KonvaCanvas] Data URL with white background length:', dataUrl.length)
+          // console.log('[KonvaCanvas] Data URL with white background length:', dataUrl.length)
           return dataUrl
         }
         
@@ -645,8 +668,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
           pixelRatio: 1,
           mimeType: 'image/png'
         })
-        console.log('[KonvaCanvas] Data URL length:', dataUrl.length)
-        console.log('[KonvaCanvas] Data URL preview:', dataUrl.substring(0, 100))
+        // console.log('[KonvaCanvas] Data URL length:', dataUrl.length)
+        // console.log('[KonvaCanvas] Data URL preview:', dataUrl.substring(0, 100))
         
         
         return dataUrl
@@ -658,7 +681,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     getDimensions: () => dimensions,
     forceRedraw: () => {
       // Force redraw all layers
-      console.log('[KonvaCanvas] forceRedraw called')
+      // console.log('[KonvaCanvas] forceRedraw called')
       strokeLayerRef.current?.batchDraw()
       imageLayerRef.current?.batchDraw()
       aiImageLayerRef.current?.batchDraw()
@@ -676,8 +699,58 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     return layers.find(l => l.id === layerId) || null
   }
 
+  // Enforce correct layer ordering when layers change
+  useEffect(() => {
+    // Wait a bit for all layers to be rendered
+    const timer = setTimeout(() => {
+      const stage = stageRef.current
+      if (!stage) return
+      
+      // Log current layer state
+      // console.log('[KonvaCanvas] Checking layer order after change:', {
+      //   layerCount: layers.length,
+      //   layers: layers.map(l => ({ 
+      //     id: l.id, 
+      //     type: l.type, 
+      //     order: l.order,
+      //     name: l.name 
+      //   })).sort((a, b) => a.order - b.order)
+      // })
+      
+      // Force a redraw
+      stage.batchDraw()
+    }, 100)
+    
+    return () => clearTimeout(timer)
+  }, [layers])
+
   return (
-    <div ref={containerRef} className="relative w-full h-full">
+    <div 
+      ref={containerRef} 
+      className="relative w-full h-full"
+      onMouseEnter={() => setIsMouseOverCanvas(true)}
+      onMouseLeave={() => {
+        setIsMouseOverCanvas(false)
+        setCursorPosition(null)
+      }}
+    >
+      {/* Debug overlay to show layer order */}
+      {process.env.NODE_ENV === 'development' && shouldShowAdminFeatures() && (
+        <div className="absolute top-2 right-2 bg-black/80 text-white text-xs p-2 z-50 rounded">
+          <div className="font-bold mb-1">Layer Render Order:</div>
+          {layers
+            .sort((a, b) => a.order - b.order)
+            .map((layer, idx) => (
+              <div key={layer.id} className="flex items-center gap-2">
+                <span className="text-gray-400">{idx}:</span>
+                <span className={layer.type === 'stroke' || layer.type === 'paint' ? 'text-blue-400' : layer.type === 'ai-image' ? 'text-purple-400' : 'text-green-400'}>
+                  {layer.name}
+                </span>
+                <span className="text-gray-500">(order: {layer.order})</span>
+              </div>
+            ))}
+        </div>
+      )}
       <Stage
         ref={stageRef}
         width={dimensions.width}
@@ -691,8 +764,20 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
         {/* Render layers in order */}
         {layers
           .sort((a, b) => a.order - b.order)
-          .map((layer) => {
+          .map((layer, renderIndex) => {
             if (!layer.visible) return null
+            
+            // Debug logging for layer order issues
+            // console.log(`[KonvaCanvas] Rendering layer ${renderIndex}:`, {
+            //   id: layer.id,
+            //   type: layer.type,
+            //   name: layer.name,
+            //   order: layer.order,
+            //   visible: layer.visible,
+            //   opacity: layer.opacity,
+            //   isPaintLayer: layer.type === 'stroke' || layer.type === 'paint',
+            //   isAILayer: layer.type === 'ai-image'
+            // })
 
             // Paint layer (supports both 'stroke' for backward compatibility and 'paint' for new multi-layer)
             if (layer.type === 'stroke' || layer.type === 'paint') {
@@ -703,18 +788,32 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                 ? strokes.filter(stroke => stroke.layerId === layer.id)
                 : strokes.filter(stroke => !stroke.layerId) // Show only strokes without layerId on the default stroke layer
               
-              console.log('[KonvaCanvas] Rendering paint layer:', {
-                layerId: layer.id,
-                layerType: layer.type,
-                allStrokesCount: strokes.length,
-                layerStrokesCount: layerStrokes.length,
-                firstStrokeLayerId: strokes[0]?.layerId,
-                strokesWithoutLayerId: strokes.filter(s => !s.layerId).length,
-                strokesWithLayerId: strokes.filter(s => s.layerId).length
-              })
+              // console.log('[KonvaCanvas] Rendering paint layer:', {
+              //   layerId: layer.id,
+              //   layerType: layer.type,
+              //   allStrokesCount: strokes.length,
+              //   layerStrokesCount: layerStrokes.length,
+              //   firstStrokeLayerId: strokes[0]?.layerId,
+              //   strokesWithoutLayerId: strokes.filter(s => !s.layerId).length,
+              //   strokesWithLayerId: strokes.filter(s => s.layerId).length
+              // })
                 
+              // Debug: Log when rendering paint layer
+              // console.log('[KonvaCanvas] Rendering paint layer with strokes:', {
+              //   layerId: layer.id,
+              //   strokeCount: layerStrokes.length,
+              //   opacity: layer.opacity,
+              //   renderIndex,
+              //   totalLayersCount: layers.length
+              // })
+              
               return (
-                <Layer key={layer.id} ref={strokeLayerRef} listening={selectedTool === 'pan'} opacity={layer.opacity}>
+                <Layer 
+                  key={layer.id} 
+                  ref={strokeLayerRef} 
+                  listening={selectedTool === 'pan'} 
+                  opacity={layer.opacity}
+                >
                   {/* Render confirmed strokes */}
                   {layerStrokes
                     .sort((a, b) => a.strokeOrder - b.strokeOrder)
@@ -736,6 +835,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                           fill={stroke.isEraser ? '#000000' : stroke.brushColor}
                           opacity={stroke.opacity}
                           globalCompositeOperation={stroke.isEraser ? 'destination-out' : 'source-over'}
+                          perfectDrawEnabled={false}
                         />
                       )
                     })}
@@ -785,7 +885,12 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
               if (!image || !loadedImage) return null
               
               return (
-                <Layer key={layer.id} ref={layer.id === images?.[0]?._id ? imageLayerRef : undefined} listening={selectedTool === 'pan'} opacity={layer.opacity}>
+                <Layer 
+                  key={layer.id} 
+                  ref={layer.id === images?.[0]?._id ? imageLayerRef : undefined} 
+                  listening={selectedTool === 'pan'} 
+                  opacity={layer.opacity}
+                >
                   <Group>
                     <KonvaImage
                       id={layer.id}
@@ -797,7 +902,6 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       rotation={image.rotation}
                       offsetX={image.width / 2}
                       offsetY={image.height / 2}
-                      opacity={image.opacity}
                       draggable={selectedTool === 'pan'}
                       onDragEnd={async (e) => {
                         const node = e.target
@@ -851,8 +955,22 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
               
               if (!aiImage || !loadedImage) return null
               
+              // Debug: Log when rendering AI layer
+              // console.log('[KonvaCanvas] Rendering AI image layer:', {
+              //   layerId: layer.id,
+              //   imageExists: !!loadedImage,
+              //   opacity: layer.opacity,
+              //   renderIndex,
+              //   imageOpacity: aiImage?.opacity
+              // })
+              
               return (
-                <Layer key={layer.id} ref={layer.id === aiImages?.[0]?._id ? aiImageLayerRef : undefined} listening={selectedTool === 'pan'} opacity={layer.opacity}>
+                <Layer 
+                  key={layer.id} 
+                  ref={layer.id === aiImages?.[0]?._id ? aiImageLayerRef : undefined} 
+                  listening={selectedTool === 'pan'} 
+                  opacity={layer.opacity}
+                >
                   <Group>
                     <KonvaImage
                       id={layer.id}
@@ -864,7 +982,6 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       rotation={aiImage.rotation}
                       offsetX={aiImage.width / 2}
                       offsetY={aiImage.height / 2}
-                      opacity={aiImage.opacity}
                       draggable={selectedTool === 'pan'}
                       onDragEnd={async (e) => {
                         const node = e.target
@@ -997,7 +1114,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
             })}
             
             {/* Cursor size indicator */}
-            {cursorPosition && (selectedTool === 'brush' || selectedTool === 'eraser') && (
+            {cursorPosition && isMouseOverCanvas && (selectedTool === 'brush' || selectedTool === 'eraser') && (
               <Circle
                 x={cursorPosition.x}
                 y={cursorPosition.y}

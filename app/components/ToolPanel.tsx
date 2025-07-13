@@ -22,7 +22,8 @@ import {
   GripVertical,
   Hand,
   Eraser,
-  Plus
+  Plus,
+  PlusCircle
 } from 'lucide-react'
 import { AuthModal } from './AuthModal'
 import { useAuth, useUser } from '@clerk/tanstack-start'
@@ -901,6 +902,17 @@ export function ToolPanel({
           >
             <User className="w-4 h-4" />
             Account
+          </button>
+          <button
+            className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors flex items-center gap-2"
+            onClick={() => {
+              setShowMenu(false)
+              // Navigate to a new canvas session
+              window.location.href = window.location.origin
+            }}
+          >
+            <PlusCircle className="w-4 h-4" />
+            New Canvas
           </button>
           <div className="border-t border-white/20 my-1" />
           <button

@@ -396,6 +396,6 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     clearLiveStrokeForUser,
     
     // State
-    isLoading: session === undefined || authenticatedUser === undefined,
+    isLoading: sessionId !== null && (session === undefined || authenticatedUser === undefined),
   };
 }

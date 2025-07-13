@@ -18,7 +18,7 @@ interface CheckoutResult {
 // Create a Polar checkout session
 export const createCheckout = action({
   args: {
-    productId: v.string(),
+    productId: v.string(), // Polar product UUID from environment variables
     tokens: v.number(),
   },
   handler: async (ctx, args): Promise<CheckoutResult> => {
@@ -38,9 +38,12 @@ export const createCheckout = action({
       throw new Error("Polar API key not configured");
     }
 
+    // Get API base URL (defaults to sandbox if not set)
+    const polarApiBaseUrl = process.env.POLAR_API_BASE_URL || 'https://sandbox-api.polar.sh';
+
     try {
       // Create checkout session with Polar
-      const response = await fetch("https://api.polar.sh/v1/checkouts", {
+      const response = await fetch(`${polarApiBaseUrl}/v1/checkouts`, {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${polarApiKey}`,
@@ -102,15 +105,25 @@ export const getTokenPackages = action({
   args: {},
   handler: async (ctx): Promise<TokenPackage[]> => {
     // For now, return hardcoded packages. Later this could fetch from Polar
+    // These are display-only - actual product IDs come from environment variables
     return [
       {
-        id: "prod_100_tokens",
-        name: "100 Token Pack",
-        tokens: 100,
+        id: "50_tokens",
+        name: "50 Token Pack",
+        tokens: 50,
+        price: 499, // in cents
+        currency: "USD",
+        description: "",
+        pricePerToken: 0.10, // $4.99 / 50 tokens
+      },
+      {
+        id: "125_tokens",
+        name: "125 Token Pack",
+        tokens: 125,
         price: 999, // in cents
         currency: "USD",
-        description: "Generate up to 100 AI images",
-        pricePerToken: 0.10,
+        description: "",
+        pricePerToken: 0.08, // $9.99 / 125 tokens
       },
     ];
   },

@@ -14,9 +14,48 @@ export const createSession = mutation({
   },
   returns: v.id("paintingSessions"),
   handler: async (ctx, args) => {
-    // Get the authenticated user ID if available
-    const identity = await ctx.auth.getUserIdentity();
-    const userId = identity?.subject as Id<"users"> | undefined;
+    let userId: Id<"users"> | undefined = undefined;
+    
+    try {
+      // Get the authenticated user ID if available
+      const identity = await ctx.auth.getUserIdentity();
+      
+      if (identity) {
+        // Find the user by their Clerk ID
+        const user = await ctx.db
+          .query("users")
+          .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+          .first();
+        
+        if (user) {
+          userId = user._id;
+        } else {
+          // Create the user if they don't exist
+          userId = await ctx.db.insert("users", {
+            clerkId: identity.subject,
+            email: identity.email,
+            name: identity.name || identity.givenName || identity.email?.split("@")[0] || "User",
+            tokens: 10, // Initial 10 tokens for new users
+            lifetimeTokensUsed: 0,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          });
+          
+          // Record initial token grant
+          await ctx.db.insert("tokenTransactions", {
+            userId,
+            type: "initial",
+            amount: 10,
+            balance: 10,
+            description: "Welcome bonus - 10 free tokens",
+            createdAt: Date.now(),
+          });
+        }
+      }
+    } catch (error) {
+      // Log error but continue - allow guest users to create sessions
+      console.error("[createSession] Error getting/creating user:", error);
+    }
     
     const sessionId = await ctx.db.insert("paintingSessions", {
       name: args.name,
