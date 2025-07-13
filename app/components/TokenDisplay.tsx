@@ -12,6 +12,7 @@ export function TokenDisplay({ className = '' }: TokenDisplayProps) {
   const { userId } = useAuth()
   const [showPurchaseModal, setShowPurchaseModal] = useState(false)
   const [purchasing, setPurchasing] = useState(false)
+  const [selectedProduct, setSelectedProduct] = useState<'50' | '125'>('125')
   
   // Always call hooks in the same order - this is a React requirement
   const tokenBalance = useQuery(api.tokens.getTokenBalance)
@@ -26,9 +27,24 @@ export function TokenDisplay({ className = '' }: TokenDisplayProps) {
     
     setPurchasing(true)
     try {
+      const productConfig = selectedProduct === '50' 
+        ? { 
+            productId: import.meta.env.VITE_POLAR_PRODUCT_ID_50,
+            tokens: 50 
+          }
+        : { 
+            productId: import.meta.env.VITE_POLAR_PRODUCT_ID_125,
+            tokens: 125 
+          }
+      
+      if (!productConfig.productId) {
+        alert(`Product ID for ${selectedProduct} token pack not configured. Please contact support.`)
+        return
+      }
+      
       const { checkoutUrl } = await createCheckout({
-        productId: import.meta.env.VITE_POLAR_PRODUCT_ID || 'prod_100_tokens',
-        tokens: 125,
+        productId: productConfig.productId,
+        tokens: productConfig.tokens,
       })
       
       // Redirect to Polar checkout
@@ -79,15 +95,43 @@ export function TokenDisplay({ className = '' }: TokenDisplayProps) {
                 </div>
               </div>
               
-              <div className="border-2 border-blue-500 rounded-lg p-4 bg-blue-50">
-                <div className="flex justify-between items-center mb-2">
-                  <div>
-                    <h3 className="font-semibold">125 Token Pack</h3>
+              <div className="space-y-3">
+                <button
+                  onClick={() => setSelectedProduct('50')}
+                  className={`w-full border-2 rounded-lg p-4 transition-all ${
+                    selectedProduct === '50' 
+                      ? 'border-blue-500 bg-blue-50' 
+                      : 'border-gray-300 bg-white hover:border-gray-400'
+                  }`}
+                >
+                  <div className="flex justify-between items-center">
+                    <div className="text-left">
+                      <h3 className="font-semibold">50 Token Pack</h3>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-2xl font-bold text-blue-600">$4.99</div>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <div className="text-2xl font-bold text-blue-600">$9.99</div>
+                </button>
+                
+                <button
+                  onClick={() => setSelectedProduct('125')}
+                  className={`w-full border-2 rounded-lg p-4 transition-all ${
+                    selectedProduct === '125' 
+                      ? 'border-blue-500 bg-blue-50' 
+                      : 'border-gray-300 bg-white hover:border-gray-400'
+                  }`}
+                >
+                  <div className="flex justify-between items-center">
+                    <div className="text-left">
+                      <h3 className="font-semibold">125 Token Pack</h3>
+                      <p className="text-sm text-green-600 font-medium">Best Value</p>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-2xl font-bold text-blue-600">$9.99</div>
+                    </div>
                   </div>
-                </div>
+                </button>
               </div>
               
               <div className="flex gap-3">

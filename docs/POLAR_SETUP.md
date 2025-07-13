@@ -9,7 +9,15 @@
 
 1. Log in to your Polar dashboard
 2. Navigate to Products
-3. Create a new product:
+3. Create two products:
+   
+   **Product 1:**
+   - Name: "50 Token Pack"
+   - Price: $4.99
+   - Type: One-time purchase
+   - Description: "50 tokens for AI image generation"
+   
+   **Product 2:**
    - Name: "125 Token Pack"
    - Price: $9.99
    - Type: One-time purchase
@@ -36,7 +44,8 @@
 
 ### In your `.env.local` file (for local development):
 ```env
-VITE_POLAR_PRODUCT_ID=prod_xxxxx  # Your product ID from Polar
+VITE_POLAR_PRODUCT_ID_50=prod_xxxxx  # Your 50 token product ID from Polar
+VITE_POLAR_PRODUCT_ID_125=prod_xxxxx  # Your 125 token product ID from Polar
 VITE_APP_URL=https://dev.wepaint.ai  # Your app URL
 ```
 
@@ -94,8 +103,15 @@ For development and testing, you can use Polar's sandbox environment:
 2. Create a new account (separate from production)
 3. Create a new organization for testing
 
-### Step 2: Create Test Product
+### Step 2: Create Test Products
 1. In sandbox dashboard, create the same product structure:
+   
+   **Product 1:**
+   - Name: "50 Token Pack"
+   - Price: $4.99
+   - Type: One-time purchase
+   
+   **Product 2:**
    - Name: "125 Token Pack"
    - Price: $9.99
    - Type: One-time purchase
