@@ -2,7 +2,62 @@ import { httpAction, internalMutation, internalQuery } from "./_generated/server
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
-import { validateEvent, WebhookVerificationError } from "@polar-sh/sdk/webhooks";
+
+// Custom webhook verification for Convex environment
+async function verifyPolarWebhook(body: string, headers: Record<string, string>, secret: string) {
+  const signature = headers['x-polar-signature'] || headers['X-Polar-Signature'];
+  
+  if (!signature) {
+    throw new Error('No signature header found');
+  }
+  
+  // Extract timestamp and signature from header
+  const parts = signature.split(',');
+  let timestamp = '';
+  let receivedSig = '';
+  
+  for (const part of parts) {
+    const [key, value] = part.split('=');
+    if (key === 't') timestamp = value;
+    if (key === 'v1') receivedSig = value;
+  }
+  
+  if (!timestamp || !receivedSig) {
+    throw new Error('Invalid signature format');
+  }
+  
+  // Create the signed payload
+  const signedPayload = `${timestamp}.${body}`;
+  
+  // Use Web Crypto API to compute HMAC
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  
+  const signature_bytes = await crypto.subtle.sign(
+    'HMAC',
+    key,
+    encoder.encode(signedPayload)
+  );
+  
+  // Convert to hex string
+  const computedSig = Array.from(new Uint8Array(signature_bytes))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+  
+  // Compare signatures
+  if (computedSig !== receivedSig) {
+    throw new Error('Invalid signature');
+  }
+  
+  // Parse and return the event
+  return JSON.parse(body);
+}
 
 // Polar webhook handler
 export const handlePolarWebhook = httpAction(async (ctx, request) => {
@@ -10,14 +65,14 @@ export const handlePolarWebhook = httpAction(async (ctx, request) => {
   const rawBody = await request.text();
   
   try {
-    // Parse headers into a plain object for the SDK
+    // Parse headers into a plain object
     const headers: Record<string, string> = {};
     request.headers.forEach((value, key) => {
       headers[key] = value;
     });
     
-    // Use Polar SDK to validate and parse the event
-    const event = validateEvent(
+    // Verify webhook signature and parse the event
+    const event = await verifyPolarWebhook(
       rawBody,
       headers,
       process.env.POLAR_WEBHOOK_SECRET || ''
@@ -97,7 +152,7 @@ export const handlePolarWebhook = httpAction(async (ctx, request) => {
     return new Response("OK", { status: 200 });
     
   } catch (error) {
-    if (error instanceof WebhookVerificationError) {
+    if (error instanceof Error && (error.message.includes('signature') || error.message.includes('Invalid signature'))) {
       console.error("[Polar Webhook] Verification failed:", error.message);
       return new Response("Unauthorized", { status: 401 });
     }
