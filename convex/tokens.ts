@@ -153,6 +153,23 @@ export const creditTokensFromPurchase = internalMutation({
     description: v.string(),
   },
   handler: async (ctx, args) => {
+    // Check if transaction already exists for this checkout (duplicate prevention)
+    const existingTransaction = await ctx.db
+      .query("tokenTransactions")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .filter((q) => 
+        q.and(
+          q.eq(q.field("type"), "purchase"),
+          q.eq(q.field("metadata.polarCheckoutId"), args.polarCheckoutId)
+        )
+      )
+      .first();
+      
+    if (existingTransaction) {
+      console.log(`[Tokens] Transaction already exists for checkout: ${args.polarCheckoutId}`);
+      return { newBalance: existingTransaction.balance };
+    }
+
     const user = await ctx.db.get(args.userId);
     if (!user) {
       throw new Error("User not found");

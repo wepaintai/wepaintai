@@ -149,30 +149,8 @@ export const handlePolarWebhook = httpAction(async (ctx, request) => {
     const { type, data } = event;
     
     if (type === "checkout.created") {
-      // Handle checkout creation
+      // Just log and acknowledge - purchase record already created in polar.ts
       console.log("[Polar Webhook] Checkout created:", data.id);
-      
-      // Extract metadata with fallback values
-      const metadata = (data as any).metadata || {};
-      const userId = metadata.userId;
-      const tokens = metadata.tokens || 0;
-      
-      if (!userId) {
-        console.error("[Polar Webhook] Missing userId in metadata");
-        return new Response("Bad Request", { status: 400 });
-      }
-      
-      // Create pending purchase record
-      await ctx.runMutation(internal.polarWebhook.createPendingPurchase, {
-        userId,
-        checkoutId: data.id,
-        productId: (data as any).product_id || "",
-        productName: `${tokens} Token Pack`,
-        amount: (data as any).amount || 0,
-        currency: (data as any).currency || "usd",
-        tokens,
-      });
-      
       return new Response("OK", { status: 200 });
     }
     
@@ -191,6 +169,12 @@ export const handlePolarWebhook = httpAction(async (ctx, request) => {
         if (!purchase) {
           console.error("[Polar Webhook] Purchase record not found for checkout:", checkoutData.id);
           return new Response("Purchase not found", { status: 404 });
+        }
+        
+        // Check if already completed (idempotency check)
+        if (purchase.status === "completed") {
+          console.log(`[Polar Webhook] Purchase already completed for checkout: ${checkoutData.id}`);
+          return new Response("OK", { status: 200 });
         }
         
         // Mark purchase as completed
