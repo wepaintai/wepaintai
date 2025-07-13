@@ -201,10 +201,6 @@ export function LibraryModal({ isOpen, onClose, onCreateNew }: LibraryModalProps
                         <ImageIcon className="w-12 h-12 text-white/20" />
                       </div>
                     )}
-                    {/* Stroke count badge */}
-                    <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-sm px-2 py-1 rounded text-xs text-white/60">
-                      {session.strokeCounter} strokes
-                    </div>
                   </div>
 
                   {/* Info */}

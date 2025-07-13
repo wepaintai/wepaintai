@@ -159,7 +159,7 @@ export function PaintingView() {
     sessionId: sessionId || undefined,
     canvasRef,
     interval: 30000, // Generate thumbnail every 30 seconds
-    enabled: !!sessionId && !!canvasRef.current
+    enabled: !!sessionId
   })
   const paintLayerSettings = useQuery(api.paintLayer.getPaintLayerSettings, sessionId ? { sessionId } : 'skip')
   
@@ -281,6 +281,12 @@ export function PaintingView() {
       setHistory(newHistory)
       setHistoryIndex(newHistory.length - 1)
     }
+    
+    // Generate thumbnail after stroke ends
+    setTimeout(() => {
+      console.log('[PaintingView] Triggering thumbnail generation after stroke')
+      generateThumbnail()
+    }, 1000)
   }
 
   const handleUndo = async () => {
