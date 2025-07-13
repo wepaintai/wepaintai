@@ -909,6 +909,21 @@ export function ToolPanel({
             <User className="w-4 h-4" />
             Account
           </button>
+          <button
+            className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors flex items-center gap-2"
+            onClick={() => {
+              setShowMenu(false)
+              // Clear the session parameter to create a new one
+              const url = new URL(window.location.href);
+              url.searchParams.delete('session');
+              window.history.pushState({}, '', url.toString());
+              // Reload to trigger new session creation
+              window.location.reload();
+            }}
+          >
+            <PlusCircle className="w-4 h-4" />
+            New Canvas
+          </button>
           {effectiveIsSignedIn ? (
             <button
               className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors flex items-center gap-2"
@@ -920,19 +935,7 @@ export function ToolPanel({
               <Library className="w-4 h-4" />
               Library
             </button>
-          ) : (
-            <button
-              className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors flex items-center gap-2"
-              onClick={() => {
-                setShowMenu(false)
-                // Navigate to a new canvas session
-                window.location.href = window.location.origin
-              }}
-            >
-              <PlusCircle className="w-4 h-4" />
-              New Canvas
-            </button>
-          )}
+          ) : null}
           <div className="border-t border-white/20 my-1" />
           <button
             className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors"

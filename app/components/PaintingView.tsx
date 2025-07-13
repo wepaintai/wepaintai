@@ -529,6 +529,19 @@ export function PaintingView() {
     return allLayers
   }, [strokes, images, aiImages, paintingLayerVisible, paintingLayerOrder, paintLayers])
 
+  // Update activeLayerId when layers change (especially important for new sessions)
+  useEffect(() => {
+    // If activeLayerId is still the default 'painting-layer' but we have actual paint layers
+    if (activeLayerId === 'painting-layer' && layers.length > 0) {
+      const firstPaintLayer = layers.find(l => l.type === 'paint' || l.type === 'stroke')
+      if (firstPaintLayer && firstPaintLayer.id !== 'painting-layer') {
+        console.log('[PaintingView] Updating activeLayerId from default to:', firstPaintLayer.id)
+        setActiveLayerId(firstPaintLayer.id)
+        setActivePaintLayerId(firstPaintLayer.id)
+      }
+    }
+  }, [layers, activeLayerId])
+
   // Handle layer operations
   const handleLayerVisibilityChange = useCallback(async (layerId: string, visible: boolean) => {
     // Check if it's the old single painting layer
