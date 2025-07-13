@@ -19,46 +19,95 @@ async function verifyPolarWebhook(body: string, headers: Record<string, string>,
     throw new Error('Missing required webhook headers');
   }
   
-  // Decode base64 secret (remove whsec_ prefix if present)
-  const secretKey = secret.startsWith('whsec_') ? secret.slice(6) : secret;
-  const decodedSecret = Uint8Array.from(atob(secretKey), c => c.charCodeAt(0));
+  // Try multiple secret formats
+  console.log('[Polar Webhook] Secret format check:', {
+    hasWhsecPrefix: secret.startsWith('whsec_'),
+    length: secret.length,
+    preview: secret.substring(0, 10) + '...'
+  });
+  
+  // We'll try multiple approaches for the secret
+  const encoder = new TextEncoder();
+  const secretsToTry = [];
+  
+  // 1. Raw secret as-is
+  secretsToTry.push(encoder.encode(secret));
+  
+  // 2. Secret without whsec_ prefix if present
+  if (secret.startsWith('whsec_')) {
+    const withoutPrefix = secret.slice(6);
+    secretsToTry.push(encoder.encode(withoutPrefix));
+    
+    // 3. Base64 decoded version of secret without prefix
+    try {
+      const decoded = Uint8Array.from(atob(withoutPrefix), c => c.charCodeAt(0));
+      secretsToTry.push(decoded);
+    } catch (e) {
+      console.log('[Polar Webhook] Could not base64 decode secret without prefix');
+    }
+  }
+  
+  // 4. Base64 decoded version of full secret
+  try {
+    const decoded = Uint8Array.from(atob(secret), c => c.charCodeAt(0));
+    secretsToTry.push(decoded);
+  } catch (e) {
+    console.log('[Polar Webhook] Could not base64 decode full secret');
+  }
   
   // Create the signed content: msg_id.timestamp.payload
   const signedContent = `${webhookId}.${webhookTimestamp}.${body}`;
   
-  // Use Web Crypto API to compute HMAC
-  const encoder = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    'raw',
-    decodedSecret,
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
+  console.log('[Polar Webhook] Signed content preview:', signedContent.substring(0, 100) + '...');
   
-  const signatureBytes = await crypto.subtle.sign(
-    'HMAC',
-    key,
-    encoder.encode(signedContent)
-  );
-  
-  // Convert to base64
-  const computedSignature = btoa(String.fromCharCode(...new Uint8Array(signatureBytes)));
-  const expectedSig = `v1,${computedSignature}`;
-  
-  // Extract signatures from header (can be space-delimited)
-  const signatures = webhookSignature.split(' ');
+  // Try each secret format
   let isValid = false;
+  let validSignature = '';
   
-  for (const sig of signatures) {
-    if (sig === expectedSig) {
-      isValid = true;
-      break;
+  for (let i = 0; i < secretsToTry.length; i++) {
+    try {
+      const key = await crypto.subtle.importKey(
+        'raw',
+        secretsToTry[i],
+        { name: 'HMAC', hash: 'SHA-256' },
+        false,
+        ['sign']
+      );
+      
+      const signatureBytes = await crypto.subtle.sign(
+        'HMAC',
+        key,
+        encoder.encode(signedContent)
+      );
+      
+      // Convert to base64
+      const computedSignature = btoa(String.fromCharCode(...new Uint8Array(signatureBytes)));
+      const expectedSig = `v1,${computedSignature}`;
+      
+      console.log(`[Polar Webhook] Try ${i + 1} - Computed:`, expectedSig);
+      
+      // Extract signatures from header (can be space-delimited)
+      const signatures = webhookSignature.split(' ');
+      
+      for (const sig of signatures) {
+        if (sig === expectedSig) {
+          isValid = true;
+          validSignature = expectedSig;
+          console.log(`[Polar Webhook] Signature matched with secret format ${i + 1}`);
+          break;
+        }
+      }
+      
+      if (isValid) break;
+    } catch (e) {
+      console.log(`[Polar Webhook] Failed to compute signature with format ${i + 1}:`, e);
     }
   }
   
   if (!isValid) {
     console.error('[Polar Webhook] Signature verification failed');
+    console.error('[Polar Webhook] Received:', webhookSignature);
+    console.error('[Polar Webhook] None of the computed signatures matched');
     throw new Error('Invalid signature');
   }
   
