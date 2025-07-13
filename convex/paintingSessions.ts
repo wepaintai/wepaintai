@@ -19,6 +19,7 @@ export const createSession = mutation({
     try {
       // Get the authenticated user ID if available
       const identity = await ctx.auth.getUserIdentity();
+      console.log("[createSession] Identity:", identity ? { subject: identity.subject, email: identity.email } : null);
       
       if (identity) {
         // Find the user by their Clerk ID
@@ -27,10 +28,13 @@ export const createSession = mutation({
           .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
           .first();
         
+        console.log("[createSession] Found user:", user ? { _id: user._id, email: user.email } : null);
+        
         if (user) {
           userId = user._id;
         } else {
           // Create the user if they don't exist
+          console.log("[createSession] Creating new user for:", identity.email);
           userId = await ctx.db.insert("users", {
             clerkId: identity.subject,
             email: identity.email,
@@ -40,6 +44,7 @@ export const createSession = mutation({
             createdAt: Date.now(),
             updatedAt: Date.now(),
           });
+          console.log("[createSession] Created user with ID:", userId);
           
           // Record initial token grant
           await ctx.db.insert("tokenTransactions", {
@@ -51,6 +56,8 @@ export const createSession = mutation({
             createdAt: Date.now(),
           });
         }
+      } else {
+        console.log("[createSession] No identity found - creating guest session");
       }
     } catch (error) {
       // Log error but continue - allow guest users to create sessions
@@ -67,6 +74,8 @@ export const createSession = mutation({
       paintLayerOrder: 0, // Initialize paint layer at the bottom
       paintLayerVisible: true, // Paint layer visible by default
     });
+    
+    console.log("[createSession] Created session:", sessionId, "with userId:", userId);
     
     return sessionId;
   },
@@ -92,6 +101,8 @@ export const getSession = query({
       paintLayerOrder: v.optional(v.number()),
       paintLayerVisible: v.optional(v.boolean()),
       backgroundImage: v.optional(v.string()),
+      thumbnailUrl: v.optional(v.string()),
+      lastModified: v.optional(v.number()),
     }),
     v.null()
   ),
@@ -117,6 +128,8 @@ export const listRecentSessions = query({
     paintLayerOrder: v.optional(v.number()),
     paintLayerVisible: v.optional(v.boolean()),
     backgroundImage: v.optional(v.string()),
+    thumbnailUrl: v.optional(v.string()),
+    lastModified: v.optional(v.number()),
   })),
   handler: async (ctx) => {
     return await ctx.db
@@ -124,5 +137,143 @@ export const listRecentSessions = query({
       .filter((q) => q.eq(q.field("isPublic"), true))
       .order("desc")
       .take(20);
+  },
+});
+
+/**
+ * Get all sessions created by the authenticated user
+ */
+export const getUserSessions = query({
+  args: {},
+  returns: v.array(v.object({
+    _id: v.id("paintingSessions"),
+    _creationTime: v.number(),
+    name: v.optional(v.string()),
+    createdBy: v.optional(v.id("users")),
+    isPublic: v.boolean(),
+    canvasWidth: v.number(),
+    canvasHeight: v.number(),
+    strokeCounter: v.number(),
+    paintLayerOrder: v.optional(v.number()),
+    paintLayerVisible: v.optional(v.boolean()),
+    backgroundImage: v.optional(v.string()),
+    thumbnailUrl: v.optional(v.string()),
+    lastModified: v.optional(v.number()),
+  })),
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return [];
+    }
+
+    // Find the user by their Clerk ID
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .first();
+
+    if (!user) {
+      return [];
+    }
+
+    // Get all sessions created by this user
+    const sessions = await ctx.db
+      .query("paintingSessions")
+      .filter((q) => q.eq(q.field("createdBy"), user._id))
+      .order("desc")
+      .collect();
+
+    return sessions;
+  },
+});
+
+/**
+ * Update session name
+ */
+export const updateSessionName = mutation({
+  args: {
+    sessionId: v.id("paintingSessions"),
+    name: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Must be logged in to rename sessions");
+    }
+
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) {
+      throw new Error("Session not found");
+    }
+
+    // Find the user
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .first();
+
+    // Check if user owns this session
+    if (!user || session.createdBy !== user._id) {
+      throw new Error("You can only rename your own sessions");
+    }
+
+    await ctx.db.patch(args.sessionId, {
+      name: args.name,
+    });
+  },
+});
+
+/**
+ * Delete a session (soft delete by marking as deleted)
+ */
+export const deleteSession = mutation({
+  args: {
+    sessionId: v.id("paintingSessions"),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Must be logged in to delete sessions");
+    }
+
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) {
+      throw new Error("Session not found");
+    }
+
+    // Find the user
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .first();
+
+    // Check if user owns this session
+    if (!user || session.createdBy !== user._id) {
+      throw new Error("You can only delete your own sessions");
+    }
+
+    // For now, we'll do a hard delete. In the future, we might want to add a "deleted" field
+    await ctx.db.delete(args.sessionId);
+  },
+});
+
+/**
+ * Update session thumbnail
+ */
+export const updateSessionThumbnail = mutation({
+  args: {
+    sessionId: v.id("paintingSessions"),
+    thumbnailUrl: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) {
+      throw new Error("Session not found");
+    }
+
+    await ctx.db.patch(args.sessionId, {
+      thumbnailUrl: args.thumbnailUrl,
+      lastModified: Date.now(),
+    });
   },
 });

@@ -23,10 +23,13 @@ import {
   Hand,
   Eraser,
   Plus,
-  PlusCircle
+  PlusCircle,
+  Library
 } from 'lucide-react'
 import { AuthModal } from './AuthModal'
+import { LibraryModal } from './LibraryModal'
 import { useAuth, useUser } from '@clerk/tanstack-start'
+import { useLibrary } from '../hooks/useLibrary'
 
 // Types
 export interface Layer {
@@ -449,6 +452,7 @@ export function ToolPanel({
   const [showAuthModal, setShowAuthModal] = React.useState(false)
   const [menuPosition, setMenuPosition] = React.useState({ x: 0, y: 0 })
   const [activeTab, setActiveTab] = React.useState<TabId>('tools')
+  const { isLibraryModalOpen, openLibrary, closeLibrary } = useLibrary()
   
   // Drag functionality state
   const [isDragging, setIsDragging] = React.useState(false)
@@ -903,17 +907,30 @@ export function ToolPanel({
             <User className="w-4 h-4" />
             Account
           </button>
-          <button
-            className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors flex items-center gap-2"
-            onClick={() => {
-              setShowMenu(false)
-              // Navigate to a new canvas session
-              window.location.href = window.location.origin
-            }}
-          >
-            <PlusCircle className="w-4 h-4" />
-            New Canvas
-          </button>
+          {effectiveIsSignedIn ? (
+            <button
+              className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors flex items-center gap-2"
+              onClick={() => {
+                setShowMenu(false)
+                openLibrary()
+              }}
+            >
+              <Library className="w-4 h-4" />
+              Library
+            </button>
+          ) : (
+            <button
+              className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors flex items-center gap-2"
+              onClick={() => {
+                setShowMenu(false)
+                // Navigate to a new canvas session
+                window.location.href = window.location.origin
+              }}
+            >
+              <PlusCircle className="w-4 h-4" />
+              New Canvas
+            </button>
+          )}
           <div className="border-t border-white/20 my-1" />
           <button
             className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors"
@@ -960,6 +977,18 @@ export function ToolPanel({
       <AuthModal 
         isOpen={showAuthModal} 
         onClose={() => setShowAuthModal(false)} 
+      />
+      <LibraryModal
+        isOpen={isLibraryModalOpen}
+        onClose={closeLibrary}
+        onCreateNew={() => {
+          // Clear the session parameter to create a new one
+          const url = new URL(window.location.href);
+          url.searchParams.delete('session');
+          window.history.pushState({}, '', url.toString());
+          // Reload to trigger new session creation
+          window.location.reload();
+        }}
       />
     </div>
   )

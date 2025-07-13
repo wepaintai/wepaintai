@@ -12,6 +12,8 @@ const schema = defineSchema({
     strokeCounter: v.number(), // For ordering strokes globally
     paintLayerOrder: v.optional(v.number()), // Order of the paint layer
     paintLayerVisible: v.optional(v.boolean()), // Visibility of the paint layer
+    thumbnailUrl: v.optional(v.string()), // Thumbnail for library view
+    lastModified: v.optional(v.number()), // Last modification timestamp
   }),
 
   strokes: defineTable({

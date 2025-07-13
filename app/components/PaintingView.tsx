@@ -18,6 +18,7 @@ import { Id } from '../../convex/_generated/dataModel'
 import { initP2PLogger } from '../lib/p2p-logger'
 import { useMutation, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
+import { useThumbnailGenerator } from '../hooks/useThumbnailGenerator'
 
 // Wrapper component to handle canvas data capture with proper timing
 function AIGenerationModalWrapper({ 
@@ -152,6 +153,14 @@ export function PaintingView() {
   // Paint layer mutations
   const updatePaintLayerOrder = useMutation(api.paintLayer.updatePaintLayerOrder)
   const updatePaintLayerVisibility = useMutation(api.paintLayer.updatePaintLayerVisibility)
+  
+  // Thumbnail generation
+  const { generateNow: generateThumbnail } = useThumbnailGenerator({
+    sessionId: sessionId || undefined,
+    canvasRef,
+    interval: 30000, // Generate thumbnail every 30 seconds
+    enabled: !!sessionId && !!canvasRef.current
+  })
   const paintLayerSettings = useQuery(api.paintLayer.getPaintLayerSettings, sessionId ? { sessionId } : 'skip')
   
   // Multiple paint layers support
@@ -242,7 +251,9 @@ export function PaintingView() {
           setSessionId(existingSessionId)
         } else if (createNewSession) {
           // Create new session only if createNewSession is available
+          console.log('[PaintingView] Creating new session...')
           const newSessionId = await createNewSession('Collaborative Painting', 800, 600)
+          console.log('[PaintingView] New session created:', newSessionId)
           if (newSessionId) {
             setSessionId(newSessionId)
             // Update URL with new session ID
@@ -309,6 +320,9 @@ export function PaintingView() {
       link.download = `wepaintai-${Date.now()}.png`
       link.href = imageData
       link.click()
+      
+      // Generate thumbnail after export
+      generateThumbnail()
     }
   }
 
