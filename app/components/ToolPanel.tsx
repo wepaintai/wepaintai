@@ -436,16 +436,16 @@ export function ToolPanel({
   
   // Debug logging
   React.useEffect(() => {
-    console.log('[ToolPanel] Auth state:', {
-      userId,
-      isLoaded,
-      isSignedIn,
-      effectiveIsSignedIn,
-      authDisabled,
-      userEmail: user?.primaryEmailAddress?.emailAddress,
-      hasUser: !!user,
-      VITE_AUTH_DISABLED: import.meta.env.VITE_AUTH_DISABLED
-    })
+    // console.log('[ToolPanel] Auth state:', {
+    //   userId,
+    //   isLoaded,
+    //   isSignedIn,
+    //   effectiveIsSignedIn,
+    //   authDisabled,
+    //   userEmail: user?.primaryEmailAddress?.emailAddress,
+    //   hasUser: !!user,
+    //   VITE_AUTH_DISABLED: import.meta.env.VITE_AUTH_DISABLED
+    // })
   }, [userId, isLoaded, isSignedIn, effectiveIsSignedIn, authDisabled, user])
   const [isCollapsed, setIsCollapsed] = React.useState(false)
   const [showMenu, setShowMenu] = React.useState(false)
@@ -553,7 +553,7 @@ export function ToolPanel({
     // Check if AI tool requires authentication
     if (toolId === 'ai' && !effectiveIsSignedIn) {
       // Don't select the tool, just show a message or do nothing
-      console.log('AI tool requires authentication. effectiveIsSignedIn:', effectiveIsSignedIn, 'authDisabled:', authDisabled)
+      // console.log('AI tool requires authentication. effectiveIsSignedIn:', effectiveIsSignedIn, 'authDisabled:', authDisabled)
       return
     }
     
@@ -855,7 +855,7 @@ export function ToolPanel({
                       <div className="text-center py-4">
                         <p className="text-sm text-white/60 mb-2">Sign in to use AI generation</p>
                         <button
-                          onClick={() => setShowAuthModal(true)}
+                          onClick={() => !authDisabled && setShowAuthModal(true)}
                           className="text-blue-400 hover:text-blue-300 text-sm underline"
                         >
                           Sign in
@@ -901,7 +901,9 @@ export function ToolPanel({
             className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors flex items-center gap-2"
             onClick={() => {
               setShowMenu(false)
-              setShowAuthModal(true)
+              if (!authDisabled) {
+                setShowAuthModal(true)
+              }
             }}
           >
             <User className="w-4 h-4" />
@@ -973,11 +975,13 @@ export function ToolPanel({
         </div>
       )}
       
-      {/* Auth Modal */}
-      <AuthModal 
-        isOpen={showAuthModal} 
-        onClose={() => setShowAuthModal(false)} 
-      />
+      {/* Auth Modal - Only show if auth is not disabled */}
+      {!authDisabled && (
+        <AuthModal 
+          isOpen={showAuthModal} 
+          onClose={() => setShowAuthModal(false)} 
+        />
+      )}
       <LibraryModal
         isOpen={isLibraryModalOpen}
         onClose={closeLibrary}

@@ -204,7 +204,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
           resolve()
         }
         img.onerror = () => {
-          console.error('Failed to load image:', id, url)
+          // console.error('Failed to load image:', id, url)
           resolve()
         }
         img.src = url
@@ -354,9 +354,12 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       return
     }
     
-    // Only allow brush on paint layer
-    if (selectedTool === 'brush' && activeLayerId !== 'painting-layer') {
-      return
+    // Only allow brush on paint layers
+    if (selectedTool === 'brush') {
+      const activeLayer = layers.find(l => l.id === activeLayerId)
+      if (!activeLayer || (activeLayer.type !== 'stroke' && activeLayer.type !== 'paint')) {
+        return
+      }
     }
     
     // Check if erasing on a valid layer
@@ -386,7 +389,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       const normalizedY = point.y / dimensions.height
       sendStrokePoint(strokeId, normalizedX, normalizedY, point.pressure || 0.5)
     }
-  }, [getPointerPosition, updateUserPresence, isP2PConnected, dimensions, sendStrokePoint, selectedTool, activeLayerId])
+  }, [getPointerPosition, updateUserPresence, isP2PConnected, dimensions, sendStrokePoint, selectedTool, activeLayerId, layers])
 
   // Handle pointer move
   const handlePointerMove = useCallback((e: Konva.KonvaEventObject<PointerEvent>) => {
@@ -458,8 +461,11 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     const finalStrokePoints = [...currentStroke, point]
 
     if (finalStrokePoints.length > 0) {
-      // Check if we're erasing on an image layer
-      if (selectedTool === 'eraser' && activeLayerId !== 'painting-layer') {
+      // Check if we're erasing on an image layer (not a paint layer)
+      const activeLayer = layers.find(l => l.id === activeLayerId)
+      const isErasingOnImageLayer = selectedTool === 'eraser' && activeLayer && activeLayer.type !== 'stroke' && activeLayer.type !== 'paint'
+      
+      if (isErasingOnImageLayer) {
         // Add eraser stroke to the image mask
         const eraserStroke: LocalStroke = {
           points: finalStrokePoints,
@@ -492,7 +498,12 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
         
         // Track the pending stroke and update when we get the backend ID
         pendingStrokeIdsRef.current.set(tempId, null)
-        addStrokeToSession(finalStrokePoints, color, size, opacity, selectedTool === 'eraser', activePaintLayerId).then(strokeId => {
+        // Use activeLayerId when erasing on a paint layer, otherwise use activePaintLayerId for brush
+        const layerIdToUse = (selectedTool === 'eraser' && activeLayer && (activeLayer.type === 'stroke' || activeLayer.type === 'paint')) 
+          ? activeLayerId 
+          : activePaintLayerId
+        
+        addStrokeToSession(finalStrokePoints, color, size, opacity, selectedTool === 'eraser', layerIdToUse).then(strokeId => {
           if (strokeId) {
             pendingStrokeIdsRef.current.set(tempId, strokeId)
           }
@@ -503,7 +514,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     setCurrentStroke([])
     setCurrentStrokeId(null)
     onStrokeEnd?.()
-  }, [isDrawing, currentStroke, getPointerPosition, color, size, opacity, addStrokeToSession, onStrokeEnd, selectedTool, activeLayerId, activePaintLayerId])
+  }, [isDrawing, currentStroke, getPointerPosition, color, size, opacity, addStrokeToSession, onStrokeEnd, selectedTool, activeLayerId, activePaintLayerId, layers])
 
   // Fallback global listener to ensure drawing stops if pointer capture fails
   useEffect(() => {
@@ -516,8 +527,11 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       setIsDrawing(false)
       
       if (currentStroke.length > 0) {
-        // Check if we're erasing on an image layer
-        if (selectedTool === 'eraser' && activeLayerId !== 'painting-layer') {
+        // Check if we're erasing on an image layer (not a paint layer)
+        const activeLayer = layers.find(l => l.id === activeLayerId)
+        const isErasingOnImageLayer = selectedTool === 'eraser' && activeLayer && activeLayer.type !== 'stroke' && activeLayer.type !== 'paint'
+        
+        if (isErasingOnImageLayer) {
           // Add eraser stroke to the image mask
           const eraserStroke: LocalStroke = {
             points: currentStroke,
@@ -550,7 +564,12 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
           
           // Track the pending stroke and update when we get the backend ID
           pendingStrokeIdsRef.current.set(tempId, null)
-          addStrokeToSession(currentStroke, color, size, opacity, selectedTool === 'eraser').then(strokeId => {
+          // Use activeLayerId when erasing on a paint layer, otherwise use activePaintLayerId for brush
+          const layerIdToUse = (selectedTool === 'eraser' && activeLayer && (activeLayer.type === 'stroke' || activeLayer.type === 'paint')) 
+            ? activeLayerId 
+            : activePaintLayerId
+          
+          addStrokeToSession(currentStroke, color, size, opacity, selectedTool === 'eraser', layerIdToUse).then(strokeId => {
             if (strokeId) {
               pendingStrokeIdsRef.current.set(tempId, strokeId)
             }
@@ -565,7 +584,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
 
     document.addEventListener('pointerup', handleGlobalPointerUp)
     return () => document.removeEventListener('pointerup', handleGlobalPointerUp)
-  }, [isDrawing, currentStroke, color, size, opacity, addStrokeToSession, onStrokeEnd, selectedTool, activeLayerId])
+  }, [isDrawing, currentStroke, color, size, opacity, addStrokeToSession, onStrokeEnd, selectedTool, activeLayerId, activePaintLayerId, layers])
 
   // Handle pointer leave - hide cursor  
   const handlePointerLeave = useCallback(() => {
@@ -610,12 +629,12 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       setImageMasks(new Map())
     },
     undo: () => {
-      console.warn('KonvaCanvas.undo() is deprecated. Use session-level undo instead.')
+      // console.warn('KonvaCanvas.undo() is deprecated. Use session-level undo instead.')
     },
     getImageData: () => {
       const stage = stageRef.current
       if (!stage) {
-        console.error('[KonvaCanvas] getImageData: No stage ref')
+        // console.error('[KonvaCanvas] getImageData: No stage ref')
         return ''
       }
       
@@ -635,7 +654,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
           // Log first few children details
           if (childCount > 0) {
             const firstChild = layer.children[0]
-            console.log(`  - First child type: ${firstChild.className}, visible: ${firstChild.visible()}`)
+            // console.log(`  - First child type: ${firstChild.className}, visible: ${firstChild.visible()}`)
           }
         })
         
@@ -674,7 +693,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
         
         return dataUrl
       } catch (err) {
-        console.error('[KonvaCanvas] Failed to get canvas data:', err)
+        // console.error('[KonvaCanvas] Failed to get canvas data:', err)
         return ''
       }
     },
@@ -857,7 +876,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                   })}
                   
                   {/* Render current stroke being drawn (including eraser) */}
-                  {isDrawing && currentStroke.length > 0 && (layer.id === activePaintLayerId || (layer.type === 'stroke' && activeLayerId === 'painting-layer')) && (
+                  {isDrawing && currentStroke.length > 0 && layer.id === activeLayerId && (
                     <Path
                       data={getStrokePathData({
                         points: currentStroke,
@@ -1032,7 +1051,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
             })}
 
           {/* Drawing layer for live strokes and cursors */}
-          <Layer ref={drawingLayerRef}>
+          <Layer ref={drawingLayerRef} listening={false}>
             {/* Current stroke being drawn (only for non-eraser tools on non-paint layers) */}
             {isDrawing && currentStroke.length > 0 && selectedTool === 'brush' && activeLayerId !== 'painting-layer' && (
               <Path
