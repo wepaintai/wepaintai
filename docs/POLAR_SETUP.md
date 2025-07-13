@@ -10,10 +10,10 @@
 1. Log in to your Polar dashboard
 2. Navigate to Products
 3. Create a new product:
-   - Name: "100 Token Pack"
+   - Name: "125 Token Pack"
    - Price: $9.99
    - Type: One-time purchase
-   - Description: "100 tokens for AI image generation"
+   - Description: "125 tokens for AI image generation"
 
 ## Step 2: Set Up Webhook
 
@@ -96,7 +96,7 @@ For development and testing, you can use Polar's sandbox environment:
 
 ### Step 2: Create Test Product
 1. In sandbox dashboard, create the same product structure:
-   - Name: "100 Token Pack"
+   - Name: "125 Token Pack"
    - Price: $9.99
    - Type: One-time purchase
 

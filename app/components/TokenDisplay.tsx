@@ -28,7 +28,7 @@ export function TokenDisplay({ className = '' }: TokenDisplayProps) {
     try {
       const { checkoutUrl } = await createCheckout({
         productId: import.meta.env.VITE_POLAR_PRODUCT_ID || 'prod_100_tokens',
-        tokens: 100,
+        tokens: 125,
       })
       
       // Redirect to Polar checkout
@@ -82,14 +82,10 @@ export function TokenDisplay({ className = '' }: TokenDisplayProps) {
               <div className="border-2 border-blue-500 rounded-lg p-4 bg-blue-50">
                 <div className="flex justify-between items-center mb-2">
                   <div>
-                    <h3 className="font-semibold">100 Token Pack</h3>
-                    <p className="text-sm text-gray-600">
-                      Generate up to 100 AI images
-                    </p>
+                    <h3 className="font-semibold">125 Token Pack</h3>
                   </div>
                   <div className="text-right">
                     <div className="text-2xl font-bold text-blue-600">$9.99</div>
-                    <div className="text-xs text-gray-600">$0.10 per image</div>
                   </div>
                 </div>
               </div>

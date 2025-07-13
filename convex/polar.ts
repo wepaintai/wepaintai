@@ -108,12 +108,12 @@ export const getTokenPackages = action({
     return [
       {
         id: "prod_100_tokens",
-        name: "100 Token Pack",
-        tokens: 100,
+        name: "125 Token Pack",
+        tokens: 125,
         price: 999, // in cents
         currency: "USD",
-        description: "Generate up to 100 AI images",
-        pricePerToken: 0.10,
+        description: "",
+        pricePerToken: 0.08, // $9.99 / 125 tokens
       },
     ];
   },
