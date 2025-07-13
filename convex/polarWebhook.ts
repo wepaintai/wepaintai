@@ -81,14 +81,9 @@ export const handlePolarWebhook = httpAction(async (ctx, request) => {
         await ctx.runMutation(internal.tokens.creditTokensFromPurchase, {
           userId: purchase.userId,
           tokens: purchase.tokens,
-          transactionType: "polar_purchase",
-          metadata: {
-            purchaseId: purchase._id,
-            checkoutId: checkoutData.id,
-            productId: purchase.productId,
-            amount: purchase.amount,
-            currency: purchase.currency,
-          },
+          polarCheckoutId: checkoutData.id,
+          polarProductId: purchase.productId,
+          description: `Purchased ${purchase.productName}`,
         });
         
         console.log(`[Polar Webhook] Credited ${purchase.tokens} tokens to user ${purchase.userId}`);
@@ -123,7 +118,7 @@ export const createPendingPurchase = internalMutation({
     tokens: v.number(),
   },
   handler: async (ctx, args) => {
-    return await ctx.db.insert("purchases", {
+    return await ctx.db.insert("polarPurchases", {
       userId: args.userId,
       checkoutId: args.checkoutId,
       productId: args.productId,
@@ -144,7 +139,7 @@ export const getPendingPurchase = internalQuery({
   },
   handler: async (ctx, args) => {
     return await ctx.db
-      .query("purchases")
+      .query("polarPurchases")
       .withIndex("by_checkout", (q) => q.eq("checkoutId", args.checkoutId))
       .filter((q) => q.eq(q.field("status"), "pending"))
       .first();
@@ -154,7 +149,7 @@ export const getPendingPurchase = internalQuery({
 // Internal mutation to mark a purchase as completed
 export const completePurchase = internalMutation({
   args: {
-    purchaseId: v.id("purchases"),
+    purchaseId: v.id("polarPurchases"),
   },
   handler: async (ctx, args) => {
     return await ctx.db.patch(args.purchaseId, {
