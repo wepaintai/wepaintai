@@ -2,9 +2,19 @@
 
 This project is the core of the wePaintAI application.
 
+## Tech Stack
+
+- **Frontend**: TanStack Start (React 19 + file-based routing)
+- **Backend**: Convex (real-time serverless database)
+- **Canvas**: [Konva.js](https://konvajs.org/) (2D canvas library with React bindings)
+- **Drawing**: [perfect-freehand](https://github.com/steveruizok/perfect-freehand) (smooth drawing strokes)
+- **AI Generation**: [Replicate](https://replicate.com/) (AI image generation API)
+- **Authentication**: Clerk
+- **Deployment**: Vercel (frontend) + Convex Cloud (backend)
+
 ## Development Setup
 
-This project uses Vinxi for the frontend and Convex for the backend.
+This project uses Vite for the frontend and Convex for the backend.
 
 ### Prerequisites
 
@@ -35,7 +45,7 @@ pnpm dev
 ```
 
 This command will:
-1.  Start the Vinxi frontend development server.
+1.  Start the Vite frontend development server.
 2.  Start a local Convex backend instance using `convex dev --local`.
 3.  Your application will connect to `http://127.0.0.1:3210` for Convex services.
 4.  Data will be stored locally in the `.convex/local.db` file.
@@ -49,7 +59,7 @@ pnpm dev:cloud
 ```
 
 This command will:
-1.  Start the Vinxi frontend development server.
+1.  Start the Vite frontend development server.
 2.  Start the Convex development CLI connected to your designated cloud project (configured via `npx convex link` and `.env.local` or environment variables).
 3.  Your application will connect to the Convex URL specified in your `VITE_CONVEX_URL` (typically from `.env.local` pointing to `https://your-project.convex.cloud`).
 
@@ -57,10 +67,10 @@ This command will:
 
 -   **`pnpm build`**: Builds the application for production.
 -   **`pnpm start`**: Starts the production server (after building).
--   **`pnpm dev:app`**: Runs only the Vinxi frontend development server.
+-   **`pnpm dev:app`**: Runs only the Vite frontend development server.
 -   **`pnpm dev:convex:local`**: Runs only the local Convex backend.
 -   **`pnpm dev:convex:cloud`**: Runs only the Convex CLI connected to the cloud.
--   **`pnpm dev:prod-db`**: Runs the local Vinxi frontend development server connected to the **production Convex database**. Use with caution.
+-   **`pnpm dev:prod-db`**: Runs the local Vite frontend development server connected to the **production Convex database**. Use with caution.
 
 ### Environment Variables
 
