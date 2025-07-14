@@ -14,6 +14,9 @@ const schema = defineSchema({
     paintLayerVisible: v.optional(v.boolean()), // Visibility of the paint layer
     thumbnailUrl: v.optional(v.string()), // Thumbnail for library view
     lastModified: v.optional(v.number()), // Last modification timestamp
+    // Undo/redo optimization: track last few stroke orders for quick access
+    recentStrokeOrders: v.optional(v.array(v.number())), // Last 10 stroke orders for quick undo
+    deletedStrokeCount: v.optional(v.number()), // Count of deleted strokes for quick redo check
   }),
 
   strokes: defineTable({

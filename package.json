@@ -34,6 +34,7 @@
     "lucide-react": "^0.511.0",
     "perfect-freehand": "^1.2.2",
     "postcss": "^8.5.3",
+    "posthog-js": "^1.257.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-konva": "^19.0.7",
