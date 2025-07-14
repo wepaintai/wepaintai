@@ -15,8 +15,8 @@ export function AuthDebug() {
   
   const [storeUserResult, setStoreUserResult] = useState<string>('')
   
-  // Only show in development
-  if (import.meta.env.PROD) return null
+  // Only show in development and when auth is not disabled
+  if (import.meta.env.PROD || import.meta.env.VITE_AUTH_DISABLED === 'true') return null
   
   const handleStoreUser = async () => {
     try {

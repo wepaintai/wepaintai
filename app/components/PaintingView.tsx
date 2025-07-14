@@ -18,6 +18,7 @@ import { Id } from '../../convex/_generated/dataModel'
 import { initP2PLogger } from '../lib/p2p-logger'
 import { useMutation, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
+import { useThumbnailGenerator } from '../hooks/useThumbnailGenerator'
 
 // Wrapper component to handle canvas data capture with proper timing
 function AIGenerationModalWrapper({ 
@@ -45,7 +46,7 @@ function AIGenerationModalWrapper({
     const hasImages = layers.some(layer => layer.type === 'image' || layer.type === 'ai-image')
     
     if (!hasStrokes && !hasImages) {
-      console.log('[AIGenerationModalWrapper] No content to capture (no strokes or images)')
+      // console.log('[AIGenerationModalWrapper] No content to capture (no strokes or images)')
       // Set a blank canvas data URL instead of staying in loading state
       setCanvasData('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=')
       setIsLoading(false)
@@ -55,10 +56,10 @@ function AIGenerationModalWrapper({
     // Capture canvas data after a small delay to ensure layers are rendered
     const captureCanvas = () => {
       if (canvasRef.current) {
-        console.log('[AIGenerationModalWrapper] About to capture canvas data')
-        console.log('[AIGenerationModalWrapper] Layers available:', layers.length)
-        console.log('[AIGenerationModalWrapper] Strokes available:', strokes?.length || 0)
-        console.log('[AIGenerationModalWrapper] Has images:', layers.some(layer => layer.type === 'image' || layer.type === 'ai-image'))
+        // console.log('[AIGenerationModalWrapper] About to capture canvas data')
+        // console.log('[AIGenerationModalWrapper] Layers available:', layers.length)
+        // console.log('[AIGenerationModalWrapper] Strokes available:', strokes?.length || 0)
+        // console.log('[AIGenerationModalWrapper] Has images:', layers.some(layer => layer.type === 'image' || layer.type === 'ai-image'))
         
         // Force canvas redraw before capturing
         canvasRef.current.forceRedraw()
@@ -69,7 +70,7 @@ function AIGenerationModalWrapper({
             const data = canvasRef.current.getImageData() || ''
             const dims = canvasRef.current.getDimensions() || { width: 800, height: 600 }
             
-            console.log('[AIGenerationModalWrapper] Canvas data captured after redraw:', data.length)
+            // console.log('[AIGenerationModalWrapper] Canvas data captured after redraw:', data.length)
             setCanvasData(data)
             setDimensions(dims)
             setIsLoading(false)
@@ -80,7 +81,7 @@ function AIGenerationModalWrapper({
               setTimeout(() => {
                 const retryData = canvasRef.current?.getImageData() || ''
                 if (retryData && retryData.length > 0) {
-                  console.log('[AIGenerationModalWrapper] Retry successful:', retryData.length)
+                  // console.log('[AIGenerationModalWrapper] Retry successful:', retryData.length)
                   setCanvasData(retryData)
                 }
               }, 500)
@@ -152,6 +153,14 @@ export function PaintingView() {
   // Paint layer mutations
   const updatePaintLayerOrder = useMutation(api.paintLayer.updatePaintLayerOrder)
   const updatePaintLayerVisibility = useMutation(api.paintLayer.updatePaintLayerVisibility)
+  
+  // Thumbnail generation
+  const { generateNow: generateThumbnail } = useThumbnailGenerator({
+    sessionId: sessionId || undefined,
+    canvasRef,
+    interval: 30000, // Generate thumbnail every 30 seconds
+    enabled: !!sessionId
+  })
   const paintLayerSettings = useQuery(api.paintLayer.getPaintLayerSettings, sessionId ? { sessionId } : 'skip')
   
   // Multiple paint layers support
@@ -173,14 +182,14 @@ export function PaintingView() {
   
   // Debug strokes from usePaintingSession
   useEffect(() => {
-    console.log('[Layers] Strokes from usePaintingSession:', {
-      strokesExist: !!strokes,
-      strokesLength: strokes?.length,
-      strokesIsArray: Array.isArray(strokes),
-      strokesValue: strokes,
-      sessionId,
-      currentUser
-    })
+    // console.log('[Layers] Strokes from usePaintingSession:', {
+    //   strokesExist: !!strokes,
+    //   strokesLength: strokes?.length,
+    //   strokesIsArray: Array.isArray(strokes),
+    //   strokesValue: strokes,
+    //   sessionId,
+    //   currentUser
+    // })
   }, [strokes, sessionId, currentUser])
   
   // Get AI generated images separately
@@ -191,7 +200,7 @@ export function PaintingView() {
   
   // Debug: Log aiImages from direct query
   useEffect(() => {
-    console.log('[PaintingView] AI images from direct query:', aiImages)
+    // console.log('[PaintingView] AI images from direct query:', aiImages)
   }, [aiImages])
   
   // P2P connection status
@@ -242,7 +251,9 @@ export function PaintingView() {
           setSessionId(existingSessionId)
         } else if (createNewSession) {
           // Create new session only if createNewSession is available
+          // console.log('[PaintingView] Creating new session...')
           const newSessionId = await createNewSession('Collaborative Painting', 800, 600)
+          // console.log('[PaintingView] New session created:', newSessionId)
           if (newSessionId) {
             setSessionId(newSessionId)
             // Update URL with new session ID
@@ -270,6 +281,12 @@ export function PaintingView() {
       setHistory(newHistory)
       setHistoryIndex(newHistory.length - 1)
     }
+    
+    // Generate thumbnail after stroke ends
+    setTimeout(() => {
+      // console.log('[PaintingView] Triggering thumbnail generation after stroke')
+      generateThumbnail()
+    }, 1000)
   }
 
   const handleUndo = async () => {
@@ -309,6 +326,9 @@ export function PaintingView() {
       link.download = `wepaintai-${Date.now()}.png`
       link.href = imageData
       link.click()
+      
+      // Generate thumbnail after export
+      generateThumbnail()
     }
   }
 
@@ -321,7 +341,7 @@ export function PaintingView() {
   }, [])
 
   const handleImageUploaded = useCallback((imageId: Id<"uploadedImages">) => {
-    console.log('Image uploaded:', imageId)
+    // console.log('Image uploaded:', imageId)
     setShowImageUpload(false)
     setSelectedTool('brush') // Switch back to brush tool
   }, [])
@@ -334,9 +354,9 @@ export function PaintingView() {
     if (!sessionId) return
     
     // Add the generated image to the canvas
-    console.log('handleAIGenerationComplete called with URL:', imageUrl)
-    console.log('URL type:', typeof imageUrl)
-    console.log('URL length:', imageUrl.length)
+    // console.log('handleAIGenerationComplete called with URL:', imageUrl)
+    // console.log('URL type:', typeof imageUrl)
+    // console.log('URL length:', imageUrl.length)
     
     // Create an image element to get dimensions
     const img = new Image()
@@ -357,7 +377,7 @@ export function PaintingView() {
           canvasHeight: canvasDimensions.height,
         })
         
-        console.log('AI-generated image added to canvas')
+        // console.log('AI-generated image added to canvas')
         setShowAIGeneration(false)
         setSelectedTool('brush')
       } catch (error) {
@@ -436,7 +456,7 @@ export function PaintingView() {
   const paintingLayerOrder = paintLayerSettings?.layerOrder ?? 0
   
   // Create layers from strokes and images
-  const layers = useMemo<Layer[]>(() => {
+  const layers = useMemo(() => {
     const allLayers: Layer[] = []
     
     // Add multiple paint layers
@@ -455,7 +475,7 @@ export function PaintingView() {
     } else {
       // Fallback to single paint layer for backward compatibility
       const hasStrokes = Array.isArray(strokes) && strokes.length > 0
-      console.log('[Layers] No paint layers found, using fallback single layer')
+      // console.log('[Layers] No paint layers found, using fallback single layer')
       allLayers.push({
         id: 'painting-layer',
         type: 'stroke',
@@ -482,10 +502,10 @@ export function PaintingView() {
     
     // Add AI-generated images
     if (aiImages) {
-      console.log('[Layers] Adding AI images to layers:', aiImages.length)
+      // console.log('[Layers] Adding AI images to layers:', aiImages.length)
       aiImages.forEach((img, index) => {
-        console.log('[Layers] AI image:', img._id, img)
-        console.log('[Layers] AI image layerOrder:', img.layerOrder)
+        // console.log('[Layers] AI image:', img._id, img)
+        // console.log('[Layers] AI image layerOrder:', img.layerOrder)
         allLayers.push({
           id: img._id,
           type: 'ai-image',
@@ -499,15 +519,28 @@ export function PaintingView() {
     }
     
     // Debug: Log all layers with their orders
-    console.log('[Layers] All layers computed:', allLayers.map(l => ({
-      id: l.id,
-      type: l.type,
-      name: l.name,
-      order: l.order
-    })))
+    // console.log('[Layers] All layers computed:', allLayers.map(l => ({
+    //   id: l.id,
+    //   type: l.type,
+    //   name: l.name,
+    //   order: l.order
+    // })))
     
     return allLayers
   }, [strokes, images, aiImages, paintingLayerVisible, paintingLayerOrder, paintLayers])
+
+  // Update activeLayerId when layers change (especially important for new sessions)
+  useEffect(() => {
+    // If activeLayerId is still the default 'painting-layer' but we have actual paint layers
+    if (activeLayerId === 'painting-layer' && layers.length > 0) {
+      const firstPaintLayer = layers.find(l => l.type === 'paint' || l.type === 'stroke')
+      if (firstPaintLayer && firstPaintLayer.id !== 'painting-layer') {
+        console.log('[PaintingView] Updating activeLayerId from default to:', firstPaintLayer.id)
+        setActiveLayerId(firstPaintLayer.id)
+        setActivePaintLayerId(firstPaintLayer.id)
+      }
+    }
+  }, [layers, activeLayerId])
 
   // Handle layer operations
   const handleLayerVisibilityChange = useCallback(async (layerId: string, visible: boolean) => {
@@ -550,9 +583,9 @@ export function PaintingView() {
   }, [images, aiImages, updateImageTransform, updateAIImageTransformMutation])
 
   const handleLayerDelete = useCallback(async (layerId: string) => {
-    console.log('[PaintingView] handleLayerDelete called with layerId:', layerId)
-    console.log('[PaintingView] Available paint layers:', paintLayers)
-    console.log('[PaintingView] Available layers:', layers)
+    // console.log('[PaintingView] handleLayerDelete called with layerId:', layerId)
+    // console.log('[PaintingView] Available paint layers:', paintLayers)
+    // console.log('[PaintingView] Available layers:', layers)
     
     // Check if it's the old single painting layer
     if (layerId === 'painting-layer') {
@@ -563,12 +596,12 @@ export function PaintingView() {
     
     // Check if it's a paint layer
     const paintLayer = paintLayers?.find(layer => layer._id === layerId)
-    console.log('[PaintingView] Found paint layer:', paintLayer)
+    // console.log('[PaintingView] Found paint layer:', paintLayer)
     if (paintLayer) {
-      console.log('[PaintingView] Deleting paint layer:', layerId)
+      // console.log('[PaintingView] Deleting paint layer:', layerId)
       try {
         await deletePaintLayer({ layerId: layerId as Id<"paintLayers"> })
-        console.log('[PaintingView] Paint layer deleted successfully')
+        // console.log('[PaintingView] Paint layer deleted successfully')
       } catch (error) {
         console.error('[PaintingView] Error deleting paint layer:', error)
       }
@@ -578,7 +611,7 @@ export function PaintingView() {
     // Check if it's an uploaded image (not AI-generated)
     const uploadedImage = images.find(img => img._id === layerId && (img as any).type !== 'ai-generated')
     if (uploadedImage) {
-      console.log('[PaintingView] Deleting uploaded image:', layerId)
+      // console.log('[PaintingView] Deleting uploaded image:', layerId)
       await deleteImage(layerId as Id<"uploadedImages">)
       return
     }
@@ -588,15 +621,15 @@ export function PaintingView() {
     const aiImageFromImages = images.find(img => img._id === layerId && (img as any).type === 'ai-generated')
     const aiImage = aiImageFromQuery || aiImageFromImages
     
-    console.log('[PaintingView] AI images from query:', aiImages)
-    console.log('[PaintingView] Found AI image from query:', aiImageFromQuery)
-    console.log('[PaintingView] Found AI image from images:', aiImageFromImages)
+    // console.log('[PaintingView] AI images from query:', aiImages)
+    // console.log('[PaintingView] Found AI image from query:', aiImageFromQuery)
+    // console.log('[PaintingView] Found AI image from images:', aiImageFromImages)
     
     if (aiImage) {
-      console.log('[PaintingView] Deleting AI image:', layerId)
+      // console.log('[PaintingView] Deleting AI image:', layerId)
       try {
         await deleteAIImageMutation({ imageId: layerId as Id<"aiGeneratedImages"> })
-        console.log('[PaintingView] AI image deleted successfully')
+        // console.log('[PaintingView] AI image deleted successfully')
       } catch (error) {
         console.error('[PaintingView] Error deleting AI image:', error)
       }
@@ -627,7 +660,7 @@ export function PaintingView() {
     // Check if it's the old single painting layer
     if (layerId === 'painting-layer') {
       // TODO: Implement painting layer opacity
-      console.log('Painting layer opacity not yet implemented')
+      // console.log('Painting layer opacity not yet implemented')
       return
     }
     
@@ -862,11 +895,6 @@ export function PaintingView() {
       
       {/* User profile display - only show if admin features are enabled */}
       {adminFeaturesEnabled && <UserProfile />}
-      
-      {/* Token display */}
-      <div className="absolute top-4 right-4 z-10">
-        <TokenDisplay />
-      </div>
     </div>
   )
 }
