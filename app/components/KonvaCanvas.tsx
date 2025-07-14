@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useCallback, forwardRef, useImperativeHandle } from 'react'
+import React, { useRef, useEffect, useState, useCallback, forwardRef, useImperativeHandle, memo } from 'react'
 import { Stage, Layer, Path, Image as KonvaImage, Circle, Text, Group } from 'react-konva'
 import Konva from 'konva'
 import { getStroke } from 'perfect-freehand'
@@ -12,6 +12,29 @@ import { api } from '../../convex/_generated/api'
 import { shouldShowAdminFeatures } from '../utils/environment'
 
 const average = (a: number, b: number): number => (a + b) / 2
+
+// Memoized stroke component to prevent unnecessary re-renders
+interface StrokePathProps {
+  stroke: Stroke
+  pathData: string
+}
+
+const StrokePath = memo(({ stroke, pathData }: StrokePathProps) => {
+  return (
+    <Path
+      key={stroke._id}
+      data={pathData}
+      fill={stroke.isEraser ? '#000000' : stroke.brushColor}
+      opacity={stroke.opacity}
+      globalCompositeOperation={stroke.isEraser ? 'destination-out' : 'source-over'}
+      perfectDrawEnabled={false}
+    />
+  )
+}, (prevProps, nextProps) => {
+  // Only re-render if stroke data changes
+  return prevProps.stroke._id === nextProps.stroke._id &&
+         prevProps.pathData === nextProps.pathData
+})
 
 function getSvgPathFromStroke(points: number[][], closed: boolean = true): string {
   const len = points.length
@@ -869,16 +892,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       
                       if (!pathData) return null
                       
-                      return (
-                        <Path
-                          key={stroke._id}
-                          data={pathData}
-                          fill={stroke.isEraser ? '#000000' : stroke.brushColor}
-                          opacity={stroke.opacity}
-                          globalCompositeOperation={stroke.isEraser ? 'destination-out' : 'source-over'}
-                          perfectDrawEnabled={false}
-                        />
-                      )
+                      return <StrokePath key={stroke._id} stroke={stroke} pathData={pathData} />
                     })}
                   
                   {/* Render pending strokes */}

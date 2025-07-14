@@ -405,10 +405,25 @@ export function PaintingView() {
   // Add keyboard listeners for tool shortcuts and admin panel
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      // Check if we're typing in an input field
+      const isInputField = event.target instanceof Element && 
+                          ['INPUT', 'TEXTAREA'].includes(event.target.tagName)
+      
+      // Undo/Redo shortcuts
+      if ((event.ctrlKey || event.metaKey) && !isInputField) {
+        if (event.key === 'z' && !event.shiftKey) {
+          event.preventDefault()
+          handleUndo()
+          return
+        } else if ((event.key === 'z' && event.shiftKey) || event.key === 'y') {
+          event.preventDefault()
+          handleRedo()
+          return
+        }
+      }
+      
       // Tool shortcuts (when not typing in an input field)
-      if (!event.ctrlKey && !event.metaKey && !event.altKey && 
-          event.target instanceof Element && 
-          !['INPUT', 'TEXTAREA'].includes(event.target.tagName)) {
+      if (!event.ctrlKey && !event.metaKey && !event.altKey && !isInputField) {
         switch (event.key.toLowerCase()) {
           case 'b':
             event.preventDefault()
@@ -449,7 +464,7 @@ export function PaintingView() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [toggleAdminPanel, adminFeaturesEnabled, handleImageUpload, handleAIGenerate])
+  }, [toggleAdminPanel, adminFeaturesEnabled, handleImageUpload, handleAIGenerate, handleUndo, handleRedo])
 
   // Use persisted paint layer settings or defaults
   const paintingLayerVisible = paintLayerSettings?.visible ?? true

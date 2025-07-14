@@ -30,8 +30,14 @@ export const addStroke = mutation({
 
     // Increment stroke counter for ordering
     const strokeOrder = session.strokeCounter + 1;
+    
+    // Update recent stroke orders for quick undo access
+    const recentOrders = session.recentStrokeOrders || [];
+    const updatedRecentOrders = [...recentOrders, strokeOrder].slice(-10); // Keep last 10
+    
     await ctx.db.patch(args.sessionId, {
       strokeCounter: strokeOrder,
+      recentStrokeOrders: updatedRecentOrders,
     });
 
     // If no layerId provided, ensure a default layer exists
@@ -198,20 +204,16 @@ export const removeLastStroke = mutation({
       throw new Error("Session not found");
     }
 
-    // Get all strokes for this session, sorted by strokeOrder
-    const strokes = await ctx.db
+    // Get the stroke with the highest strokeOrder using the existing index
+    const lastStroke = await ctx.db
       .query("strokes")
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
-      .collect();
+      .order("desc")
+      .first();
 
-    if (strokes.length === 0) {
+    if (!lastStroke) {
       return false; // No strokes to remove
     }
-
-    // Find the stroke with the highest strokeOrder
-    const lastStroke = strokes.reduce((latest, stroke) => 
-      stroke.strokeOrder > latest.strokeOrder ? stroke : latest
-    );
 
     // Save the stroke to deletedStrokes before deleting
     await ctx.db.insert("deletedStrokes", {
@@ -230,6 +232,16 @@ export const removeLastStroke = mutation({
 
     // Delete the last stroke
     await ctx.db.delete(lastStroke._id);
+    
+    // Update recent stroke orders and deleted count
+    const recentOrders = session.recentStrokeOrders || [];
+    const updatedRecentOrders = recentOrders.filter(order => order !== lastStroke.strokeOrder);
+    const deletedCount = (session.deletedStrokeCount || 0) + 1;
+    
+    await ctx.db.patch(args.sessionId, {
+      recentStrokeOrders: updatedRecentOrders,
+      deletedStrokeCount: deletedCount,
+    });
 
     return true;
   },
@@ -250,20 +262,16 @@ export const restoreLastDeletedStroke = mutation({
       throw new Error("Session not found");
     }
 
-    // Get all deleted strokes for this session, sorted by deletedAt
-    const deletedStrokes = await ctx.db
+    // Get the most recently deleted stroke using the existing index
+    const lastDeletedStroke = await ctx.db
       .query("deletedStrokes")
       .withIndex("by_session_deleted", (q) => q.eq("sessionId", args.sessionId))
-      .collect();
+      .order("desc")
+      .first();
 
-    if (deletedStrokes.length === 0) {
+    if (!lastDeletedStroke) {
       return false; // No deleted strokes to restore
     }
-
-    // Find the most recently deleted stroke
-    const lastDeletedStroke = deletedStrokes.reduce((latest, stroke) => 
-      stroke.deletedAt > latest.deletedAt ? stroke : latest
-    );
 
     // Restore the stroke to the strokes table
     await ctx.db.insert("strokes", {
@@ -281,6 +289,18 @@ export const restoreLastDeletedStroke = mutation({
 
     // Remove from deleted strokes
     await ctx.db.delete(lastDeletedStroke._id);
+    
+    // Update recent stroke orders and deleted count
+    const recentOrders = session.recentStrokeOrders || [];
+    const updatedRecentOrders = [...recentOrders, lastDeletedStroke.strokeOrder]
+      .sort((a, b) => a - b)
+      .slice(-10); // Keep last 10 in order
+    const deletedCount = Math.max(0, (session.deletedStrokeCount || 1) - 1);
+    
+    await ctx.db.patch(args.sessionId, {
+      recentStrokeOrders: updatedRecentOrders,
+      deletedStrokeCount: deletedCount,
+    });
 
     return true;
   },
@@ -360,11 +380,53 @@ export const clearSession = mutation({
       await ctx.db.delete(deletedStroke._id);
     }
 
-    // Reset the stroke counter
+    // Reset the stroke counter and caches
     await ctx.db.patch(args.sessionId, {
       strokeCounter: 0,
+      recentStrokeOrders: [],
+      deletedStrokeCount: 0,
     });
 
     return null;
+  },
+});
+
+/**
+ * Get undo/redo availability for a session (optimized using cache)
+ */
+export const getUndoRedoAvailability = query({
+  args: {
+    sessionId: v.id("paintingSessions"),
+  },
+  returns: v.object({
+    canUndo: v.boolean(),
+    canRedo: v.boolean(),
+    strokeCount: v.number(),
+    deletedCount: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) {
+      return {
+        canUndo: false,
+        canRedo: false,
+        strokeCount: 0,
+        deletedCount: 0,
+      };
+    }
+
+    const recentOrders = session.recentStrokeOrders || [];
+    const deletedCount = session.deletedStrokeCount || 0;
+    
+    // If we have recent orders cached, we know we can undo
+    const canUndo = recentOrders.length > 0 || session.strokeCounter > 0;
+    const canRedo = deletedCount > 0;
+    
+    return {
+      canUndo,
+      canRedo,
+      strokeCount: session.strokeCounter,
+      deletedCount,
+    };
   },
 });

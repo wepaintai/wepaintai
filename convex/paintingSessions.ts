@@ -103,6 +103,8 @@ export const getSession = query({
       backgroundImage: v.optional(v.string()),
       thumbnailUrl: v.optional(v.string()),
       lastModified: v.optional(v.number()),
+      recentStrokeOrders: v.optional(v.array(v.number())),
+      deletedStrokeCount: v.optional(v.number()),
     }),
     v.null()
   ),
@@ -130,6 +132,8 @@ export const listRecentSessions = query({
     backgroundImage: v.optional(v.string()),
     thumbnailUrl: v.optional(v.string()),
     lastModified: v.optional(v.number()),
+    recentStrokeOrders: v.optional(v.array(v.number())),
+    deletedStrokeCount: v.optional(v.number()),
   })),
   handler: async (ctx) => {
     return await ctx.db
@@ -159,6 +163,8 @@ export const getUserSessions = query({
     backgroundImage: v.optional(v.string()),
     thumbnailUrl: v.optional(v.string()),
     lastModified: v.optional(v.number()),
+    recentStrokeOrders: v.optional(v.array(v.number())),
+    deletedStrokeCount: v.optional(v.number()),
   })),
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
