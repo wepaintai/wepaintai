@@ -1,5 +1,5 @@
 import React from 'react'
-import { X, Plus, Search, Trash2, Edit2, Image as ImageIcon, Loader2, Bug } from 'lucide-react'
+import { X, Plus, Search, Trash2, Edit2, Image as ImageIcon, Loader2 } from 'lucide-react'
 import { useQuery, useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import { Id } from '../../convex/_generated/dataModel'
@@ -31,9 +31,9 @@ export function LibraryModal({ isOpen, onClose, onCreateNew }: LibraryModalProps
   const updateSessionName = useMutation(api.paintingSessions.updateSessionName)
   const deleteSession = useMutation(api.paintingSessions.deleteSession)
   
-  // Debug info
-  const debugInfo = useQuery(api.debug.debugUserSessions)
-  const claimOrphaned = useMutation(api.debug.claimOrphanedSessions)
+  // Debug info - Hidden
+  // const debugInfo = useQuery(api.debug.debugUserSessions)
+  // const claimOrphaned = useMutation(api.debug.claimOrphanedSessions)
   const createTestSession = useMutation(api.paintingSessions.createSession)
 
   const filteredSessions = sessions.filter((session: SessionWithThumbnail) => {
@@ -142,8 +142,8 @@ export function LibraryModal({ isOpen, onClose, onCreateNew }: LibraryModalProps
             />
           </div>
           
-          {/* Debug Info (temporary) */}
-          {debugInfo && (
+          {/* Debug Info (temporary) - Hidden */}
+          {/* {debugInfo && (
             <div className="mt-2 p-2 bg-yellow-900/20 border border-yellow-600/20 rounded text-xs text-yellow-200">
               <div className="flex items-center gap-1 mb-1">
                 <Bug className="w-3 h-3" />
@@ -159,7 +159,7 @@ export function LibraryModal({ isOpen, onClose, onCreateNew }: LibraryModalProps
                 </div>
               )}
             </div>
-          )}
+          )} */}
         </div>
 
         {/* Content */}
