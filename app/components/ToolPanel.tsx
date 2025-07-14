@@ -91,8 +91,8 @@ const tools: Tool[] = [
   { id: 'eraser', icon: Eraser, label: 'Eraser', ariaLabel: 'Eraser tool', keyboardShortcut: 'E' },
   { id: 'pan', icon: Hand, label: 'Pan', ariaLabel: 'Pan/Move layers', keyboardShortcut: 'H' },
   { id: 'upload', icon: ImagePlus, label: 'Upload', ariaLabel: 'Upload image', keyboardShortcut: 'U' },
-  { id: 'ai', icon: Sparkles, label: 'AI', ariaLabel: 'AI Generation', keyboardShortcut: 'G' },
-  { id: 'inpaint', icon: Palette, label: 'Inpaint', ariaLabel: 'Inpaint tool', keyboardShortcut: 'I' },
+  // { id: 'ai', icon: Sparkles, label: 'AI', ariaLabel: 'AI Generation', keyboardShortcut: 'G' },
+  // { id: 'inpaint', icon: Palette, label: 'Inpaint', ariaLabel: 'Inpaint tool', keyboardShortcut: 'I' },
 ]
 
 // Slider component for better reusability
@@ -721,7 +721,7 @@ export function ToolPanel({
               {activeTab === 'tools' && (
                 <>
                   {/* Tool Selection */}
-                  <div className="grid grid-cols-4 border-b border-white/20 mb-3">
+                  <div className="grid grid-cols-4 mb-[10px]">
                     {tools.map((tool, index) => {
                       // Only disable AI tool for unauthenticated users
                       const isAIDisabled = tool.id === 'ai' && !effectiveIsSignedIn
@@ -747,12 +747,10 @@ export function ToolPanel({
                   </div>
 
                   {/* Color Mixer */}
-                  <div className="border-b border-white/20 mb-3 pb-3">
-                    <ColorMixer
-                      color={color}
-                      onColorChange={onColorChange}
-                    />
-                  </div>
+                  <ColorMixer
+                    color={color}
+                    onColorChange={onColorChange}
+                  />
 
                   {/* Sliders */}
                   <div className="border-b border-white/20 mb-3 pb-3">
@@ -901,9 +899,13 @@ export function ToolPanel({
           <button
             className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors flex items-center gap-2"
             onClick={() => {
+              console.log('[ToolPanel] Account button clicked, authDisabled:', authDisabled, 'VITE_AUTH_DISABLED:', import.meta.env.VITE_AUTH_DISABLED)
               setShowMenu(false)
               if (!authDisabled) {
+                console.log('[ToolPanel] Showing auth modal')
                 setShowAuthModal(true)
+              } else {
+                console.log('[ToolPanel] Auth is disabled, not showing modal')
               }
             }}
           >
@@ -938,7 +940,7 @@ export function ToolPanel({
             </button>
           ) : null}
           <div className="border-t border-white/20 my-1" />
-          <button
+          {/* <button
             className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors"
             onClick={() => {
               setShowMenu(false)
@@ -947,18 +949,18 @@ export function ToolPanel({
             }}
           >
             About
-          </button>
+          </button> */}
           <button
             className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors"
             onClick={() => {
               setShowMenu(false)
-              window.open('https://github.com/your-repo', '_blank')
+              window.open('https://github.com/wepaintai/wepaintai', '_blank')
             }}
           >
             GitHub
           </button>
           <div className="border-t border-white/20 my-1" />
-          <button
+          {/* <button
             className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors"
             onClick={() => {
               setShowMenu(false)
@@ -975,7 +977,7 @@ export function ToolPanel({
             }}
           >
             Keyboard Shortcuts
-          </button>
+          </button> */}
         </div>
       )}
       
