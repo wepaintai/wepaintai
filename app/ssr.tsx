@@ -1,5 +1,5 @@
-/// <reference types="vite/client" />
-import { eventHandler } from 'h3'
+/// <reference types="vinxi/types/server" />
+import { eventHandler } from 'vinxi/server'
 import {
   createStartHandler,
   defaultStreamHandler,
