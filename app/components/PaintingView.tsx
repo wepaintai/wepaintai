@@ -137,7 +137,7 @@ export function PaintingView() {
   const [showImageUpload, setShowImageUpload] = useState(false)
   const [showAIGeneration, setShowAIGeneration] = useState(false)
   const [selectedTool, setSelectedTool] = useState('brush')
-  const [activeLayerId, setActiveLayerId] = useState<string>('painting-layer')
+  const [activeLayerId, setActiveLayerId] = useState<string | null>(null)
   // Check if admin features should be shown based on environment
   const adminFeaturesEnabled = shouldShowAdminFeatures()
   const [isAdminPanelVisible, setIsAdminPanelVisible] = useState(adminFeaturesEnabled)
@@ -474,9 +474,8 @@ export function PaintingView() {
   const layers = useMemo(() => {
     const allLayers: Layer[] = []
     
-    // Add multiple paint layers
+    // Add paint layers - there should always be at least one
     if (paintLayers && paintLayers.length > 0) {
-      // Use existing paint layers
       paintLayers.forEach((paintLayer) => {
         allLayers.push({
           id: paintLayer._id,
@@ -486,18 +485,6 @@ export function PaintingView() {
           opacity: paintLayer.opacity,
           order: paintLayer.layerOrder,
         })
-      })
-    } else {
-      // Fallback to single paint layer for backward compatibility
-      const hasStrokes = Array.isArray(strokes) && strokes.length > 0
-      // console.log('[Layers] No paint layers found, using fallback single layer')
-      allLayers.push({
-        id: 'painting-layer',
-        type: 'stroke',
-        name: hasStrokes ? 'Painting' : 'Painting (empty)',
-        visible: paintingLayerVisible,
-        opacity: 1,
-        order: paintingLayerOrder,
       })
     }
     
@@ -546,11 +533,11 @@ export function PaintingView() {
 
   // Update activeLayerId when layers change (especially important for new sessions)
   useEffect(() => {
-    // If activeLayerId is still the default 'painting-layer' but we have actual paint layers
-    if (activeLayerId === 'painting-layer' && layers.length > 0) {
-      const firstPaintLayer = layers.find(l => l.type === 'paint' || l.type === 'stroke')
-      if (firstPaintLayer && firstPaintLayer.id !== 'painting-layer') {
-        console.log('[PaintingView] Updating activeLayerId from default to:', firstPaintLayer.id)
+    // If no active layer is set and we have layers, select the first paint layer
+    if (!activeLayerId && layers.length > 0) {
+      const firstPaintLayer = layers.find(l => l.type === 'paint')
+      if (firstPaintLayer) {
+        console.log('[PaintingView] Setting initial activeLayerId to:', firstPaintLayer.id)
         setActiveLayerId(firstPaintLayer.id)
         setActivePaintLayerId(firstPaintLayer.id)
       }
@@ -559,16 +546,6 @@ export function PaintingView() {
 
   // Handle layer operations
   const handleLayerVisibilityChange = useCallback(async (layerId: string, visible: boolean) => {
-    // Check if it's the old single painting layer
-    if (layerId === 'painting-layer') {
-      if (sessionId) {
-        await updatePaintLayerVisibility({ sessionId, visible })
-      }
-      // Force canvas redraw
-      canvasRef.current?.forceRedraw?.()
-      return
-    }
-    
     // Check if it's a paint layer
     const paintLayer = paintLayers?.find(layer => layer._id === layerId)
     if (paintLayer) {
@@ -602,17 +579,17 @@ export function PaintingView() {
     // console.log('[PaintingView] Available paint layers:', paintLayers)
     // console.log('[PaintingView] Available layers:', layers)
     
-    // Check if it's the old single painting layer
-    if (layerId === 'painting-layer') {
-      // Clear all strokes
-      await clearSession()
-      return
-    }
-    
     // Check if it's a paint layer
     const paintLayer = paintLayers?.find(layer => layer._id === layerId)
     // console.log('[PaintingView] Found paint layer:', paintLayer)
     if (paintLayer) {
+      // Prevent deleting the last paint layer
+      const paintLayersCount = paintLayers?.length || 0
+      if (paintLayersCount <= 1) {
+        console.log('[PaintingView] Cannot delete the last paint layer')
+        return
+      }
+      
       // console.log('[PaintingView] Deleting paint layer:', layerId)
       try {
         await deletePaintLayer({ layerId: layerId as Id<"paintLayers"> })
@@ -672,13 +649,6 @@ export function PaintingView() {
   }, [sessionId, layers, reorderLayer])
 
   const handleLayerOpacityChange = useCallback(async (layerId: string, opacity: number) => {
-    // Check if it's the old single painting layer
-    if (layerId === 'painting-layer') {
-      // TODO: Implement painting layer opacity
-      // console.log('Painting layer opacity not yet implemented')
-      return
-    }
-    
     // Check if it's a paint layer
     const paintLayer = paintLayers?.find(layer => layer._id === layerId)
     if (paintLayer) {
@@ -848,7 +818,7 @@ export function PaintingView() {
           setActiveLayerId(layerId)
           // If a paint layer is selected, update the active paint layer
           const layer = layers.find(l => l.id === layerId)
-          if (layer && (layer.type === 'paint' || (layer.type === 'stroke' && layerId === 'painting-layer'))) {
+          if (layer && layer.type === 'paint') {
             setActivePaintLayerId(layerId)
           }
         }}

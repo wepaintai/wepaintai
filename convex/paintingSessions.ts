@@ -75,6 +75,17 @@ export const createSession = mutation({
       paintLayerVisible: true, // Paint layer visible by default
     });
     
+    // Always create an initial paint layer for the session
+    await ctx.db.insert("paintLayers", {
+      sessionId,
+      name: "Layer 1",
+      layerOrder: 0,
+      visible: true,
+      opacity: 1,
+      createdBy: userId,
+      createdAt: Date.now(),
+    });
+    
     console.log("[createSession] Created session:", sessionId, "with userId:", userId);
     
     return sessionId;

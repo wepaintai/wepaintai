@@ -20,6 +20,9 @@ interface StrokePathProps {
 }
 
 const StrokePath = memo(({ stroke, pathData }: StrokePathProps) => {
+  if (stroke.isEraser) {
+    console.log('[StrokePath] Rendering eraser stroke:', stroke._id, 'with destination-out')
+  }
   return (
     <Path
       key={stroke._id}
@@ -125,7 +128,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     layers,
     activePaintLayerId,
     selectedTool = 'brush',
-    activeLayerId = 'painting-layer',
+    activeLayerId,
     // perfect-freehand options
     smoothing = 0.75,
     thinning = 0.5,
@@ -400,7 +403,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     // Check if erasing on a valid layer
     if (selectedTool === 'eraser') {
       const activeLayer = layers.find(l => l.id === activeLayerId)
-      if (!activeLayer || !['stroke', 'image', 'ai-image'].includes(activeLayer.type)) {
+      if (!activeLayer || !['paint', 'image', 'ai-image'].includes(activeLayer.type)) {
+        console.log('[KonvaCanvas] Eraser blocked - invalid layer type:', activeLayer?.type)
         return
       }
     }
@@ -535,13 +539,22 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
         pendingStrokeIdsRef.current.set(tempId, null)
         // Use activeLayerId when erasing on a paint layer, otherwise use activePaintLayerId for brush
         // If activePaintLayerId is null and we're using brush, fall back to activeLayerId if it's a paint layer
-        const layerIdToUse = (selectedTool === 'eraser' && activeLayer && (activeLayer.type === 'stroke' || activeLayer.type === 'paint')) 
+        let layerIdToUse = (selectedTool === 'eraser' && activeLayer && activeLayer.type === 'paint') 
           ? activeLayerId 
-          : (activePaintLayerId || (activeLayer && (activeLayer.type === 'stroke' || activeLayer.type === 'paint') ? activeLayerId : null))
+          : (activePaintLayerId || (activeLayer && activeLayer.type === 'paint' ? activeLayerId : null))
         
-        // console.log('[KonvaCanvas] Saving stroke with layerId:', layerIdToUse)
+        // Fallback: if no layerId is determined, use the first paint layer
+        if (!layerIdToUse) {
+          const firstPaintLayer = layers.find(l => l.type === 'paint')
+          if (firstPaintLayer) {
+            layerIdToUse = firstPaintLayer.id
+            console.log('[KonvaCanvas] No layerId determined, using first paint layer:', layerIdToUse)
+          }
+        }
+        
+        console.log('[KonvaCanvas] Saving stroke with layerId:', layerIdToUse, 'isEraser:', selectedTool === 'eraser', 'activeLayerId:', activeLayerId, 'activePaintLayerId:', activePaintLayerId, 'activeLayer:', activeLayer)
         addStrokeToSession(finalStrokePoints, color, size, opacity, selectedTool === 'eraser', layerIdToUse).then(strokeId => {
-          // console.log('[KonvaCanvas] Stroke saved with ID:', strokeId)
+          console.log('[KonvaCanvas] Stroke saved with ID:', strokeId)
           if (strokeId) {
             pendingStrokeIdsRef.current.set(tempId, strokeId)
           }
@@ -803,7 +816,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
             .map((layer, idx) => (
               <div key={layer.id} className="flex items-center gap-2">
                 <span className="text-gray-400">{idx}:</span>
-                <span className={layer.type === 'stroke' || layer.type === 'paint' ? 'text-blue-400' : layer.type === 'ai-image' ? 'text-purple-400' : 'text-green-400'}>
+                <span className={layer.type === 'paint' ? 'text-blue-400' : layer.type === 'ai-image' ? 'text-purple-400' : 'text-green-400'}>
                   {layer.name}
                 </span>
                 <span className="text-gray-500">(order: {layer.order})</span>
@@ -835,18 +848,21 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
             //   order: layer.order,
             //   visible: layer.visible,
             //   opacity: layer.opacity,
-            //   isPaintLayer: layer.type === 'stroke' || layer.type === 'paint',
+            //   isPaintLayer: layer.type === 'paint',
             //   isAILayer: layer.type === 'ai-image'
             // })
 
-            // Paint layer (supports both 'stroke' for backward compatibility and 'paint' for new multi-layer)
-            if (layer.type === 'stroke' || layer.type === 'paint') {
+            // Paint layer
+            if (layer.type === 'paint') {
               // Filter strokes for this specific paint layer
-              // For paint layers, filter by layerId
-              // For stroke layer (backward compatibility), show strokes without layerId OR with layerId matching 'painting-layer'
-              const layerStrokes = layer.type === 'paint' 
-                ? strokes.filter(stroke => stroke.layerId === layer.id)
-                : strokes.filter(stroke => !stroke.layerId || stroke.layerId === 'painting-layer') // Show strokes without layerId or with 'painting-layer' id
+              const layerStrokes = strokes.filter(stroke => stroke.layerId === layer.id)
+              // console.log('[KonvaCanvas] Paint layer strokes:', {
+              //   layerId: layer.id,
+              //   totalStrokes: strokes.length,
+              //   layerStrokes: layerStrokes.length,
+              //   eraserStrokes: layerStrokes.filter(s => s.isEraser).length,
+              //   paintStrokes: layerStrokes.filter(s => !s.isEraser).length
+              // })
               
               // console.log('[KonvaCanvas] Rendering paint layer:', {
               //   layerId: layer.id,
@@ -859,7 +875,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
               //   activeLayerId,
               //   isDrawing,
               //   currentStrokeLength: currentStroke.length,
-              //   willRenderCurrentStroke: isDrawing && currentStroke.length > 0 && layer.id === activeLayerId
+              //   willRenderCurrentStroke: isDrawing && currentStroke.length > 0 && layer.id === activeLayerId,
+              //   eraserStrokes: layerStrokes.filter(s => s.isEraser).length
               // })
                 
               // Debug: Log when rendering paint layer
@@ -892,6 +909,13 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       
                       if (!pathData) return null
                       
+                      // console.log('[KonvaCanvas] Rendering stroke:', {
+                      //   strokeId: stroke._id,
+                      //   isEraser: stroke.isEraser,
+                      //   layerId: stroke.layerId,
+                      //   strokeOrder: stroke.strokeOrder
+                      // })
+                      
                       return <StrokePath key={stroke._id} stroke={stroke} pathData={pathData} />
                     })}
                   
@@ -912,7 +936,9 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                   })}
                   
                   {/* Render current stroke being drawn (including eraser) */}
-                  {isDrawing && currentStroke.length > 0 && layer.id === activeLayerId && (
+                  {isDrawing && currentStroke.length > 0 && 
+                    ((selectedTool === 'eraser' && layer.id === activeLayerId) || 
+                     (selectedTool === 'brush' && (layer.id === activePaintLayerId || (!activePaintLayerId && layer.id === activeLayerId)))) && (
                     <Path
                       data={getStrokePathData({
                         points: currentStroke,

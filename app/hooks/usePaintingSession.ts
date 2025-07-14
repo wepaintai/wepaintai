@@ -184,6 +184,8 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
   ) => {
     if (!sessionId) return;
     
+    console.log('[usePaintingSession] Adding stroke with isEraser:', isEraser, 'layerId:', layerId);
+    
     return await addStroke({
       sessionId,
       layerId: layerId ? layerId as Id<"paintLayers"> : undefined,
