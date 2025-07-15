@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
-import { X, Sparkles, Loader2, Palette, Camera, Smile, Grid3X3, Coins } from 'lucide-react'
-import { useAction, useQuery } from 'convex/react'
+import { X, Sparkles, Loader2, Palette, Camera, Smile, Grid3X3, Coins, History } from 'lucide-react'
+import { useAction, useQuery, useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import type { Id } from '../../convex/_generated/dataModel'
 
@@ -30,6 +30,8 @@ export function AIGenerationModal({
   
   const generateImage = useAction(api.aiGeneration.generateImage)
   const tokenBalance = useQuery(api.tokens.getTokenBalance)
+  const previousPrompts = useQuery(api.paintingSessions.getAIPrompts, { sessionId })
+  const addAIPrompt = useMutation(api.paintingSessions.addAIPrompt)
 
   const handleGenerate = async () => {
     if (!prompt.trim()) {
@@ -62,6 +64,8 @@ export function AIGenerationModal({
       
       if (result.success && result.imageUrl) {
         console.log('Generated image URL:', result.imageUrl)
+        // Save the prompt to history
+        await addAIPrompt({ sessionId, prompt: prompt.trim() })
         onGenerationComplete(result.imageUrl)
         onClose()
       } else {
@@ -166,6 +170,32 @@ export function AIGenerationModal({
             </button>
           </div>
         </div>
+
+        {/* Previous prompts dropdown */}
+        {previousPrompts && previousPrompts.length > 0 && (
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-white mb-2">
+              <History className="w-4 h-4 inline mr-1" />
+              Previous prompts:
+            </label>
+            <select
+              onChange={(e) => {
+                if (e.target.value) {
+                  setPrompt(e.target.value)
+                }
+              }}
+              disabled={isGenerating}
+              className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400 text-white [&>option]:bg-gray-900"
+            >
+              <option value="">Select a previous prompt...</option>
+              {previousPrompts.map((prevPrompt, index) => (
+                <option key={index} value={prevPrompt}>
+                  {prevPrompt.length > 60 ? prevPrompt.substring(0, 60) + '...' : prevPrompt}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {/* Prompt input */}
         <div className="mb-4">

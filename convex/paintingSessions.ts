@@ -116,6 +116,7 @@ export const getSession = query({
       lastModified: v.optional(v.number()),
       recentStrokeOrders: v.optional(v.array(v.number())),
       deletedStrokeCount: v.optional(v.number()),
+      aiPrompts: v.optional(v.array(v.string())),
     }),
     v.null()
   ),
@@ -145,6 +146,7 @@ export const listRecentSessions = query({
     lastModified: v.optional(v.number()),
     recentStrokeOrders: v.optional(v.array(v.number())),
     deletedStrokeCount: v.optional(v.number()),
+    aiPrompts: v.optional(v.array(v.string())),
   })),
   handler: async (ctx) => {
     return await ctx.db
@@ -176,6 +178,7 @@ export const getUserSessions = query({
     lastModified: v.optional(v.number()),
     recentStrokeOrders: v.optional(v.array(v.number())),
     deletedStrokeCount: v.optional(v.number()),
+    aiPrompts: v.optional(v.array(v.string())),
   })),
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -292,5 +295,48 @@ export const updateSessionThumbnail = mutation({
       thumbnailUrl: args.thumbnailUrl,
       lastModified: Date.now(),
     });
+  },
+});
+
+/**
+ * Add AI prompt to session history
+ */
+export const addAIPrompt = mutation({
+  args: {
+    sessionId: v.id("paintingSessions"),
+    prompt: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) {
+      throw new Error("Session not found");
+    }
+
+    const currentPrompts = session.aiPrompts || [];
+    
+    // Only add if it's not already in the list (avoid duplicates)
+    if (!currentPrompts.includes(args.prompt)) {
+      await ctx.db.patch(args.sessionId, {
+        aiPrompts: [...currentPrompts, args.prompt],
+        lastModified: Date.now(),
+      });
+    }
+  },
+});
+
+/**
+ * Get AI prompts for a session
+ */
+export const getAIPrompts = query({
+  args: {
+    sessionId: v.id("paintingSessions"),
+  },
+  returns: v.array(v.string()),
+  handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) {
+      return [];
+    }
+    return session.aiPrompts || [];
   },
 });

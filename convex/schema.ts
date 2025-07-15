@@ -17,6 +17,8 @@ const schema = defineSchema({
     // Undo/redo optimization: track last few stroke orders for quick access
     recentStrokeOrders: v.optional(v.array(v.number())), // Last 10 stroke orders for quick undo
     deletedStrokeCount: v.optional(v.number()), // Count of deleted strokes for quick redo check
+    // AI generation prompts history
+    aiPrompts: v.optional(v.array(v.string())), // Array of unique prompts used in this session
   }),
 
   strokes: defineTable({
