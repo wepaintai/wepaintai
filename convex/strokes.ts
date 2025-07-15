@@ -248,6 +248,7 @@ export const removeLastStroke = mutation({
       opacity: lastStroke.opacity,
       strokeOrder: lastStroke.strokeOrder,
       isEraser: lastStroke.isEraser,
+      colorMode: lastStroke.colorMode,
       deletedAt: Date.now(),
     });
 
@@ -326,6 +327,7 @@ export const restoreLastDeletedStroke = mutation({
       opacity: lastDeletedStroke.opacity,
       strokeOrder: lastDeletedStroke.strokeOrder,
       isEraser: lastDeletedStroke.isEraser,
+      colorMode: lastDeletedStroke.colorMode,
     });
 
     // Remove from deleted strokes
@@ -387,6 +389,7 @@ export const deleteStroke = mutation({
       opacity: stroke.opacity,
       strokeOrder: stroke.strokeOrder,
       isEraser: stroke.isEraser,
+      colorMode: stroke.colorMode,
       deletedAt: Date.now(),
     });
 
