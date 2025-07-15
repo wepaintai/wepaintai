@@ -419,8 +419,25 @@ export function PaintingView() {
     
     img.onload = async () => {
       try {
-        // Get canvas dimensions
-        const canvasDimensions = canvasRef.current?.getDimensions() || { width: 800, height: 600 }
+        // Small delay to ensure canvas is fully rendered and dimensions are available
+        await new Promise(resolve => setTimeout(resolve, 100))
+        
+        // Get canvas dimensions with better fallback handling
+        let canvasDimensions = canvasRef.current?.getDimensions()
+        
+        // If dimensions are still 0 or undefined, wait a bit more
+        if (!canvasDimensions || canvasDimensions.width === 0 || canvasDimensions.height === 0) {
+          await new Promise(resolve => setTimeout(resolve, 200))
+          canvasDimensions = canvasRef.current?.getDimensions()
+        }
+        
+        // Final fallback to viewport size if still no dimensions
+        if (!canvasDimensions || canvasDimensions.width === 0 || canvasDimensions.height === 0) {
+          canvasDimensions = {
+            width: window.innerWidth,
+            height: window.innerHeight
+          }
+        }
         
         // Add the AI-generated image to Convex
         await addAIGeneratedImage({

@@ -238,7 +238,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   const strokeEndedRef = useRef(false)
   const loadedImagesRef = useRef<Map<string, HTMLImageElement>>(new Map())
   const containerRef = useRef<HTMLDivElement>(null)
-  const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
+  const [dimensions, setDimensions] = useState({ width: 0, height: 0 })
   const [konvaImages, setKonvaImages] = useState<Map<string, HTMLImageElement>>(new Map())
   // Map to track pending strokes by their temporary IDs to backend IDs
   const pendingStrokeIdsRef = useRef<Map<string, Id<"strokes"> | null>>(new Map())
@@ -354,7 +354,10 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       }
     }
 
-    updateDimensions()
+    // Use RAF to ensure DOM is ready
+    requestAnimationFrame(updateDimensions)
+    
+    // Also update on resize
     window.addEventListener('resize', updateDimensions)
     return () => window.removeEventListener('resize', updateDimensions)
   }, [])
@@ -842,7 +845,16 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
         return ''
       }
     },
-    getDimensions: () => dimensions,
+    getDimensions: () => {
+      // If dimensions haven't been set yet, try to get them from the container
+      if (dimensions.width === 0 || dimensions.height === 0) {
+        if (containerRef.current) {
+          const { clientWidth, clientHeight } = containerRef.current
+          return { width: clientWidth || 800, height: clientHeight || 600 }
+        }
+      }
+      return dimensions
+    },
     forceRedraw: () => {
       // Force redraw all layers
       // console.log('[KonvaCanvas] forceRedraw called')
