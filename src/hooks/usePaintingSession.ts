@@ -23,6 +23,7 @@ export interface Stroke {
   opacity: number;
   strokeOrder: number;
   isEraser?: boolean;
+  colorMode?: 'solid' | 'rainbow';
 }
 
 export interface UserPresence {
@@ -50,6 +51,7 @@ export interface LiveStroke {
   brushColor: string;
   brushSize: number;
   opacity: number;
+  colorMode?: 'solid' | 'rainbow';
   lastUpdated: number;
 }
 
@@ -180,11 +182,12 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     brushSize: number,
     opacity: number = 1,
     isEraser: boolean = false,
-    layerId?: string | null
+    layerId?: string | null,
+    colorMode?: 'solid' | 'rainbow'
   ) => {
     if (!sessionId) return;
     
-    console.log('[usePaintingSession] Adding stroke with isEraser:', isEraser, 'layerId:', layerId);
+    console.log('[usePaintingSession] Adding stroke with isEraser:', isEraser, 'layerId:', layerId, 'colorMode:', colorMode);
     
     return await addStroke({
       sessionId,
@@ -196,6 +199,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
       brushSize,
       opacity,
       isEraser,
+      colorMode,
     });
   }, [sessionId, addStroke, currentUser]);
 
@@ -267,6 +271,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     brushColor: string;
     brushSize: number;
     opacity: number;
+    colorMode?: 'solid' | 'rainbow';
   } | null>(null);
   const lastUpdateTimeRef = useRef<number>(0);
 
@@ -275,7 +280,8 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     points: PaintPoint[],
     brushColor: string,
     brushSize: number,
-    opacity: number = 1
+    opacity: number = 1,
+    colorMode?: 'solid' | 'rainbow'
   ) => {
     if (!sessionId) return;
     
@@ -283,7 +289,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     const timeSinceLastUpdate = now - lastUpdateTimeRef.current;
     
     // Store the latest stroke data
-    pendingLiveStrokeRef.current = { points, brushColor, brushSize, opacity };
+    pendingLiveStrokeRef.current = { points, brushColor, brushSize, opacity, colorMode };
     
     // If this is the first point or enough time has passed, update immediately
     if (points.length === 1 || timeSinceLastUpdate >= 16) { // ~60 FPS for immediate updates
@@ -298,6 +304,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
         brushColor,
         brushSize,
         opacity,
+        colorMode,
       });
       pendingLiveStrokeRef.current = null;
       
@@ -329,6 +336,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
           brushColor: pending.brushColor,
           brushSize: pending.brushSize,
           opacity: pending.opacity,
+          colorMode: pending.colorMode,
         });
         pendingLiveStrokeRef.current = null;
       }
