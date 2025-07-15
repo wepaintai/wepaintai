@@ -1,5 +1,3 @@
-/// <reference types="vinxi/types/server" />
-import { eventHandler } from 'vinxi/server'
 import {
   createStartHandler,
   defaultStreamHandler,
@@ -12,6 +10,4 @@ const pageHandler = createStartHandler({
   getRouterManifest,
 })(defaultStreamHandler)
 
-export default eventHandler(async (event) => {
-  return pageHandler(event)
-})
+export default pageHandler
