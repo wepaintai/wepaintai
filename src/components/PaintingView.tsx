@@ -114,6 +114,7 @@ export function PaintingView() {
   const [color, setColor] = useState('#000000')
   const [size, setSize] = useState(20) // perfect-freehand: size
   const [opacity, setOpacity] = useState(1.0)
+  const [colorMode, setColorMode] = useState<'solid' | 'rainbow'>('solid')
   
   // Feature flag to enable Konva canvas - can be toggled via environment variable or local storage
   const useKonvaCanvas = import.meta.env.VITE_USE_KONVA_CANVAS === 'true' || 
@@ -729,6 +730,7 @@ export function PaintingView() {
             color={color}
             size={size}
             opacity={opacity}
+            colorMode={colorMode}
             layers={layers}
             selectedTool={selectedTool}
             activeLayerId={activeLayerId}
@@ -751,6 +753,7 @@ export function PaintingView() {
             color={color}
             size={size}
             opacity={opacity}
+            colorMode={colorMode}
             layers={layers}
             activePaintLayerId={activePaintLayerId}
             // perfect-freehand options
@@ -827,6 +830,8 @@ export function PaintingView() {
         onLayerDelete={handleLayerDelete}
         onLayerOpacityChange={handleLayerOpacityChange}
         onCreatePaintLayer={handleCreatePaintLayer}
+        colorMode={colorMode}
+        onColorModeChange={setColorMode}
       />
       {showImageUpload && (
         <ImageUploadModal

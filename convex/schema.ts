@@ -34,6 +34,7 @@ const schema = defineSchema({
     opacity: v.number(),
     strokeOrder: v.number(), // For ordering strokes
     isEraser: v.optional(v.boolean()), // True if this stroke is an eraser stroke
+    colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))), // Color mode for special effects
   }).index("by_session", ["sessionId", "strokeOrder"])
     .index("by_layer", ["sessionId", "layerId", "strokeOrder"]),
 
@@ -63,6 +64,7 @@ const schema = defineSchema({
     brushColor: v.string(),
     brushSize: v.number(),
     opacity: v.number(),
+    colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))), // Color mode for special effects
     lastUpdated: v.number(),
   }).index("by_session", ["sessionId"])
     .index("by_user_session", ["userId", "sessionId"]),
@@ -178,6 +180,7 @@ const schema = defineSchema({
     opacity: v.number(),
     strokeOrder: v.number(),
     isEraser: v.optional(v.boolean()),
+    colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))), // Color mode for special effects
     deletedAt: v.number(),
   }).index("by_session_deleted", ["sessionId", "deletedAt"]),
 

@@ -65,6 +65,8 @@ interface ToolPanelProps {
   onLayerDelete?: (layerId: string) => void
   onLayerOpacityChange?: (layerId: string, opacity: number) => void
   onCreatePaintLayer?: () => void
+  colorMode?: 'solid' | 'rainbow'
+  onColorModeChange?: (mode: 'solid' | 'rainbow') => void
 }
 
 interface Tool {
@@ -222,35 +224,79 @@ ActionButton.displayName = 'ActionButton'
 // Color Mixer component
 const ColorMixer = React.memo(({ 
   color, 
-  onColorChange 
+  onColorChange,
+  colorMode = 'solid',
+  onColorModeChange
 }: { 
   color: string, 
-  onColorChange: (color: string) => void 
+  onColorChange: (color: string) => void,
+  colorMode?: 'solid' | 'rainbow',
+  onColorModeChange?: (mode: 'solid' | 'rainbow') => void
 }) => {
   const handleColorChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onColorChange(e.target.value)
   }
   
   return (
-    <div className="flex items-center gap-2 mb-3" role="group" aria-labelledby="color-mixer-label">
-      <Pipette className="w-4 h-4 text-white/60 flex-shrink-0" aria-hidden="true" />
-      <div className="flex-1 relative">
-        <div
-          className="w-full h-6 border border-white/20 rounded transition-all duration-100 hover:border-blue-400"
-          style={{ backgroundColor: color }}
-          title="Click to change color"
-        >
-          <span className="sr-only">Current color: {color}</span>
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 mb-3" role="group" aria-labelledby="color-mixer-label">
+        <Pipette className="w-4 h-4 text-white/60 flex-shrink-0" aria-hidden="true" />
+        <div className="flex-1 relative">
+          <div
+            className="w-full h-6 border border-white/20 rounded transition-all duration-100 hover:border-blue-400 overflow-hidden"
+            style={{ 
+              backgroundColor: colorMode === 'rainbow' 
+                ? 'transparent' 
+                : color,
+              backgroundImage: colorMode === 'rainbow' 
+                ? 'linear-gradient(to right, #ff0000, #ff7f00, #ffff00, #00ff00, #0000ff, #4b0082, #9400d3)'
+                : undefined
+            }}
+            title={colorMode === 'rainbow' ? 'Rainbow color mode' : 'Click to change color'}
+          >
+            <span className="sr-only">
+              {colorMode === 'rainbow' ? 'Rainbow color mode' : `Current color: ${color}`}
+            </span>
+          </div>
+          {colorMode === 'solid' && (
+            <input
+              type="color"
+              value={color}
+              onChange={handleColorChange}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+              aria-label="Color picker"
+            />
+          )}
         </div>
-        <input
-          type="color"
-          value={color}
-          onChange={handleColorChange}
-          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-          aria-label="Color picker"
-        />
+        <span id="color-mixer-label" className="sr-only">Color mixer</span>
       </div>
-      <span id="color-mixer-label" className="sr-only">Color mixer</span>
+      
+      {onColorModeChange && (
+        <div className="flex items-center gap-2 px-0.5">
+          <button
+            onClick={() => onColorModeChange('solid')}
+            className={`flex-1 py-1 px-2 text-xs rounded transition-colors ${
+              colorMode === 'solid'
+                ? 'bg-blue-500 text-white'
+                : 'bg-white/10 text-white/60 hover:bg-white/20'
+            }`}
+            aria-pressed={colorMode === 'solid'}
+          >
+            Solid
+          </button>
+          <button
+            onClick={() => onColorModeChange('rainbow')}
+            className={`flex-1 py-1 px-2 text-xs rounded transition-colors ${
+              colorMode === 'rainbow'
+                ? 'bg-blue-500 text-white'
+                : 'bg-white/10 text-white/60 hover:bg-white/20'
+            }`}
+            aria-pressed={colorMode === 'rainbow'}
+          >
+            Rainbow
+          </button>
+        </div>
+      )}
     </div>
   )
 })
@@ -422,6 +468,8 @@ export function ToolPanel({
   onLayerDelete,
   onLayerOpacityChange,
   onCreatePaintLayer,
+  colorMode = 'solid',
+  onColorModeChange,
 }: ToolPanelProps) {
   const { userId, isLoaded } = useAuth()
   const { isSignedIn, user } = useUser()
@@ -750,6 +798,8 @@ export function ToolPanel({
                   <ColorMixer
                     color={color}
                     onColorChange={onColorChange}
+                    colorMode={colorMode}
+                    onColorModeChange={onColorModeChange}
                   />
 
                   {/* Sliders */}

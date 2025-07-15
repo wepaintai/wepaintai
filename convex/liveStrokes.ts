@@ -18,6 +18,7 @@ export const updateLiveStroke = mutation({
     brushColor: v.string(),
     brushSize: v.number(),
     opacity: v.number(),
+    colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -40,6 +41,7 @@ export const updateLiveStroke = mutation({
         brushColor: args.brushColor,
         brushSize: args.brushSize,
         opacity: args.opacity,
+        colorMode: args.colorMode,
         lastUpdated: now,
       });
     } else {
@@ -53,6 +55,7 @@ export const updateLiveStroke = mutation({
         brushColor: args.brushColor,
         brushSize: args.brushSize,
         opacity: args.opacity,
+        colorMode: args.colorMode,
         lastUpdated: now,
       });
     }
@@ -83,6 +86,7 @@ export const getLiveStrokes = query({
     brushColor: v.string(),
     brushSize: v.number(),
     opacity: v.number(),
+    colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))),
     lastUpdated: v.number(),
   })),
   handler: async (ctx, args) => {

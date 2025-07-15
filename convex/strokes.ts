@@ -19,6 +19,7 @@ export const addStroke = mutation({
     brushSize: v.number(),
     opacity: v.number(),
     isEraser: v.optional(v.boolean()),
+    colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))),
   },
   returns: v.id("strokes"),
   handler: async (ctx, args) => {
@@ -77,6 +78,7 @@ export const addStroke = mutation({
       opacity: args.opacity,
       strokeOrder,
       isEraser: args.isEraser,
+      colorMode: args.colorMode,
     });
 
     return strokeId;
@@ -107,6 +109,7 @@ export const getSessionStrokes = query({
     opacity: v.number(),
     strokeOrder: v.number(),
     isEraser: v.optional(v.boolean()),
+    colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))),
   })),
   handler: async (ctx, args) => {
     return await ctx.db
@@ -141,6 +144,7 @@ export const getLayerStrokes = query({
     opacity: v.number(),
     strokeOrder: v.number(),
     isEraser: v.optional(v.boolean()),
+    colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))),
   })),
   handler: async (ctx, args) => {
     return await ctx.db
@@ -177,6 +181,7 @@ export const getStrokesAfter = query({
     opacity: v.number(),
     strokeOrder: v.number(),
     isEraser: v.optional(v.boolean()),
+    colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))),
   })),
   handler: async (ctx, args) => {
     return await ctx.db
