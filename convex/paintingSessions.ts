@@ -115,7 +115,9 @@ export const getSession = query({
       thumbnailUrl: v.optional(v.string()),
       lastModified: v.optional(v.number()),
       recentStrokeOrders: v.optional(v.array(v.number())),
+      recentStrokeIds: v.optional(v.array(v.id("strokes"))),
       deletedStrokeCount: v.optional(v.number()),
+      lastDeletedStrokeOrder: v.optional(v.number()),
       aiPrompts: v.optional(v.array(v.string())),
     }),
     v.null()
@@ -145,7 +147,9 @@ export const listRecentSessions = query({
     thumbnailUrl: v.optional(v.string()),
     lastModified: v.optional(v.number()),
     recentStrokeOrders: v.optional(v.array(v.number())),
+    recentStrokeIds: v.optional(v.array(v.id("strokes"))),
     deletedStrokeCount: v.optional(v.number()),
+    lastDeletedStrokeOrder: v.optional(v.number()),
     aiPrompts: v.optional(v.array(v.string())),
   })),
   handler: async (ctx) => {
@@ -177,7 +181,9 @@ export const getUserSessions = query({
     thumbnailUrl: v.optional(v.string()),
     lastModified: v.optional(v.number()),
     recentStrokeOrders: v.optional(v.array(v.number())),
+    recentStrokeIds: v.optional(v.array(v.id("strokes"))),
     deletedStrokeCount: v.optional(v.number()),
+    lastDeletedStrokeOrder: v.optional(v.number()),
     aiPrompts: v.optional(v.array(v.string())),
   })),
   handler: async (ctx) => {

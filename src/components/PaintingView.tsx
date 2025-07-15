@@ -166,8 +166,12 @@ export function PaintingView() {
   // Check if admin features should be shown based on environment
   const adminFeaturesEnabled = shouldShowAdminFeatures()
   const [isAdminPanelVisible, setIsAdminPanelVisible] = useState(adminFeaturesEnabled)
+  
+  // Mutation state to prevent concurrent operations
+  const [isMutating, setIsMutating] = useState(false)
+  const lastMutationTime = useRef(0)
 
-  const { createNewSession, presence, currentUser, isLoading, clearSession, undoLastStroke, redoLastStroke, strokes } = usePaintingSession(sessionId)
+  const { createNewSession, presence, currentUser, isLoading, clearSession, undoLastStroke, redoLastStroke, strokes, undoRedoAvailability } = usePaintingSession(sessionId)
   const addAIGeneratedImage = useMutation(api.images.addAIGeneratedImage)
   const updateAIImageTransform = useMutation(api.images.updateAIImageTransform)
   
@@ -315,18 +319,44 @@ export function PaintingView() {
   }
 
   const handleUndo = async () => {
+    // Check if we can undo before attempting
+    if (!undoRedoAvailability?.canUndo || isMutating) return
+    
+    // Rate limit to prevent too many concurrent mutations
+    const now = Date.now()
+    if (now - lastMutationTime.current < 100) return
+    lastMutationTime.current = now
+    
+    setIsMutating(true)
+    
     try {
       await undoLastStroke()
     } catch (error) {
       console.error('Failed to undo stroke:', error)
+      // The UI will automatically update based on the query state
+    } finally {
+      setIsMutating(false)
     }
   }
 
   const handleRedo = async () => {
+    // Check if we can redo before attempting
+    if (!undoRedoAvailability?.canRedo || isMutating) return
+    
+    // Rate limit to prevent too many concurrent mutations
+    const now = Date.now()
+    if (now - lastMutationTime.current < 100) return
+    lastMutationTime.current = now
+    
+    setIsMutating(true)
+    
     try {
       await redoLastStroke()
     } catch (error) {
       console.error('Failed to redo stroke:', error)
+      // The UI will automatically update based on the query state
+    } finally {
+      setIsMutating(false)
     }
   }
 
@@ -858,6 +888,8 @@ export function PaintingView() {
         onColorModeChange={setColorMode}
         brushSettings={brushSettings}
         onBrushSettingsChange={setBrushSettings}
+        canUndo={(undoRedoAvailability?.canUndo ?? false) && !isMutating}
+        canRedo={(undoRedoAvailability?.canRedo ?? false) && !isMutating}
       />
       {showImageUpload && (
         <ImageUploadModal

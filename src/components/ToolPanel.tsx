@@ -71,6 +71,8 @@ interface ToolPanelProps {
   onColorModeChange?: (mode: 'solid' | 'rainbow') => void
   brushSettings?: BrushSettings
   onBrushSettingsChange?: (settings: BrushSettings) => void
+  canUndo?: boolean
+  canRedo?: boolean
 }
 
 interface Tool {
@@ -202,17 +204,22 @@ const ActionButton = React.memo(({
   icon: Icon, 
   label, 
   onClick, 
-  isPrimary = false 
+  isPrimary = false,
+  disabled = false 
 }: { 
   icon: React.ElementType, 
   label: string, 
   onClick: () => void, 
-  isPrimary?: boolean 
+  isPrimary?: boolean,
+  disabled?: boolean 
 }) => (
   <button
     onClick={onClick}
+    disabled={disabled}
     className={`w-8 h-8 flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-blue-400 ${
-      isPrimary 
+      disabled
+        ? 'bg-white/5 text-white/30 cursor-not-allowed'
+        : isPrimary 
         ? 'bg-blue-500 text-white hover:bg-blue-600' 
         : 'bg-white/10 text-white hover:bg-white/20'
     }`}
@@ -476,6 +483,8 @@ export function ToolPanel({
   onColorModeChange,
   brushSettings,
   onBrushSettingsChange,
+  canUndo = true,
+  canRedo = true,
 }: ToolPanelProps) {
   const { userId, isLoaded } = useAuth()
   const { isSignedIn, user } = useUser()
@@ -835,10 +844,10 @@ export function ToolPanel({
                   {/* Action Buttons */}
                   <div className="grid grid-cols-4">
                     <div className="border-r border-white/20">
-                      <ActionButton icon={Undo2} label="Undo" onClick={onUndo} />
+                      <ActionButton icon={Undo2} label="Undo" onClick={onUndo} disabled={!canUndo} />
                     </div>
                     <div className="border-r border-white/20">
-                      <ActionButton icon={Redo2} label="Redo" onClick={onRedo} />
+                      <ActionButton icon={Redo2} label="Redo" onClick={onRedo} disabled={!canRedo} />
                     </div>
                     <div className="border-r border-white/20">
                       <ActionButton icon={X} label="Clear Canvas" onClick={onClear} />

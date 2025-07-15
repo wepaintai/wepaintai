@@ -16,7 +16,9 @@ const schema = defineSchema({
     lastModified: v.optional(v.number()), // Last modification timestamp
     // Undo/redo optimization: track last few stroke orders for quick access
     recentStrokeOrders: v.optional(v.array(v.number())), // Last 10 stroke orders for quick undo
+    recentStrokeIds: v.optional(v.array(v.id("strokes"))), // Last 10 stroke IDs for instant undo
     deletedStrokeCount: v.optional(v.number()), // Count of deleted strokes for quick redo check
+    lastDeletedStrokeOrder: v.optional(v.number()), // Order of the last deleted stroke for quick redo
     // AI generation prompts history
     aiPrompts: v.optional(v.array(v.string())), // Array of unique prompts used in this session
   }),
@@ -184,7 +186,8 @@ const schema = defineSchema({
     isEraser: v.optional(v.boolean()),
     colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))), // Color mode for special effects
     deletedAt: v.number(),
-  }).index("by_session_deleted", ["sessionId", "deletedAt"]),
+  }).index("by_session_deleted", ["sessionId", "deletedAt"])
+    .index("by_session_stroke", ["sessionId", "strokeOrder"]),
 
   // Paint layers for multi-layer painting support
   paintLayers: defineTable({

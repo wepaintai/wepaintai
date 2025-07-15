@@ -97,6 +97,11 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     api.liveStrokes.getLiveStrokes,
     sessionId ? { sessionId } : "skip"
   );
+  
+  const undoRedoAvailability = useQuery(
+    api.strokes.getUndoRedoAvailability,
+    sessionId ? { sessionId } : "skip"
+  );
 
   // Mutations
   const createSession = useMutation(api.paintingSessions.createSession);
@@ -394,6 +399,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     presence: presence || [],
     liveStrokes: liveStrokes || [],
     currentUser,
+    undoRedoAvailability,
     
     // Actions
     createNewSession,
