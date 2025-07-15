@@ -33,42 +33,61 @@ const RainbowStroke = memo(({ stroke }: { stroke: Stroke }) => {
   
   if (points.length < 2) return null
   
-  // Create overlapping segments for smooth color transition
-  const segmentLength = Math.max(5, Math.floor(points.length / 10)) // Dynamic segment length
+  // Fixed segment length in pixels for consistent rainbow effect
+  const SEGMENT_LENGTH = 15 // Fixed length for each color segment
+  const SEGMENT_OVERLAP = 5 // Overlap between segments for smooth transitions
   
-  for (let i = 0; i < points.length - 1; i += Math.max(1, Math.floor(segmentLength / 3))) {
-    const endIdx = Math.min(i + segmentLength, points.length)
-    const segmentPoints = points.slice(i, endIdx)
+  // Track total distance for color progression
+  let totalDistanceTraveled = 0
+  let currentSegmentDistance = 0
+  let segmentStartIdx = 0
+  
+  for (let i = 1; i < points.length; i++) {
+    const dx = points[i].x - points[i - 1].x
+    const dy = points[i].y - points[i - 1].y
+    const distance = Math.sqrt(dx * dx + dy * dy)
+    currentSegmentDistance += distance
+    totalDistanceTraveled += distance
     
-    if (segmentPoints.length >= 2) {
-      // Calculate progress based on the midpoint of this segment
-      const progress = (i + segmentLength / 2) / points.length
-      const color = getRainbowColor(progress)
+    // When we've traveled enough distance, create a segment
+    if (currentSegmentDistance >= SEGMENT_LENGTH - SEGMENT_OVERLAP || i === points.length - 1) {
+      const segmentPoints = points.slice(segmentStartIdx, i + 1)
       
-      // Use perfect-freehand to get the stroke outline for this segment
-      const options = {
-        size: stroke.brushSize,
-        smoothing: 0.35,
-        thinning: 0.2,
-        streamline: 0.4,
-        easing: (t: number) => t,
-        start: { taper: 0, cap: true },
-        end: { taper: 0, cap: true },
-        last: i + segmentLength >= points.length - 1,
+      if (segmentPoints.length >= 2) {
+        // Calculate color based on total distance traveled
+        const segmentMidDistance = totalDistanceTraveled - (currentSegmentDistance / 2)
+        const colorProgress = (segmentMidDistance / 200) % 1 // Cycle every 200 pixels
+        const color = getRainbowColor(colorProgress)
+        
+        // Use perfect-freehand to get the stroke outline for this segment
+        const options = {
+          size: stroke.brushSize,
+          smoothing: 0.35,
+          thinning: 0.2,
+          streamline: 0.4,
+          easing: (t: number) => t,
+          start: { taper: 0, cap: true },
+          end: { taper: 0, cap: true },
+          last: i === points.length - 1,
+        }
+        
+        const outlinePoints = getStroke(segmentPoints, options)
+        const pathData = getSvgPathFromStroke(outlinePoints)
+        
+        segments.push(
+          <Path
+            key={`${stroke._id}-${segmentStartIdx}`}
+            data={pathData}
+            fill={color}
+            opacity={stroke.opacity}
+            perfectDrawEnabled={false}
+          />
+        )
       }
       
-      const outlinePoints = getStroke(segmentPoints, options)
-      const pathData = getSvgPathFromStroke(outlinePoints)
-      
-      segments.push(
-        <Path
-          key={`${stroke._id}-${i}`}
-          data={pathData}
-          fill={color}
-          opacity={stroke.opacity}
-          perfectDrawEnabled={false}
-        />
-      )
+      // Start next segment with overlap
+      segmentStartIdx = Math.max(0, i - 2) // Small overlap
+      currentSegmentDistance = SEGMENT_OVERLAP // Reset segment distance but keep total
     }
   }
   
@@ -997,38 +1016,54 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                     if (pendingStroke.colorMode === 'rainbow' && !pendingStroke.isEraser && pendingStroke.points.length >= 2) {
                       // Render rainbow pending stroke
                       const segments = []
-                      const segmentLength = Math.max(5, Math.floor(pendingStroke.points.length / 10))
+                      const SEGMENT_LENGTH = 15
+                      const SEGMENT_OVERLAP = 5
                       
-                      for (let i = 0; i < pendingStroke.points.length - 1; i += Math.max(1, Math.floor(segmentLength / 3))) {
-                        const endIdx = Math.min(i + segmentLength, pendingStroke.points.length)
-                        const segmentPoints = pendingStroke.points.slice(i, endIdx)
+                      let totalDistanceTraveled = 0
+                      let currentSegmentDistance = 0
+                      let segmentStartIdx = 0
+                      
+                      for (let i = 1; i < pendingStroke.points.length; i++) {
+                        const dx = pendingStroke.points[i].x - pendingStroke.points[i - 1].x
+                        const dy = pendingStroke.points[i].y - pendingStroke.points[i - 1].y
+                        const distance = Math.sqrt(dx * dx + dy * dy)
+                        currentSegmentDistance += distance
+                        totalDistanceTraveled += distance
                         
-                        if (segmentPoints.length >= 2) {
-                          const progress = (i + segmentLength / 2) / pendingStroke.points.length
-                          const rainbowColor = getRainbowColor(progress)
+                        if (currentSegmentDistance >= SEGMENT_LENGTH - SEGMENT_OVERLAP || i === pendingStroke.points.length - 1) {
+                          const segmentPoints = pendingStroke.points.slice(segmentStartIdx, i + 1)
                           
-                          const options = {
-                            size: pendingStroke.size,
-                            smoothing: 0.35,
-                            thinning: 0.2,
-                            streamline: 0.4,
-                            easing: (t: number) => t,
-                            start: { taper: 0, cap: true },
-                            end: { taper: 0, cap: true },
-                            last: i + segmentLength >= pendingStroke.points.length - 1,
+                          if (segmentPoints.length >= 2) {
+                            const segmentMidDistance = totalDistanceTraveled - (currentSegmentDistance / 2)
+                            const colorProgress = (segmentMidDistance / 200) % 1
+                            const rainbowColor = getRainbowColor(colorProgress)
+                            
+                            const options = {
+                              size: pendingStroke.size,
+                              smoothing: 0.35,
+                              thinning: 0.2,
+                              streamline: 0.4,
+                              easing: (t: number) => t,
+                              start: { taper: 0, cap: true },
+                              end: { taper: 0, cap: true },
+                              last: i === pendingStroke.points.length - 1,
+                            }
+                            
+                            const outlinePoints = getStroke(segmentPoints, options)
+                            const pathData = getSvgPathFromStroke(outlinePoints)
+                            
+                            segments.push(
+                              <Path
+                                key={`${pendingStroke.id}-${segmentStartIdx}`}
+                                data={pathData}
+                                fill={rainbowColor}
+                                opacity={pendingStroke.opacity || 1}
+                              />
+                            )
                           }
                           
-                          const outlinePoints = getStroke(segmentPoints, options)
-                          const pathData = getSvgPathFromStroke(outlinePoints)
-                          
-                          segments.push(
-                            <Path
-                              key={`${pendingStroke.id}-${i}`}
-                              data={pathData}
-                              fill={rainbowColor}
-                              opacity={pendingStroke.opacity || 1}
-                            />
-                          )
+                          segmentStartIdx = Math.max(0, i - 2)
+                          currentSegmentDistance = SEGMENT_OVERLAP
                         }
                       }
                       return <React.Fragment key={pendingStroke.id}>{segments}</React.Fragment>
@@ -1066,39 +1101,56 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       // For rainbow strokes during live drawing
                       if (colorMode === 'rainbow' && selectedTool === 'brush' && currentStroke.length >= 2) {
                         const segments = []
-                        const segmentLength = Math.max(5, Math.floor(currentStroke.length / 10))
+                        const SEGMENT_LENGTH = 15
+                        const SEGMENT_OVERLAP = 5
                         
-                        for (let i = 0; i < currentStroke.length - 1; i += Math.max(1, Math.floor(segmentLength / 3))) {
-                          const endIdx = Math.min(i + segmentLength, currentStroke.length)
-                          const segmentPoints = currentStroke.slice(i, endIdx)
+                        // Track total distance for proper color progression
+                        let totalDistanceTraveled = 0
+                        let currentSegmentDistance = 0
+                        let segmentStartIdx = 0
+                        
+                        for (let i = 1; i < currentStroke.length; i++) {
+                          const dx = currentStroke[i].x - currentStroke[i - 1].x
+                          const dy = currentStroke[i].y - currentStroke[i - 1].y
+                          const distance = Math.sqrt(dx * dx + dy * dy)
+                          currentSegmentDistance += distance
+                          totalDistanceTraveled += distance
                           
-                          if (segmentPoints.length >= 2) {
-                            const progress = (i + segmentLength / 2) / currentStroke.length
-                            const rainbowColor = getRainbowColor(progress)
+                          if (currentSegmentDistance >= SEGMENT_LENGTH - SEGMENT_OVERLAP || i === currentStroke.length - 1) {
+                            const segmentPoints = currentStroke.slice(segmentStartIdx, i + 1)
                             
-                            const options = {
-                              size,
-                              smoothing: 0.35,
-                              thinning: 0.2,
-                              streamline: 0.4,
-                              easing: (t: number) => t,
-                              start: { taper: 0, cap: true },
-                              end: { taper: 0, cap: true },
-                              last: i + segmentLength >= currentStroke.length - 1,
+                            if (segmentPoints.length >= 2) {
+                              const segmentMidDistance = totalDistanceTraveled - (currentSegmentDistance / 2)
+                              const colorProgress = (segmentMidDistance / 200) % 1
+                              const rainbowColor = getRainbowColor(colorProgress)
+                              
+                              const options = {
+                                size,
+                                smoothing: 0.35,
+                                thinning: 0.2,
+                                streamline: 0.4,
+                                easing: (t: number) => t,
+                                start: { taper: 0, cap: true },
+                                end: { taper: 0, cap: true },
+                                last: i === currentStroke.length - 1,
+                              }
+                              
+                              const outlinePoints = getStroke(segmentPoints, options)
+                              const pathData = getSvgPathFromStroke(outlinePoints)
+                              
+                              segments.push(
+                                <Path
+                                  key={`live-${segmentStartIdx}`}
+                                  data={pathData}
+                                  fill={rainbowColor}
+                                  opacity={opacity}
+                                  listening={false}
+                                />
+                              )
                             }
                             
-                            const outlinePoints = getStroke(segmentPoints, options)
-                            const pathData = getSvgPathFromStroke(outlinePoints)
-                            
-                            segments.push(
-                              <Path
-                                key={`live-${i}`}
-                                data={pathData}
-                                fill={rainbowColor}
-                                opacity={opacity}
-                                listening={false}
-                              />
-                            )
+                            segmentStartIdx = Math.max(0, i - 2)
+                            currentSegmentDistance = SEGMENT_OVERLAP
                           }
                         }
                         return <>{segments}</>
