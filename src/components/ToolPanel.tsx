@@ -24,10 +24,12 @@ import {
   Eraser,
   Plus,
   PlusCircle,
-  Library
+  Library,
+  Sliders
 } from 'lucide-react'
 import { AuthModal } from './AuthModal'
 import { LibraryModal } from './LibraryModal'
+import { BrushSettingsModal, type BrushSettings } from './BrushSettingsModal'
 import { useAuth, useUser } from '@clerk/tanstack-start'
 import { useLibrary } from '../hooks/useLibrary'
 
@@ -67,6 +69,8 @@ interface ToolPanelProps {
   onCreatePaintLayer?: () => void
   colorMode?: 'solid' | 'rainbow'
   onColorModeChange?: (mode: 'solid' | 'rainbow') => void
+  brushSettings?: BrushSettings
+  onBrushSettingsChange?: (settings: BrushSettings) => void
 }
 
 interface Tool {
@@ -470,6 +474,8 @@ export function ToolPanel({
   onCreatePaintLayer,
   colorMode = 'solid',
   onColorModeChange,
+  brushSettings,
+  onBrushSettingsChange,
 }: ToolPanelProps) {
   const { userId, isLoaded } = useAuth()
   const { isSignedIn, user } = useUser()
@@ -501,6 +507,7 @@ export function ToolPanel({
   const [menuPosition, setMenuPosition] = React.useState({ x: 0, y: 0 })
   const [activeTab, setActiveTab] = React.useState<TabId>('tools')
   const { isLibraryModalOpen, openLibrary, closeLibrary } = useLibrary()
+  const [showBrushSettings, setShowBrushSettings] = React.useState(false)
   
   // Drag functionality state
   const [isDragging, setIsDragging] = React.useState(false)
@@ -1010,6 +1017,18 @@ export function ToolPanel({
             GitHub
           </button>
           <div className="border-t border-white/20 my-1" />
+          {onBrushSettingsChange && (
+            <button
+              className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors flex items-center gap-2"
+              onClick={() => {
+                setShowMenu(false)
+                setShowBrushSettings(true)
+              }}
+            >
+              <Sliders className="w-4 h-4" />
+              Brush Settings
+            </button>
+          )}
           {/* <button
             className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors"
             onClick={() => {
@@ -1050,6 +1069,14 @@ export function ToolPanel({
           window.location.reload();
         }}
       />
+      {brushSettings && onBrushSettingsChange && (
+        <BrushSettingsModal
+          isOpen={showBrushSettings}
+          onClose={() => setShowBrushSettings(false)}
+          settings={brushSettings}
+          onSettingsChange={onBrushSettingsChange}
+        />
+      )}
     </div>
   )
 }

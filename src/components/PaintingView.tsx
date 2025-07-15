@@ -2,6 +2,7 @@ import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react'
 import { Canvas, CanvasRef } from './Canvas'
 import { KonvaCanvas } from './KonvaCanvas'
 import { ToolPanel, Layer } from './ToolPanel'
+import { type BrushSettings } from './BrushSettingsModal'
 import { AdminPanel } from './AdminPanel' // Import AdminPanel
 import { SessionInfo } from './SessionInfo'
 import { P2PStatus } from './P2PStatus'
@@ -116,21 +117,44 @@ export function PaintingView() {
   const [opacity, setOpacity] = useState(1.0)
   const [colorMode, setColorMode] = useState<'solid' | 'rainbow'>('solid')
   
+  // Brush settings for perfect-freehand - load from localStorage if available
+  const [brushSettings, setBrushSettings] = useState<BrushSettings>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('brushSettings')
+      if (saved) {
+        try {
+          return JSON.parse(saved)
+        } catch (e) {
+          console.error('Failed to parse saved brush settings:', e)
+        }
+      }
+    }
+    return {
+      smoothing: 0.75,
+      thinning: 0.5,
+      streamline: 0.95,
+      startTaper: 0,
+      endTaper: 0,
+    }
+  })
+  
   // Feature flag to enable Konva canvas - can be toggled via environment variable or local storage
   const useKonvaCanvas = import.meta.env.VITE_USE_KONVA_CANVAS === 'true' || 
                         (typeof window !== 'undefined' && localStorage.getItem('useKonvaCanvas') === 'true')
 
-  // perfect-freehand options
-  const [smoothing, setSmoothing] = useState(0.35)
-  const [thinning, setThinning] = useState(0.2)
-  const [streamline, setStreamline] = useState(0.4)
-  const [startTaper, setStartTaper] = useState(0)
-  const [startCap, setStartCap] = useState(true)
-  const [endTaper, setEndTaper] = useState(0)
-  const [endCap, setEndCap] = useState(true)
+  // Save brush settings to localStorage when they change
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('brushSettings', JSON.stringify(brushSettings))
+    }
+  }, [brushSettings])
+
   // For simplicity, easing is kept constant for now.
   // If it needs to be dynamic, it requires a more complex state management.
   const easing = (t: number) => t
+  // Cap settings are kept constant
+  const startCap = true
+  const endCap = true
 
   const [history, setHistory] = useState<string[]>([])
   const [historyIndex, setHistoryIndex] = useState(-1)
@@ -736,13 +760,13 @@ export function PaintingView() {
             activeLayerId={activeLayerId}
             activePaintLayerId={activePaintLayerId}
             // perfect-freehand options
-            smoothing={smoothing}
-            thinning={thinning}
-            streamline={streamline}
+            smoothing={brushSettings.smoothing}
+            thinning={brushSettings.thinning}
+            streamline={brushSettings.streamline}
             easing={easing}
-            startTaper={startTaper}
+            startTaper={brushSettings.startTaper}
             startCap={startCap}
-            endTaper={endTaper}
+            endTaper={brushSettings.endTaper}
             endCap={endCap}
             onStrokeEnd={handleStrokeEnd}
           />
@@ -757,13 +781,13 @@ export function PaintingView() {
             layers={layers}
             activePaintLayerId={activePaintLayerId}
             // perfect-freehand options
-            smoothing={smoothing}
-            thinning={thinning}
-            streamline={streamline}
+            smoothing={brushSettings.smoothing}
+            thinning={brushSettings.thinning}
+            streamline={brushSettings.streamline}
             easing={easing}
-            startTaper={startTaper}
+            startTaper={brushSettings.startTaper}
             startCap={startCap}
-            endTaper={endTaper}
+            endTaper={brushSettings.endTaper}
             endCap={endCap}
             onStrokeEnd={handleStrokeEnd}
           />
@@ -832,6 +856,8 @@ export function PaintingView() {
         onCreatePaintLayer={handleCreatePaintLayer}
         colorMode={colorMode}
         onColorModeChange={setColorMode}
+        brushSettings={brushSettings}
+        onBrushSettingsChange={setBrushSettings}
       />
       {showImageUpload && (
         <ImageUploadModal
@@ -866,20 +892,20 @@ export function PaintingView() {
           onClose={toggleAdminPanel}
           size={size}
           onSizeChange={setSize}
-          smoothing={smoothing}
-          onSmoothingChange={setSmoothing}
-          thinning={thinning}
-          onThinningChange={setThinning}
-          streamline={streamline}
-          onStreamlineChange={setStreamline}
-          startTaper={startTaper}
-          onStartTaperChange={setStartTaper}
+          smoothing={brushSettings.smoothing}
+          onSmoothingChange={(value) => setBrushSettings(prev => ({ ...prev, smoothing: value }))}
+          thinning={brushSettings.thinning}
+          onThinningChange={(value) => setBrushSettings(prev => ({ ...prev, thinning: value }))}
+          streamline={brushSettings.streamline}
+          onStreamlineChange={(value) => setBrushSettings(prev => ({ ...prev, streamline: value }))}
+          startTaper={brushSettings.startTaper}
+          onStartTaperChange={(value) => setBrushSettings(prev => ({ ...prev, startTaper: value }))}
           startCap={startCap}
-          onStartCapChange={setStartCap}
-          endTaper={endTaper}
-          onEndTaperChange={setEndTaper}
+          onStartCapChange={() => {}} // Cap settings are constant for now
+          endTaper={brushSettings.endTaper}
+          onEndTaperChange={(value) => setBrushSettings(prev => ({ ...prev, endTaper: value }))}
           endCap={endCap}
-          onEndCapChange={setEndCap}
+          onEndCapChange={() => {}} // Cap settings are constant for now
         />
       )}
       
