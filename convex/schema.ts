@@ -226,6 +226,16 @@ const schema = defineSchema({
     completedAt: v.optional(v.number()),
   }).index("by_user", ["userId"])
     .index("by_checkout", ["checkoutId"]),
+
+  // User-level AI prompts history
+  userPrompts: defineTable({
+    userId: v.id("users"),
+    prompt: v.string(),
+    usageCount: v.number(), // How many times this prompt was used
+    lastUsed: v.number(), // Timestamp of last use
+    createdAt: v.number(), // When first used
+  }).index("by_user", ["userId", "lastUsed"])
+    .index("by_user_prompt", ["userId", "prompt"]),
 });
 
 export default schema;

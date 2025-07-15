@@ -31,7 +31,9 @@ export function AIGenerationModal({
   const generateImage = useAction(api.aiGeneration.generateImage)
   const tokenBalance = useQuery(api.tokens.getTokenBalance)
   const previousPrompts = useQuery(api.paintingSessions.getAIPrompts, { sessionId })
+  const userPrompts = useQuery(api.userPrompts.getUserPrompts, { limit: 20 })
   const addAIPrompt = useMutation(api.paintingSessions.addAIPrompt)
+  const addUserPrompt = useMutation(api.userPrompts.addUserPrompt)
 
   const handleGenerate = async () => {
     if (!prompt.trim()) {
@@ -64,8 +66,9 @@ export function AIGenerationModal({
       
       if (result.success && result.imageUrl) {
         console.log('Generated image URL:', result.imageUrl)
-        // Save the prompt to history
+        // Save the prompt to both session and user history
         await addAIPrompt({ sessionId, prompt: prompt.trim() })
+        await addUserPrompt({ prompt: prompt.trim() })
         onGenerationComplete(result.imageUrl)
         onClose()
       } else {
@@ -172,7 +175,7 @@ export function AIGenerationModal({
         </div>
 
         {/* Previous prompts dropdown */}
-        {previousPrompts && previousPrompts.length > 0 && (
+        {(userPrompts && userPrompts.length > 0) || (previousPrompts && previousPrompts.length > 0) ? (
           <div className="mb-3">
             <label className="block text-sm font-medium text-white mb-2">
               <History className="w-4 h-4 inline mr-1" />
@@ -188,14 +191,28 @@ export function AIGenerationModal({
               className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400 text-white [&>option]:bg-gray-900"
             >
               <option value="">Select a previous prompt...</option>
-              {previousPrompts.map((prevPrompt, index) => (
-                <option key={index} value={prevPrompt}>
-                  {prevPrompt.length > 60 ? prevPrompt.substring(0, 60) + '...' : prevPrompt}
-                </option>
-              ))}
+              {userPrompts && userPrompts.length > 0 && (
+                <optgroup label="Your prompts (all sessions)">
+                  {userPrompts.map((item, index) => (
+                    <option key={`user-${index}`} value={item.prompt}>
+                      {item.prompt.length > 60 ? item.prompt.substring(0, 60) + '...' : item.prompt}
+                      {item.usageCount > 1 && ` (${item.usageCount}x)`}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {previousPrompts && previousPrompts.length > 0 && (
+                <optgroup label="This session only">
+                  {previousPrompts.map((prevPrompt, index) => (
+                    <option key={`session-${index}`} value={prevPrompt}>
+                      {prevPrompt.length > 60 ? prevPrompt.substring(0, 60) + '...' : prevPrompt}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </select>
           </div>
-        )}
+        ) : null}
 
         {/* Prompt input */}
         <div className="mb-3">

@@ -28,6 +28,7 @@ import type * as presence from "../presence.js";
 import type * as strokes from "../strokes.js";
 import type * as test from "../test.js";
 import type * as tokens from "../tokens.js";
+import type * as userPrompts from "../userPrompts.js";
 import type * as users from "../users.js";
 import type * as viewerAcks from "../viewerAcks.js";
 import type * as webrtc from "../webrtc.js";
@@ -67,6 +68,7 @@ declare const fullApi: ApiFromModules<{
   strokes: typeof strokes;
   test: typeof test;
   tokens: typeof tokens;
+  userPrompts: typeof userPrompts;
   users: typeof users;
   viewerAcks: typeof viewerAcks;
   webrtc: typeof webrtc;
