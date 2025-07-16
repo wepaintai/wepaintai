@@ -46,6 +46,11 @@ export const uploadImage = mutation({
     const scaleY = canvasHeight / args.height;
     const scale = Math.min(scaleX, scaleY, 1); // Never scale up, only down
     
+    // Position at the center of the canvas
+    // The image will be rendered with offsetX/offsetY to center it
+    const centerX = canvasWidth / 2;
+    const centerY = canvasHeight / 2;
+    
     // Find max layer order across all images
     let maxLayerOrder = paintLayerOrder; // Start with paint layer order
     
@@ -60,7 +65,7 @@ export const uploadImage = mutation({
     // Set new image to top layer
     const newLayerOrder = maxLayerOrder + 1;
 
-    // Create the image record with calculated scale
+    // Create the image record with calculated scale and position
     const imageId = await ctx.db.insert("uploadedImages", {
       sessionId: args.sessionId,
       userId: args.userId,
@@ -69,8 +74,8 @@ export const uploadImage = mutation({
       mimeType: args.mimeType,
       width: args.width,
       height: args.height,
-      x: args.x,
-      y: args.y,
+      x: centerX,
+      y: centerY,
       scale: scale,
       rotation: 0,
       opacity: 1,
@@ -133,9 +138,8 @@ export const addAIGeneratedImage = mutation({
     const scaleY = canvasHeight / args.height;
     const scale = Math.min(scaleX, scaleY); // Use min to fit within canvas
     
-    // Center the image on the canvas
-    // Since KonvaImage uses offsetX/offsetY to center the image anchor,
-    // we position at the canvas center directly
+    // Position at the center of the canvas
+    // The image will be rendered with offsetX/offsetY to center it
     const x = canvasWidth / 2;
     const y = canvasHeight / 2;
     
@@ -144,16 +148,12 @@ export const addAIGeneratedImage = mutation({
       imageHeight: args.height,
       canvasWidth,
       canvasHeight,
-      scaleX,
-      scaleY,
-      finalScale: scale,
-      centerX: x,
-      centerY: y,
+      scale,
+      x,
+      y,
       sessionId: args.sessionId,
       sessionCanvasWidth: session?.canvasWidth,
       sessionCanvasHeight: session?.canvasHeight,
-      argsCanvasWidth: args.canvasWidth,
-      argsCanvasHeight: args.canvasHeight,
     });
     
     // Store the original AI image dimensions and calculate scale/position
