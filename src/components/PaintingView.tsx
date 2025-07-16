@@ -439,12 +439,22 @@ export function PaintingView() {
           }
         }
         
+        // Debug: Log dimensions being sent
+        console.log('[PaintingView] Adding AI image with dimensions:', {
+          imageWidth: img.width,
+          imageHeight: img.height,
+          canvasWidth: canvasDimensions.width,
+          canvasHeight: canvasDimensions.height,
+          imageNaturalWidth: img.naturalWidth,
+          imageNaturalHeight: img.naturalHeight,
+        })
+        
         // Add the AI-generated image to Convex
         await addAIGeneratedImage({
           sessionId,
           imageUrl,
-          width: img.width,
-          height: img.height,
+          width: img.naturalWidth || img.width,
+          height: img.naturalHeight || img.height,
           canvasWidth: canvasDimensions.width,
           canvasHeight: canvasDimensions.height,
         })

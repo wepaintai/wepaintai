@@ -1262,15 +1262,6 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
               
               if (!aiImage || !loadedImage) return null
               
-              // Debug: Log when rendering AI layer
-              // console.log('[KonvaCanvas] Rendering AI image layer:', {
-              //   layerId: layer.id,
-              //   imageExists: !!loadedImage,
-              //   opacity: layer.opacity,
-              //   renderIndex,
-              //   imageOpacity: aiImage?.opacity
-              // })
-              
               return (
                 <Layer 
                   key={layer.id} 
