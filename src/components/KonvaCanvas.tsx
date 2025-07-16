@@ -1278,9 +1278,9 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       width={aiImage.width * aiImage.scale}
                       height={aiImage.height * aiImage.scale}
                       rotation={aiImage.rotation}
-                      offsetX={aiImage.width / 2}
-                      offsetY={aiImage.height / 2}
-                      draggable={selectedTool === 'pan'}
+          offsetX={(aiImage.width * aiImage.scale) / 2}
+          offsetY={(aiImage.height * aiImage.scale) / 2}
+          draggable={selectedTool === 'pan'}
                       onDragEnd={async (e) => {
                         const node = e.target
                         await updateAIImageTransform({
