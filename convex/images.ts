@@ -149,11 +149,6 @@ export const addAIGeneratedImage = mutation({
       finalScale: scale,
       centerX: x,
       centerY: y,
-      sessionId: args.sessionId,
-      sessionCanvasWidth: session?.canvasWidth,
-      sessionCanvasHeight: session?.canvasHeight,
-      argsCanvasWidth: args.canvasWidth,
-      argsCanvasHeight: args.canvasHeight,
     });
     
     // Store the original AI image dimensions and calculate scale/position

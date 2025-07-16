@@ -225,7 +225,7 @@ export function PaintingView() {
   const [isMutating, setIsMutating] = useState(false)
   const lastMutationTime = useRef(0)
 
-  const { createNewSession, presence, currentUser, isLoading, clearSession, undoLastStroke, redoLastStroke, strokes, undoRedoAvailability, session } = usePaintingSession(sessionId)
+  const { createNewSession, presence, currentUser, isLoading, clearSession, undoLastStroke, redoLastStroke, strokes, undoRedoAvailability } = usePaintingSession(sessionId)
   const addAIGeneratedImage = useMutation(api.images.addAIGeneratedImage)
   const updateAIImageTransform = useMutation(api.images.updateAIImageTransform)
   
@@ -480,17 +480,20 @@ export function PaintingView() {
         // Small delay to ensure canvas is fully rendered and dimensions are available
         await new Promise(resolve => setTimeout(resolve, 100))
         
-        // Use session canvas dimensions if available, otherwise use rendered canvas dimensions
-        let canvasDimensions = {
-          width: session?.canvasWidth || 800,
-          height: session?.canvasHeight || 600
+        // Get canvas dimensions with better fallback handling
+        let canvasDimensions = canvasRef.current?.getDimensions()
+        
+        // If dimensions are still 0 or undefined, wait a bit more
+        if (!canvasDimensions || canvasDimensions.width === 0 || canvasDimensions.height === 0) {
+          await new Promise(resolve => setTimeout(resolve, 200))
+          canvasDimensions = canvasRef.current?.getDimensions()
         }
         
-        // If session dimensions are not available, try to get them from the canvas
-        if (!session?.canvasWidth || !session?.canvasHeight) {
-          const renderedDimensions = canvasRef.current?.getDimensions()
-          if (renderedDimensions && renderedDimensions.width > 0 && renderedDimensions.height > 0) {
-            canvasDimensions = renderedDimensions
+        // Final fallback to viewport size if still no dimensions
+        if (!canvasDimensions || canvasDimensions.width === 0 || canvasDimensions.height === 0) {
+          canvasDimensions = {
+            width: window.innerWidth,
+            height: window.innerHeight
           }
         }
         
@@ -983,8 +986,8 @@ export function PaintingView() {
             setShowImageUpload(false)
             setSelectedTool('brush')
           }}
-          canvasWidth={session?.canvasWidth || canvasRef.current?.getDimensions().width || 800}
-          canvasHeight={session?.canvasHeight || canvasRef.current?.getDimensions().height || 600}
+          canvasWidth={canvasRef.current?.getDimensions().width}
+          canvasHeight={canvasRef.current?.getDimensions().height}
         />
       )}
       {showAIGeneration && sessionId && (
