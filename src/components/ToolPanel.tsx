@@ -23,6 +23,7 @@ import {
   Hand,
   Eraser,
   Plus,
+  Scissors,
   PlusCircle,
   Library,
   Sliders
@@ -57,6 +58,7 @@ interface ToolPanelProps {
   onExport: () => void
   onImageUpload?: () => void
   onAIGenerate?: () => void
+  onBackgroundRemoval?: () => void
   selectedTool?: string
   onToolChange?: (tool: string) => void
   layers?: Layer[]
@@ -469,6 +471,7 @@ export function ToolPanel({
   onExport,
   onImageUpload,
   onAIGenerate,
+  onBackgroundRemoval,
   selectedTool: externalSelectedTool,
   onToolChange,
   layers = [],
@@ -931,12 +934,19 @@ export function ToolPanel({
                     <>
                       <button
                         onClick={onAIGenerate}
-                        className="w-full py-2 px-3 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                        className="w-full py-2 px-3 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-colors flex items-center justify-center gap-2 rounded"
                       >
                         <Sparkles className="w-4 h-4" />
                         Generate AI Image
                       </button>
-                      <p className="text-xs text-white/60 text-center">Use AI to transform your canvas</p>
+                      <button
+                        onClick={onBackgroundRemoval}
+                        className="w-full py-2 px-3 bg-purple-500 hover:bg-purple-600 text-white text-sm font-medium transition-colors flex items-center justify-center gap-2 rounded"
+                      >
+                        <Scissors className="w-4 h-4" />
+                        Remove Background
+                      </button>
+                      <p className="text-xs text-white/60 text-center">Transform your canvas with AI</p>
                     </>
                   )}
                 </div>

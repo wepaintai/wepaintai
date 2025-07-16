@@ -211,6 +211,8 @@ const schema = defineSchema({
       polarCheckoutId: v.optional(v.string()),
       polarProductId: v.optional(v.string()),
       aiGenerationId: v.optional(v.id("aiGenerations")),
+      sessionId: v.optional(v.string()),
+      targetLayerId: v.optional(v.string()),
     })),
     createdAt: v.number(),
   }).index("by_user", ["userId", "createdAt"]),

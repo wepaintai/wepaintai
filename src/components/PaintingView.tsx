@@ -9,6 +9,7 @@ import { P2PStatus } from './P2PStatus'
 import { P2PDebugPanel } from './P2PDebugPanel'
 import { ImageUploadModal } from './ImageUploadModal'
 import { AIGenerationModal } from './AIGenerationModal'
+import { BackgroundRemovalModal } from './BackgroundRemovalModal'
 import { UserProfile } from './UserProfile'
 import { TokenDisplay } from './TokenDisplay'
 import { usePaintingSession } from '../hooks/usePaintingSession'
@@ -20,6 +21,58 @@ import { initP2PLogger } from '../lib/p2p-logger'
 import { useMutation, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import { useThumbnailGenerator } from '../hooks/useThumbnailGenerator'
+
+// Wrapper component for background removal modal
+function BackgroundRemovalModalWrapper({ 
+  sessionId, 
+  canvasRef, 
+  onClose, 
+  onRemovalComplete,
+  layers,
+  activeLayerId
+}: {
+  sessionId: Id<"paintingSessions">
+  canvasRef: React.RefObject<CanvasRef>
+  onClose: () => void
+  onRemovalComplete: (imageUrl: string) => void
+  layers: Layer[]
+  activeLayerId?: string | null
+}) {
+  const [canvasData, setCanvasData] = useState<string>('')
+  const [isLoading, setIsLoading] = useState(true)
+  
+  useEffect(() => {
+    // Capture canvas data after a small delay
+    const captureCanvas = () => {
+      if (canvasRef.current) {
+        canvasRef.current.forceRedraw()
+        
+        setTimeout(() => {
+          if (canvasRef.current) {
+            const data = canvasRef.current.getImageData() || ''
+            setCanvasData(data)
+            setIsLoading(false)
+          }
+        }, 200)
+      }
+    }
+    
+    const timer = setTimeout(captureCanvas, 500)
+    return () => clearTimeout(timer)
+  }, [canvasRef])
+  
+  return (
+    <BackgroundRemovalModal
+      isOpen={!isLoading}
+      onClose={onClose}
+      sessionId={sessionId}
+      canvasDataUrl={canvasData}
+      layers={layers}
+      activeLayerId={activeLayerId || undefined}
+      onRemovalComplete={onRemovalComplete}
+    />
+  )
+}
 
 // Wrapper component to handle canvas data capture with proper timing
 function AIGenerationModalWrapper({ 
@@ -161,6 +214,7 @@ export function PaintingView() {
   const [sessionId, setSessionId] = useState<Id<"paintingSessions"> | null>(null)
   const [showImageUpload, setShowImageUpload] = useState(false)
   const [showAIGeneration, setShowAIGeneration] = useState(false)
+  const [showBackgroundRemoval, setShowBackgroundRemoval] = useState(false)
   const [selectedTool, setSelectedTool] = useState('brush')
   const [activeLayerId, setActiveLayerId] = useState<string | null>(null)
   // Check if admin features should be shown based on environment
@@ -403,6 +457,10 @@ export function PaintingView() {
 
   const handleAIGenerate = useCallback(() => {
     setShowAIGeneration(true)
+  }, [])
+  
+  const handleBackgroundRemoval = useCallback(() => {
+    setShowBackgroundRemoval(true)
   }, [])
 
   const handleAIGenerationComplete = useCallback(async (imageUrl: string) => {
@@ -894,6 +952,7 @@ export function PaintingView() {
         onExport={handleExport}
         onImageUpload={handleImageUpload}
         onAIGenerate={handleAIGenerate}
+        onBackgroundRemoval={handleBackgroundRemoval}
         selectedTool={selectedTool}
         onToolChange={handleToolChange}
         layers={layers}
@@ -942,6 +1001,19 @@ export function PaintingView() {
           onGenerationComplete={handleAIGenerationComplete}
           layers={layers}
           strokes={strokes}
+        />
+      )}
+      {showBackgroundRemoval && sessionId && (
+        <BackgroundRemovalModalWrapper
+          sessionId={sessionId}
+          canvasRef={canvasRef as React.RefObject<CanvasRef>}
+          onClose={() => {
+            setShowBackgroundRemoval(false)
+            setSelectedTool('brush')
+          }}
+          onRemovalComplete={handleAIGenerationComplete}
+          layers={layers}
+          activeLayerId={activeLayerId}
         />
       )}
       {/* Admin Panel - only rendered when admin features are enabled */}
