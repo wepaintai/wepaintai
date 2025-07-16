@@ -103,62 +103,6 @@ export function ImageUploadModal({
     })
   }
 
-  const resizeImageToFitCanvas = async (
-    file: File, 
-    originalWidth: number, 
-    originalHeight: number
-  ): Promise<{ blob: Blob; width: number; height: number }> => {
-    return new Promise((resolve, reject) => {
-      const img = new Image()
-      const url = URL.createObjectURL(file)
-      
-      img.onload = async () => {
-        URL.revokeObjectURL(url)
-        
-        // Calculate scale to fit within canvas
-        const scaleX = canvasWidth / originalWidth
-        const scaleY = canvasHeight / originalHeight
-        const scale = Math.min(scaleX, scaleY, 1) // Never scale up, only down
-        
-        const newWidth = Math.floor(originalWidth * scale)
-        const newHeight = Math.floor(originalHeight * scale)
-        
-        // Create temporary canvas for resizing
-        const canvas = document.createElement('canvas')
-        canvas.width = newWidth
-        canvas.height = newHeight
-        
-        const ctx = canvas.getContext('2d')
-        if (!ctx) {
-          reject(new Error('Failed to get canvas context'))
-          return
-        }
-        
-        // Draw resized image
-        ctx.drawImage(img, 0, 0, newWidth, newHeight)
-        
-        // Convert to blob
-        canvas.toBlob(
-          (blob) => {
-            if (blob) {
-              resolve({ blob, width: newWidth, height: newHeight })
-            } else {
-              reject(new Error('Failed to create blob'))
-            }
-          },
-          file.type,
-          0.9 // Quality for JPEG/WebP
-        )
-      }
-      
-      img.onerror = () => {
-        URL.revokeObjectURL(url)
-        reject(new Error('Failed to load image for resizing'))
-      }
-      
-      img.src = url
-    })
-  }
 
   const handleUpload = async () => {
     if (!selectedFile || !sessionId) return
@@ -169,25 +113,9 @@ export function ImageUploadModal({
     try {
       // Get image dimensions
       console.log('Getting image dimensions...')
-      const originalDimensions = await getImageDimensions(selectedFile)
-      console.log('Original image dimensions:', originalDimensions)
+      const dimensions = await getImageDimensions(selectedFile)
+      console.log('Image dimensions:', dimensions)
       console.log('Canvas dimensions:', canvasWidth, 'x', canvasHeight)
-      
-      // Check if image needs resizing
-      let fileToUpload: File | Blob = selectedFile
-      let finalDimensions = originalDimensions
-      
-      if (originalDimensions.width > canvasWidth || originalDimensions.height > canvasHeight) {
-        console.log('Image exceeds canvas bounds, resizing...')
-        const resized = await resizeImageToFitCanvas(
-          selectedFile, 
-          originalDimensions.width, 
-          originalDimensions.height
-        )
-        fileToUpload = resized.blob
-        finalDimensions = { width: resized.width, height: resized.height }
-        console.log('Resized dimensions:', finalDimensions)
-      }
       
       // Generate upload URL
       console.log('Generating upload URL...')
@@ -199,7 +127,7 @@ export function ImageUploadModal({
       const response = await fetch(uploadUrl, {
         method: 'POST',
         headers: { 'Content-Type': selectedFile.type },
-        body: fileToUpload,
+        body: selectedFile,
       })
 
       if (!response.ok) {
@@ -223,10 +151,12 @@ export function ImageUploadModal({
         storageId,
         filename: selectedFile.name,
         mimeType: selectedFile.type,
-        width: finalDimensions.width,
-        height: finalDimensions.height,
+        width: dimensions.width,
+        height: dimensions.height,
         x, // Centered position
         y,
+        canvasWidth,
+        canvasHeight,
       }
       
       // Only include userId if it's defined and not null

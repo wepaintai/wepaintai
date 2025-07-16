@@ -14,6 +14,8 @@ export const uploadImage = mutation({
     height: v.number(),
     x: v.number(),
     y: v.number(),
+    canvasWidth: v.optional(v.number()),
+    canvasHeight: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     // Get the current max layer order from ALL images (uploaded and AI)
@@ -27,9 +29,22 @@ export const uploadImage = mutation({
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
       .collect();
     
-    // Get painting session to check paint layer order
+    // Get painting session to check paint layer order and canvas dimensions
     const uploadSession = await ctx.db.get(args.sessionId);
     const paintLayerOrder = uploadSession?.paintLayerOrder ?? 0;
+    
+    // Get canvas dimensions
+    let canvasWidth = args.canvasWidth || 800;
+    let canvasHeight = args.canvasHeight || 600;
+    if (uploadSession) {
+      canvasWidth = args.canvasWidth || uploadSession.canvasWidth;
+      canvasHeight = args.canvasHeight || uploadSession.canvasHeight;
+    }
+    
+    // Calculate scale to fit the image within canvas while maintaining aspect ratio
+    const scaleX = canvasWidth / args.width;
+    const scaleY = canvasHeight / args.height;
+    const scale = Math.min(scaleX, scaleY, 1); // Never scale up, only down
     
     // Find max layer order across all images
     let maxLayerOrder = paintLayerOrder; // Start with paint layer order
@@ -45,7 +60,7 @@ export const uploadImage = mutation({
     // Set new image to top layer
     const newLayerOrder = maxLayerOrder + 1;
 
-    // Create the image record
+    // Create the image record with calculated scale
     const imageId = await ctx.db.insert("uploadedImages", {
       sessionId: args.sessionId,
       userId: args.userId,
@@ -56,7 +71,7 @@ export const uploadImage = mutation({
       height: args.height,
       x: args.x,
       y: args.y,
-      scale: 1,
+      scale: scale,
       rotation: 0,
       opacity: 1,
       layerOrder: newLayerOrder,
