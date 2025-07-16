@@ -184,6 +184,8 @@ interface KonvaCanvasProps {
   selectedTool?: string
   activeLayerId?: string
   activePaintLayerId?: string | null
+  canvasWidth?: number
+  canvasHeight?: number
   // perfect-freehand options
   smoothing?: number
   thinning?: number
@@ -215,6 +217,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     activePaintLayerId,
     selectedTool = 'brush',
     activeLayerId,
+    canvasWidth: sessionCanvasWidth,
+    canvasHeight: sessionCanvasHeight,
     // perfect-freehand options
     smoothing = 0.75,
     thinning = 0.5,
@@ -345,10 +349,13 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     }
   }, [images, aiImages, konvaImages])
 
-  // Update dimensions when container resizes
+  // Update dimensions when container resizes or session dimensions are available
   useEffect(() => {
     const updateDimensions = () => {
-      if (containerRef.current) {
+      // Use session dimensions if available, otherwise use container dimensions
+      if (sessionCanvasWidth && sessionCanvasHeight) {
+        setDimensions({ width: sessionCanvasWidth, height: sessionCanvasHeight })
+      } else if (containerRef.current) {
         const { clientWidth, clientHeight } = containerRef.current
         setDimensions({ width: clientWidth, height: clientHeight })
       }
@@ -360,7 +367,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     // Also update on resize
     window.addEventListener('resize', updateDimensions)
     return () => window.removeEventListener('resize', updateDimensions)
-  }, [])
+  }, [sessionCanvasWidth, sessionCanvasHeight])
 
   // Remove confirmed strokes from pending when they appear in the strokes array
   useEffect(() => {
@@ -903,7 +910,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   return (
     <div 
       ref={containerRef} 
-      className="relative w-full h-full"
+      className="relative w-full h-full flex items-center justify-center bg-gray-100"
       onMouseEnter={() => setIsMouseOverCanvas(true)}
       onMouseLeave={() => {
         setIsMouseOverCanvas(false)
@@ -927,16 +934,24 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
             ))}
         </div>
       )}
-      <Stage
-        ref={stageRef}
-        width={dimensions.width}
-        height={dimensions.height}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerLeave={handlePointerLeave}
-        style={{ touchAction: 'none' }}
+      <div 
+        className="bg-white shadow-lg"
+        style={{ 
+          width: dimensions.width, 
+          height: dimensions.height,
+          position: 'relative'
+        }}
       >
+        <Stage
+          ref={stageRef}
+          width={dimensions.width}
+          height={dimensions.height}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerLeave={handlePointerLeave}
+          style={{ touchAction: 'none' }}
+        >
         {/* Render layers in order */}
         {layers
           .sort((a, b) => a.order - b.order)
@@ -1262,6 +1277,22 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
               
               if (!aiImage || !loadedImage) return null
               
+              // Debug AI image positioning
+              console.log('[KonvaCanvas] Rendering AI image:', {
+                imageId: layer.id,
+                x: aiImage.x,
+                y: aiImage.y,
+                width: aiImage.width,
+                height: aiImage.height,
+                scale: aiImage.scale,
+                scaledWidth: aiImage.width * aiImage.scale,
+                scaledHeight: aiImage.height * aiImage.scale,
+                offsetX: aiImage.width / 2,
+                offsetY: aiImage.height / 2,
+                canvasWidth: dimensions.width,
+                canvasHeight: dimensions.height,
+              })
+              
               return (
                 <Layer 
                   key={layer.id} 
@@ -1464,7 +1495,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
           </Layer>
         </Stage>
       </div>
-    )
+    </div>
+  )
 }
 
 export const KonvaCanvas = forwardRef(KonvaCanvasComponent)

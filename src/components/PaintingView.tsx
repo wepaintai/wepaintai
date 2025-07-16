@@ -871,6 +871,8 @@ export function PaintingView() {
             selectedTool={selectedTool}
             activeLayerId={activeLayerId}
             activePaintLayerId={activePaintLayerId}
+            canvasWidth={session?.canvasWidth}
+            canvasHeight={session?.canvasHeight}
             // perfect-freehand options
             smoothing={brushSettings.smoothing}
             thinning={brushSettings.thinning}
