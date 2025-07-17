@@ -143,6 +143,8 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     }
   }, [authenticatedUser]);
 
+  // Remove duplicate warming queries as they're ineffective and already defined above
+
   // Effect to initialize lastAckedStrokeOrder from server
   useEffect(() => {
     if (getViewerState?.lastAckedStrokeOrder) {
@@ -194,7 +196,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     
     console.log('[usePaintingSession] Adding stroke with isEraser:', isEraser, 'layerId:', layerId, 'colorMode:', colorMode);
     
-    return await addStroke({
+    const strokeId = await addStroke({
       sessionId,
       layerId: layerId ? layerId as Id<"paintLayers"> : undefined,
       userId: currentUser.id || undefined,  // Allow undefined for guest users
@@ -206,6 +208,8 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
       isEraser,
       colorMode,
     });
+    
+    return strokeId;
   }, [sessionId, addStroke, currentUser]);
 
   // Update user presence
@@ -379,13 +383,36 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     };
   }, [sessionId, leaveSession, removeViewerState, currentUser.id, currentUser.name]);
 
-  // Memoized strokes to prevent re-renders if the array instance changes but content is same.
-  // This is particularly for the catch-up, ensuring we only process "new" strokes.
-  const memoizedStrokes = useMemo(() => {
-    if (!strokes) return [];
-    // Potentially, filter strokes here based on localLastAckedStrokeOrderRef for catch-up display
-    // For now, just return all strokes; the ack logic handles updates.
-    return strokes;
+  // Memoized strokes with pre-sorted order and metadata for O(1) access
+  const { memoizedStrokes, lastStrokeInfo } = useMemo(() => {
+    if (!strokes || strokes.length === 0) {
+      return { memoizedStrokes: [], lastStrokeInfo: null };
+    }
+    
+    // Check if strokes are already sorted to avoid unnecessary sorting
+    let sorted = strokes;
+    let needsSort = false;
+    
+    for (let i = 1; i < strokes.length; i++) {
+      if (strokes[i].strokeOrder < strokes[i - 1].strokeOrder) {
+        needsSort = true;
+        break;
+      }
+    }
+    
+    if (needsSort) {
+      sorted = [...strokes].sort((a, b) => a.strokeOrder - b.strokeOrder);
+    }
+    
+    const last = sorted[sorted.length - 1];
+    
+    return {
+      memoizedStrokes: sorted,
+      lastStrokeInfo: {
+        id: last._id,
+        order: last.strokeOrder
+      }
+    };
   }, [strokes]);
 
 
@@ -396,6 +423,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     // Data
     session,
     strokes: memoizedStrokes,
+    lastStrokeInfo,
     presence: presence || [],
     liveStrokes: liveStrokes || [],
     currentUser,

@@ -224,8 +224,23 @@ export function PaintingView() {
   // Mutation state to prevent concurrent operations
   const [isMutating, setIsMutating] = useState(false)
   const lastMutationTime = useRef(0)
+  
+  // Optimistic UI state for undo operations
+  const [pendingUndoStrokeIds, setPendingUndoStrokeIds] = useState<Set<string>>(new Set())
+  
+  // Removed localLastStrokeInfo - now using lastStrokeInfo from usePaintingSession
 
-  const { createNewSession, presence, currentUser, isLoading, clearSession, undoLastStroke, redoLastStroke, strokes, undoRedoAvailability } = usePaintingSession(sessionId)
+  const { createNewSession, presence, currentUser, isLoading, clearSession, undoLastStroke, redoLastStroke, strokes: rawStrokes, undoRedoAvailability, lastStrokeInfo } = usePaintingSession(sessionId)
+  
+  // Filter out strokes that are pending undo for optimistic UI
+  // Strokes are already pre-sorted in usePaintingSession for performance
+  const strokes = useMemo(() => {
+    if (!rawStrokes) return rawStrokes
+    if (pendingUndoStrokeIds.size === 0) return rawStrokes
+    
+    // Only filter if there are pending undos
+    return rawStrokes.filter(stroke => !pendingUndoStrokeIds.has(stroke._id))
+  }, [rawStrokes, pendingUndoStrokeIds])
   const addAIGeneratedImage = useMutation(api.images.addAIGeneratedImage)
   const updateAIImageTransform = useMutation(api.images.updateAIImageTransform)
   
@@ -314,6 +329,8 @@ export function PaintingView() {
     }
   }, [sessionId, paintLayers, ensureDefaultPaintLayer])
 
+  // Remove duplicate warming query - it's already called in usePaintingSession
+
   // Set active paint layer when layers are loaded
   useEffect(() => {
     if (paintLayers && paintLayers.length > 0 && !activePaintLayerId) {
@@ -373,8 +390,18 @@ export function PaintingView() {
   }
 
   const handleUndo = async () => {
+    // Fast path: use pre-computed lastStrokeInfo from usePaintingSession
+    if (!lastStrokeInfo && (!rawStrokes || rawStrokes.length === 0)) {
+      return
+    }
+    
+    // Skip the undoRedoAvailability check if we know we have strokes
+    // This avoids waiting for the query on first undo
+    const canUndoLocally = lastStrokeInfo !== null || (rawStrokes && rawStrokes.length > 0)
+    
     // Check if we can undo before attempting
-    if (!undoRedoAvailability?.canUndo || isMutating) return
+    if (!canUndoLocally && (!undoRedoAvailability?.canUndo || isMutating)) return
+    if (isMutating) return
     
     // Rate limit to prevent too many concurrent mutations
     const now = Date.now()
@@ -383,13 +410,40 @@ export function PaintingView() {
     
     setIsMutating(true)
     
+    // Optimistic update: immediately hide the last stroke
+    let lastStrokeId: string | null = null
+    
+    // Use the pre-computed lastStrokeInfo for O(1) access
+    if (lastStrokeInfo) {
+      lastStrokeId = lastStrokeInfo.id
+      
+      // Add to pending undo set for immediate visual feedback
+      setPendingUndoStrokeIds(prev => new Set(prev).add(lastStrokeId!))
+    }
+    
     try {
       await undoLastStroke()
+      // Success - the stroke will be removed from rawStrokes automatically
     } catch (error) {
       console.error('Failed to undo stroke:', error)
-      // The UI will automatically update based on the query state
+      // On error, remove from pending set to show the stroke again
+      if (lastStrokeId) {
+        setPendingUndoStrokeIds(prev => {
+          const newSet = new Set(prev)
+          newSet.delete(lastStrokeId)
+          return newSet
+        })
+      }
     } finally {
       setIsMutating(false)
+      // Clear pending undo set after operation completes
+      if (lastStrokeId) {
+        setPendingUndoStrokeIds(prev => {
+          const newSet = new Set(prev)
+          newSet.delete(lastStrokeId)
+          return newSet
+        })
+      }
     }
   }
 
@@ -974,7 +1028,7 @@ export function PaintingView() {
         onColorModeChange={setColorMode}
         brushSettings={brushSettings}
         onBrushSettingsChange={setBrushSettings}
-        canUndo={(undoRedoAvailability?.canUndo ?? false) && !isMutating}
+        canUndo={(lastStrokeInfo !== null || (undoRedoAvailability?.canUndo ?? false)) && !isMutating}
         canRedo={(undoRedoAvailability?.canRedo ?? false) && !isMutating}
       />
       {showImageUpload && (

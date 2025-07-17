@@ -115,10 +115,35 @@ export const getSessionStrokes = query({
     colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))),
   })),
   handler: async (ctx, args) => {
-    return await ctx.db
+    // First, ensure session cache is populated for fast undo/redo
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) {
+      return [];
+    }
+    
+    // Use the index with order to get strokes already sorted
+    const strokes = await ctx.db
       .query("strokes")
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .order("asc") // Get strokes in strokeOrder
       .collect();
+    
+    // Check if session needs cache population
+    if (strokes.length > 0) {
+      const needsCacheUpdate = !session.recentStrokeIds || session.recentStrokeIds.length === 0;
+      
+      if (needsCacheUpdate) {
+        // Populate cache with the last 10 strokes for faster undo
+        const lastStrokes = strokes.slice(-10);
+        
+        await ctx.db.patch(args.sessionId, {
+          recentStrokeOrders: lastStrokes.map(s => s.strokeOrder),
+          recentStrokeIds: lastStrokes.map(s => s._id),
+        });
+      }
+    }
+    
+    return strokes;
   },
 });
 
@@ -219,17 +244,38 @@ export const removeLastStroke = mutation({
     if (recentIds.length > 0) {
       const lastStrokeId = recentIds[recentIds.length - 1];
       lastStroke = await ctx.db.get(lastStrokeId);
+      
+      // If the cached stroke was deleted, clean up the cache
+      if (!lastStroke) {
+        const cleanedIds = recentIds.slice(0, -1);
+        await ctx.db.patch(args.sessionId, {
+          recentStrokeIds: cleanedIds,
+          recentStrokeOrders: (session.recentStrokeOrders || []).slice(0, -1),
+        });
+      }
     }
     
-    // If not found in cache or cache is empty, use strokeCounter for direct lookup
+    // If not found in cache or cache is empty, populate cache and try again
     if (!lastStroke && session.strokeCounter > 0) {
-      lastStroke = await ctx.db
+      // Get the last 10 strokes to populate cache
+      const recentStrokes = await ctx.db
         .query("strokes")
         .withIndex("by_session", (q) => 
           q.eq("sessionId", args.sessionId)
-           .eq("strokeOrder", session.strokeCounter)
         )
-        .unique();
+        .order("desc")
+        .take(10);
+      
+      if (recentStrokes.length > 0) {
+        lastStroke = recentStrokes[0];
+        
+        // Update cache with these strokes for future operations
+        const sortedRecent = recentStrokes.reverse(); // Back to ascending order
+        await ctx.db.patch(args.sessionId, {
+          recentStrokeOrders: sortedRecent.map(s => s.strokeOrder),
+          recentStrokeIds: sortedRecent.map(s => s._id),
+        });
+      }
     }
 
     if (!lastStroke) {
@@ -462,6 +508,8 @@ export const getUndoRedoAvailability = query({
     canRedo: v.boolean(),
     strokeCount: v.number(),
     deletedCount: v.number(),
+    lastStrokeId: v.optional(v.id("strokes")),
+    cacheWarmed: v.boolean(),
   }),
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
@@ -471,21 +519,58 @@ export const getUndoRedoAvailability = query({
         canRedo: false,
         strokeCount: 0,
         deletedCount: 0,
+        cacheWarmed: false,
       };
     }
 
+    const recentIds = session.recentStrokeIds || [];
     const recentOrders = session.recentStrokeOrders || [];
     const deletedCount = session.deletedStrokeCount || 0;
+    
+    // Check if cache needs warming
+    const cacheWarmed = recentIds.length > 0 || session.strokeCounter === 0;
+    
+    // If cache is not warmed and we have strokes, warm it now
+    if (!cacheWarmed && session.strokeCounter > 0) {
+      // Get the last 10 strokes to populate cache
+      const recentStrokes = await ctx.db
+        .query("strokes")
+        .withIndex("by_session", (q) => 
+          q.eq("sessionId", args.sessionId)
+        )
+        .order("desc")
+        .take(10);
+      
+      if (recentStrokes.length > 0) {
+        const sortedRecent = recentStrokes.reverse(); // Back to ascending order
+        await ctx.db.patch(args.sessionId, {
+          recentStrokeOrders: sortedRecent.map(s => s.strokeOrder),
+          recentStrokeIds: sortedRecent.map(s => s._id),
+        });
+        
+        return {
+          canUndo: true,
+          canRedo: deletedCount > 0,
+          strokeCount: session.strokeCounter,
+          deletedCount,
+          lastStrokeId: sortedRecent[sortedRecent.length - 1]._id,
+          cacheWarmed: true,
+        };
+      }
+    }
     
     // If we have recent orders cached, we know we can undo
     const canUndo = recentOrders.length > 0 || session.strokeCounter > 0;
     const canRedo = deletedCount > 0;
+    const lastStrokeId = recentIds.length > 0 ? recentIds[recentIds.length - 1] : undefined;
     
     return {
       canUndo,
       canRedo,
       strokeCount: session.strokeCounter,
       deletedCount,
+      lastStrokeId,
+      cacheWarmed,
     };
   },
 });
