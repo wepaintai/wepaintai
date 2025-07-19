@@ -10,12 +10,14 @@ import { P2PDebugPanel } from './P2PDebugPanel'
 import { ImageUploadModal } from './ImageUploadModal'
 import { AIGenerationModal } from './AIGenerationModal'
 import { BackgroundRemovalModal } from './BackgroundRemovalModal'
+import { ExportModal } from './ExportModal'
 import { UserProfile } from './UserProfile'
 import { TokenDisplay } from './TokenDisplay'
 import { usePaintingSession } from '../hooks/usePaintingSession'
 import { useP2PPainting } from '../hooks/useP2PPainting'
 import { useSessionImages } from '../hooks/useSessionImages'
 import { shouldShowAdminFeatures } from '../utils/environment'
+import { isIOS } from '../utils/device'
 import { Id } from '../../convex/_generated/dataModel'
 import { initP2PLogger } from '../lib/p2p-logger'
 import { useMutation, useQuery } from 'convex/react'
@@ -215,6 +217,8 @@ export function PaintingView() {
   const [showImageUpload, setShowImageUpload] = useState(false)
   const [showAIGeneration, setShowAIGeneration] = useState(false)
   const [showBackgroundRemoval, setShowBackgroundRemoval] = useState(false)
+  const [showExportModal, setShowExportModal] = useState(false)
+  const [exportCanvasDataUrl, setExportCanvasDataUrl] = useState<string>('')
   const [selectedTool, setSelectedTool] = useState('brush')
   const [activeLayerId, setActiveLayerId] = useState<string | null>(null)
   // Check if admin features should be shown based on environment
@@ -485,10 +489,17 @@ export function PaintingView() {
   const handleExport = () => {
     const imageData = canvasRef.current?.getImageData()
     if (imageData) {
-      const link = document.createElement('a')
-      link.download = `wepaintai-${Date.now()}.png`
-      link.href = imageData
-      link.click()
+      // On iOS, show the export modal instead of direct download
+      if (isIOS()) {
+        setExportCanvasDataUrl(imageData)
+        setShowExportModal(true)
+      } else {
+        // Non-iOS devices: use direct download
+        const link = document.createElement('a')
+        link.download = `wepaintai-${Date.now()}.png`
+        link.href = imageData
+        link.click()
+      }
       
       // Generate thumbnail after export
       generateThumbnail()
@@ -1096,6 +1107,14 @@ export function PaintingView() {
       
       {/* User profile display - only show if admin features are enabled */}
       {adminFeaturesEnabled && <UserProfile />}
+      
+      {/* Export modal for iOS devices */}
+      <ExportModal
+        isOpen={showExportModal}
+        onClose={() => setShowExportModal(false)}
+        canvasDataUrl={exportCanvasDataUrl}
+        defaultFilename={`wepaintai-${Date.now()}`}
+      />
     </div>
   )
 }
