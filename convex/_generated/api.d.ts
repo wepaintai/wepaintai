@@ -10,6 +10,7 @@
 
 import type * as aiGeneration from "../aiGeneration.js";
 import type * as auth from "../auth.js";
+import type * as backgroundRemoval from "../backgroundRemoval.js";
 import type * as crons from "../crons.js";
 import type * as debug from "../debug.js";
 import type * as http from "../http.js";
@@ -28,6 +29,7 @@ import type * as presence from "../presence.js";
 import type * as strokes from "../strokes.js";
 import type * as test from "../test.js";
 import type * as tokens from "../tokens.js";
+import type * as userPrompts from "../userPrompts.js";
 import type * as users from "../users.js";
 import type * as viewerAcks from "../viewerAcks.js";
 import type * as webrtc from "../webrtc.js";
@@ -49,6 +51,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   aiGeneration: typeof aiGeneration;
   auth: typeof auth;
+  backgroundRemoval: typeof backgroundRemoval;
   crons: typeof crons;
   debug: typeof debug;
   http: typeof http;
@@ -67,6 +70,7 @@ declare const fullApi: ApiFromModules<{
   strokes: typeof strokes;
   test: typeof test;
   tokens: typeof tokens;
+  userPrompts: typeof userPrompts;
   users: typeof users;
   viewerAcks: typeof viewerAcks;
   webrtc: typeof webrtc;

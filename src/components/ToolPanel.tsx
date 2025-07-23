@@ -23,11 +23,14 @@ import {
   Hand,
   Eraser,
   Plus,
+  Scissors,
   PlusCircle,
-  Library
+  Library,
+  Sliders
 } from 'lucide-react'
 import { AuthModal } from './AuthModal'
 import { LibraryModal } from './LibraryModal'
+import { BrushSettingsModal, type BrushSettings } from './BrushSettingsModal'
 import { useAuth, useUser } from '@clerk/tanstack-start'
 import { useLibrary } from '../hooks/useLibrary'
 
@@ -55,6 +58,7 @@ interface ToolPanelProps {
   onExport: () => void
   onImageUpload?: () => void
   onAIGenerate?: () => void
+  onBackgroundRemoval?: () => void
   selectedTool?: string
   onToolChange?: (tool: string) => void
   layers?: Layer[]
@@ -65,6 +69,12 @@ interface ToolPanelProps {
   onLayerDelete?: (layerId: string) => void
   onLayerOpacityChange?: (layerId: string, opacity: number) => void
   onCreatePaintLayer?: () => void
+  colorMode?: 'solid' | 'rainbow'
+  onColorModeChange?: (mode: 'solid' | 'rainbow') => void
+  brushSettings?: BrushSettings
+  onBrushSettingsChange?: (settings: BrushSettings) => void
+  canUndo?: boolean
+  canRedo?: boolean
 }
 
 interface Tool {
@@ -91,8 +101,8 @@ const tools: Tool[] = [
   { id: 'eraser', icon: Eraser, label: 'Eraser', ariaLabel: 'Eraser tool', keyboardShortcut: 'E' },
   { id: 'pan', icon: Hand, label: 'Pan', ariaLabel: 'Pan/Move layers', keyboardShortcut: 'H' },
   { id: 'upload', icon: ImagePlus, label: 'Upload', ariaLabel: 'Upload image', keyboardShortcut: 'U' },
-  { id: 'ai', icon: Sparkles, label: 'AI', ariaLabel: 'AI Generation', keyboardShortcut: 'G' },
-  { id: 'inpaint', icon: Palette, label: 'Inpaint', ariaLabel: 'Inpaint tool', keyboardShortcut: 'I' },
+  // { id: 'ai', icon: Sparkles, label: 'AI', ariaLabel: 'AI Generation', keyboardShortcut: 'G' },
+  // { id: 'inpaint', icon: Palette, label: 'Inpaint', ariaLabel: 'Inpaint tool', keyboardShortcut: 'I' },
 ]
 
 // Slider component for better reusability
@@ -196,17 +206,22 @@ const ActionButton = React.memo(({
   icon: Icon, 
   label, 
   onClick, 
-  isPrimary = false 
+  isPrimary = false,
+  disabled = false 
 }: { 
   icon: React.ElementType, 
   label: string, 
   onClick: () => void, 
-  isPrimary?: boolean 
+  isPrimary?: boolean,
+  disabled?: boolean 
 }) => (
   <button
     onClick={onClick}
+    disabled={disabled}
     className={`w-8 h-8 flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-blue-400 ${
-      isPrimary 
+      disabled
+        ? 'bg-white/5 text-white/30 cursor-not-allowed'
+        : isPrimary 
         ? 'bg-blue-500 text-white hover:bg-blue-600' 
         : 'bg-white/10 text-white hover:bg-white/20'
     }`}
@@ -222,35 +237,79 @@ ActionButton.displayName = 'ActionButton'
 // Color Mixer component
 const ColorMixer = React.memo(({ 
   color, 
-  onColorChange 
+  onColorChange,
+  colorMode = 'solid',
+  onColorModeChange
 }: { 
   color: string, 
-  onColorChange: (color: string) => void 
+  onColorChange: (color: string) => void,
+  colorMode?: 'solid' | 'rainbow',
+  onColorModeChange?: (mode: 'solid' | 'rainbow') => void
 }) => {
   const handleColorChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onColorChange(e.target.value)
   }
   
   return (
-    <div className="flex items-center gap-2 mb-3" role="group" aria-labelledby="color-mixer-label">
-      <Pipette className="w-4 h-4 text-white/60 flex-shrink-0" aria-hidden="true" />
-      <div className="flex-1 relative">
-        <div
-          className="w-full h-6 border border-white/20 rounded transition-all duration-100 hover:border-blue-400"
-          style={{ backgroundColor: color }}
-          title="Click to change color"
-        >
-          <span className="sr-only">Current color: {color}</span>
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 mb-3" role="group" aria-labelledby="color-mixer-label">
+        <Pipette className="w-4 h-4 text-white/60 flex-shrink-0" aria-hidden="true" />
+        <div className="flex-1 relative">
+          <div
+            className="w-full h-6 border border-white/20 rounded transition-all duration-100 hover:border-blue-400 overflow-hidden"
+            style={{ 
+              backgroundColor: colorMode === 'rainbow' 
+                ? 'transparent' 
+                : color,
+              backgroundImage: colorMode === 'rainbow' 
+                ? 'linear-gradient(to right, #ff0000, #ff7f00, #ffff00, #00ff00, #0000ff, #4b0082, #9400d3)'
+                : undefined
+            }}
+            title={colorMode === 'rainbow' ? 'Rainbow color mode' : 'Click to change color'}
+          >
+            <span className="sr-only">
+              {colorMode === 'rainbow' ? 'Rainbow color mode' : `Current color: ${color}`}
+            </span>
+          </div>
+          {colorMode === 'solid' && (
+            <input
+              type="color"
+              value={color}
+              onChange={handleColorChange}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+              aria-label="Color picker"
+            />
+          )}
         </div>
-        <input
-          type="color"
-          value={color}
-          onChange={handleColorChange}
-          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-          aria-label="Color picker"
-        />
+        <span id="color-mixer-label" className="sr-only">Color mixer</span>
       </div>
-      <span id="color-mixer-label" className="sr-only">Color mixer</span>
+      
+      {onColorModeChange && (
+        <div className="flex items-center gap-2 px-0.5">
+          <button
+            onClick={() => onColorModeChange('solid')}
+            className={`flex-1 py-1 px-2 text-xs rounded transition-colors ${
+              colorMode === 'solid'
+                ? 'bg-blue-500 text-white'
+                : 'bg-white/10 text-white/60 hover:bg-white/20'
+            }`}
+            aria-pressed={colorMode === 'solid'}
+          >
+            Solid
+          </button>
+          <button
+            onClick={() => onColorModeChange('rainbow')}
+            className={`flex-1 py-1 px-2 text-xs rounded transition-colors ${
+              colorMode === 'rainbow'
+                ? 'bg-blue-500 text-white'
+                : 'bg-white/10 text-white/60 hover:bg-white/20'
+            }`}
+            aria-pressed={colorMode === 'rainbow'}
+          >
+            Rainbow
+          </button>
+        </div>
+      )}
     </div>
   )
 })
@@ -412,6 +471,7 @@ export function ToolPanel({
   onExport,
   onImageUpload,
   onAIGenerate,
+  onBackgroundRemoval,
   selectedTool: externalSelectedTool,
   onToolChange,
   layers = [],
@@ -422,6 +482,12 @@ export function ToolPanel({
   onLayerDelete,
   onLayerOpacityChange,
   onCreatePaintLayer,
+  colorMode = 'solid',
+  onColorModeChange,
+  brushSettings,
+  onBrushSettingsChange,
+  canUndo = true,
+  canRedo = true,
 }: ToolPanelProps) {
   const { userId, isLoaded } = useAuth()
   const { isSignedIn, user } = useUser()
@@ -453,6 +519,7 @@ export function ToolPanel({
   const [menuPosition, setMenuPosition] = React.useState({ x: 0, y: 0 })
   const [activeTab, setActiveTab] = React.useState<TabId>('tools')
   const { isLibraryModalOpen, openLibrary, closeLibrary } = useLibrary()
+  const [showBrushSettings, setShowBrushSettings] = React.useState(false)
   
   // Drag functionality state
   const [isDragging, setIsDragging] = React.useState(false)
@@ -721,7 +788,7 @@ export function ToolPanel({
               {activeTab === 'tools' && (
                 <>
                   {/* Tool Selection */}
-                  <div className="grid grid-cols-4 border-b border-white/20 mb-3">
+                  <div className="grid grid-cols-4 mb-[10px]">
                     {tools.map((tool, index) => {
                       // Only disable AI tool for unauthenticated users
                       const isAIDisabled = tool.id === 'ai' && !effectiveIsSignedIn
@@ -747,12 +814,12 @@ export function ToolPanel({
                   </div>
 
                   {/* Color Mixer */}
-                  <div className="border-b border-white/20 mb-3 pb-3">
-                    <ColorMixer
-                      color={color}
-                      onColorChange={onColorChange}
-                    />
-                  </div>
+                  <ColorMixer
+                    color={color}
+                    onColorChange={onColorChange}
+                    colorMode={colorMode}
+                    onColorModeChange={onColorModeChange}
+                  />
 
                   {/* Sliders */}
                   <div className="border-b border-white/20 mb-3 pb-3">
@@ -780,10 +847,10 @@ export function ToolPanel({
                   {/* Action Buttons */}
                   <div className="grid grid-cols-4">
                     <div className="border-r border-white/20">
-                      <ActionButton icon={Undo2} label="Undo" onClick={onUndo} />
+                      <ActionButton icon={Undo2} label="Undo" onClick={onUndo} disabled={!canUndo} />
                     </div>
                     <div className="border-r border-white/20">
-                      <ActionButton icon={Redo2} label="Redo" onClick={onRedo} />
+                      <ActionButton icon={Redo2} label="Redo" onClick={onRedo} disabled={!canRedo} />
                     </div>
                     <div className="border-r border-white/20">
                       <ActionButton icon={X} label="Clear Canvas" onClick={onClear} />
@@ -867,12 +934,19 @@ export function ToolPanel({
                     <>
                       <button
                         onClick={onAIGenerate}
-                        className="w-full py-2 px-3 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                        className="w-full py-2 px-3 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-colors flex items-center justify-center gap-2 rounded"
                       >
                         <Sparkles className="w-4 h-4" />
                         Generate AI Image
                       </button>
-                      <p className="text-xs text-white/60 text-center">Use AI to transform your canvas</p>
+                      <button
+                        onClick={onBackgroundRemoval}
+                        className="w-full py-2 px-3 bg-purple-500 hover:bg-purple-600 text-white text-sm font-medium transition-colors flex items-center justify-center gap-2 rounded"
+                      >
+                        <Scissors className="w-4 h-4" />
+                        Remove Background
+                      </button>
+                      <p className="text-xs text-white/60 text-center">Transform your canvas with AI</p>
                     </>
                   )}
                 </div>
@@ -901,9 +975,13 @@ export function ToolPanel({
           <button
             className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors flex items-center gap-2"
             onClick={() => {
+              console.log('[ToolPanel] Account button clicked, authDisabled:', authDisabled, 'VITE_AUTH_DISABLED:', import.meta.env.VITE_AUTH_DISABLED)
               setShowMenu(false)
               if (!authDisabled) {
+                console.log('[ToolPanel] Showing auth modal')
                 setShowAuthModal(true)
+              } else {
+                console.log('[ToolPanel] Auth is disabled, not showing modal')
               }
             }}
           >
@@ -938,7 +1016,7 @@ export function ToolPanel({
             </button>
           ) : null}
           <div className="border-t border-white/20 my-1" />
-          <button
+          {/* <button
             className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors"
             onClick={() => {
               setShowMenu(false)
@@ -947,18 +1025,30 @@ export function ToolPanel({
             }}
           >
             About
-          </button>
+          </button> */}
           <button
             className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors"
             onClick={() => {
               setShowMenu(false)
-              window.open('https://github.com/your-repo', '_blank')
+              window.open('https://github.com/wepaintai/wepaintai', '_blank')
             }}
           >
             GitHub
           </button>
           <div className="border-t border-white/20 my-1" />
-          <button
+          {onBrushSettingsChange && (
+            <button
+              className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors flex items-center gap-2"
+              onClick={() => {
+                setShowMenu(false)
+                setShowBrushSettings(true)
+              }}
+            >
+              <Sliders className="w-4 h-4" />
+              Brush Settings
+            </button>
+          )}
+          {/* <button
             className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors"
             onClick={() => {
               setShowMenu(false)
@@ -975,7 +1065,7 @@ export function ToolPanel({
             }}
           >
             Keyboard Shortcuts
-          </button>
+          </button> */}
         </div>
       )}
       
@@ -998,6 +1088,14 @@ export function ToolPanel({
           window.location.reload();
         }}
       />
+      {brushSettings && onBrushSettingsChange && (
+        <BrushSettingsModal
+          isOpen={showBrushSettings}
+          onClose={() => setShowBrushSettings(false)}
+          settings={brushSettings}
+          onSettingsChange={onBrushSettingsChange}
+        />
+      )}
     </div>
   )
 }

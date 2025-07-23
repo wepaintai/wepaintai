@@ -8,7 +8,7 @@
     "strictNullChecks": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./app/*"],
+      "@/*": ["./src/*"],
       "better-auth/integrations/react-start": [
         "./node_modules/better-auth/dist/integrations/react-start.d.ts"
       ]

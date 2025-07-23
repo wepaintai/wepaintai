@@ -124,6 +124,18 @@ export const addAIGeneratedImage = mutation({
     const x = canvasWidth / 2;
     const y = canvasHeight / 2;
     
+    console.log('[addAIGeneratedImage] Positioning calculation:', {
+      imageWidth: args.width,
+      imageHeight: args.height,
+      canvasWidth,
+      canvasHeight,
+      scaleX,
+      scaleY,
+      finalScale: scale,
+      centerX: x,
+      centerY: y,
+    });
+    
     // Store the original AI image dimensions and calculate scale/position
     const imageId = await ctx.db.insert("aiGeneratedImages", {
       sessionId: args.sessionId,

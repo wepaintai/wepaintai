@@ -14,6 +14,13 @@ const schema = defineSchema({
     paintLayerVisible: v.optional(v.boolean()), // Visibility of the paint layer
     thumbnailUrl: v.optional(v.string()), // Thumbnail for library view
     lastModified: v.optional(v.number()), // Last modification timestamp
+    // Undo/redo optimization: track last few stroke orders for quick access
+    recentStrokeOrders: v.optional(v.array(v.number())), // Last 10 stroke orders for quick undo
+    recentStrokeIds: v.optional(v.array(v.id("strokes"))), // Last 10 stroke IDs for instant undo
+    deletedStrokeCount: v.optional(v.number()), // Count of deleted strokes for quick redo check
+    lastDeletedStrokeOrder: v.optional(v.number()), // Order of the last deleted stroke for quick redo
+    // AI generation prompts history
+    aiPrompts: v.optional(v.array(v.string())), // Array of unique prompts used in this session
   }),
 
   strokes: defineTable({
@@ -31,6 +38,7 @@ const schema = defineSchema({
     opacity: v.number(),
     strokeOrder: v.number(), // For ordering strokes
     isEraser: v.optional(v.boolean()), // True if this stroke is an eraser stroke
+    colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))), // Color mode for special effects
   }).index("by_session", ["sessionId", "strokeOrder"])
     .index("by_layer", ["sessionId", "layerId", "strokeOrder"]),
 
@@ -60,6 +68,7 @@ const schema = defineSchema({
     brushColor: v.string(),
     brushSize: v.number(),
     opacity: v.number(),
+    colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))), // Color mode for special effects
     lastUpdated: v.number(),
   }).index("by_session", ["sessionId"])
     .index("by_user_session", ["userId", "sessionId"]),
@@ -175,8 +184,10 @@ const schema = defineSchema({
     opacity: v.number(),
     strokeOrder: v.number(),
     isEraser: v.optional(v.boolean()),
+    colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))), // Color mode for special effects
     deletedAt: v.number(),
-  }).index("by_session_deleted", ["sessionId", "deletedAt"]),
+  }).index("by_session_deleted", ["sessionId", "deletedAt"])
+    .index("by_session_stroke", ["sessionId", "strokeOrder"]),
 
   // Paint layers for multi-layer painting support
   paintLayers: defineTable({
@@ -200,6 +211,8 @@ const schema = defineSchema({
       polarCheckoutId: v.optional(v.string()),
       polarProductId: v.optional(v.string()),
       aiGenerationId: v.optional(v.id("aiGenerations")),
+      sessionId: v.optional(v.string()),
+      targetLayerId: v.optional(v.string()),
     })),
     createdAt: v.number(),
   }).index("by_user", ["userId", "createdAt"]),
@@ -218,6 +231,16 @@ const schema = defineSchema({
     completedAt: v.optional(v.number()),
   }).index("by_user", ["userId"])
     .index("by_checkout", ["checkoutId"]),
+
+  // User-level AI prompts history
+  userPrompts: defineTable({
+    userId: v.id("users"),
+    prompt: v.string(),
+    usageCount: v.number(), // How many times this prompt was used
+    lastUsed: v.number(), // Timestamp of last use
+    createdAt: v.number(), // When first used
+  }).index("by_user", ["userId", "lastUsed"])
+    .index("by_user_prompt", ["userId", "prompt"]),
 });
 
 export default schema;

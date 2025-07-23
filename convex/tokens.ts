@@ -202,6 +202,56 @@ export const creditTokensFromPurchase = internalMutation({
   },
 });
 
+// Generic token usage mutation
+export const useTokens = mutation({
+  args: {
+    tokenCost: v.number(),
+    description: v.string(),
+    metadata: v.optional(v.any()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Not authenticated");
+    }
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .first();
+
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    const currentTokens = user.tokens ?? 0;
+    if (currentTokens < args.tokenCost) {
+      throw new Error("Insufficient tokens");
+    }
+
+    // Update user tokens
+    const newBalance = currentTokens - args.tokenCost;
+    await ctx.db.patch(user._id, {
+      tokens: newBalance,
+      lifetimeTokensUsed: (user.lifetimeTokensUsed ?? 0) + args.tokenCost,
+      updatedAt: Date.now(),
+    });
+
+    // Record transaction
+    await ctx.db.insert("tokenTransactions", {
+      userId: user._id,
+      type: "usage",
+      amount: -args.tokenCost,
+      balance: newBalance,
+      description: args.description,
+      metadata: args.metadata || {},
+      createdAt: Date.now(),
+    });
+
+    return { newBalance };
+  },
+});
+
 // Check if user has enough tokens
 export const hasEnoughTokens = query({
   args: {
