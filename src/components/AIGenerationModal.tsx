@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { X, Sparkles, Loader2, Palette, Camera, Smile, Grid3X3, Coins, History } from 'lucide-react'
+import { X, Sparkles, Loader2, Palette, Camera, Smile, Grid3X3, Coins, History, Flame } from 'lucide-react'
 import { useAction, useQuery, useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import type { Id } from '../../convex/_generated/dataModel'
@@ -27,6 +27,7 @@ export function AIGenerationModal({
   const [weight, setWeight] = useState(0.85)
   const [isGenerating, setIsGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [withFlames, setWithFlames] = useState(false)
   
   const generateImage = useAction(api.aiGeneration.generateImage)
   const tokenBalance = useQuery(api.tokens.getTokenBalance)
@@ -45,15 +46,17 @@ export function AIGenerationModal({
     setError(null)
 
     try {
+      const finalPrompt = withFlames ? `${prompt.trim()} with flames` : prompt.trim()
+      
       console.log('Calling generateImage with:', {
         sessionId,
-        prompt: prompt.trim(),
+        prompt: finalPrompt,
         imageDataLength: canvasDataUrl.length
       })
       
       const result = await generateImage({
         sessionId,
-        prompt: prompt.trim(),
+        prompt: finalPrompt,
         imageData: canvasDataUrl,
         weight: weight,
         canvasWidth: canvasWidth,
@@ -230,6 +233,24 @@ export function AIGenerationModal({
               rows={2}
               disabled={isGenerating}
             />
+          </div>
+
+          {/* With flames toggle */}
+          <div className="mb-3">
+            <button
+              onClick={() => setWithFlames(!withFlames)}
+              disabled={isGenerating}
+              className={`flex items-center gap-2 px-3 py-2 rounded-md border transition-all ${
+                withFlames 
+                  ? 'bg-orange-500/20 border-orange-500/40 text-orange-400 hover:bg-orange-500/30' 
+                  : 'bg-white/10 border-white/20 text-white/70 hover:bg-white/20'
+              }`}
+            >
+              <Flame className={`w-4 h-4 ${withFlames ? 'animate-pulse' : ''}`} />
+              <span className="text-sm font-medium">
+                {withFlames ? '🔥 ✅' : 'Add 🔥'}
+              </span>
+            </button>
           </div>
 
           {/* Token balance */}
