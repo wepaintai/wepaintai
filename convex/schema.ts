@@ -211,6 +211,8 @@ const schema = defineSchema({
       polarCheckoutId: v.optional(v.string()),
       polarProductId: v.optional(v.string()),
       aiGenerationId: v.optional(v.id("aiGenerations")),
+      backgroundRemovalId: v.optional(v.string()),
+      imageMergeId: v.optional(v.id("imageMerges")),
       sessionId: v.optional(v.string()),
       targetLayerId: v.optional(v.string()),
     })),
@@ -241,6 +243,20 @@ const schema = defineSchema({
     createdAt: v.number(), // When first used
   }).index("by_user", ["userId", "lastUsed"])
     .index("by_user_prompt", ["userId", "prompt"]),
+
+  // Image merge requests and results
+  imageMerges: defineTable({
+    sessionId: v.id("paintingSessions"),
+    userId: v.optional(v.string()), // User identity subject
+    firstLayerId: v.string(), // ID of first layer to merge
+    secondLayerId: v.string(), // ID of second layer to merge
+    mergeMode: v.union(v.literal("full"), v.literal("left_right"), v.literal("top_bottom")),
+    status: v.union(v.literal("pending"), v.literal("processing"), v.literal("completed"), v.literal("failed")),
+    error: v.optional(v.string()),
+    resultImageUrl: v.optional(v.string()),
+    replicateId: v.optional(v.string()),
+    createdAt: v.number(),
+  }).index("by_session", ["sessionId"]),
 });
 
 export default schema;

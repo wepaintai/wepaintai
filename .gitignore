@@ -20,3 +20,5 @@ Thumbs.db
 .vite/
 dist/
 .output/
+.tanstack/
+.nitro/

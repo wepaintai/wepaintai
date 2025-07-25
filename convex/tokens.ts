@@ -143,6 +143,71 @@ export const useTokensForGeneration = mutation({
   },
 });
 
+// Generic token consumption for different operation types
+export const useTokensForOperation = mutation({
+  args: {
+    operationId: v.string(), // Generic ID for any operation
+    operationType: v.union(v.literal("ai-generation"), v.literal("background-removal"), v.literal("image-merge")),
+    tokenCost: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Not authenticated");
+    }
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .first();
+
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    const currentTokens = user.tokens ?? 0;
+    if (currentTokens < args.tokenCost) {
+      throw new Error("Insufficient tokens");
+    }
+
+    // Update user tokens
+    const newBalance = currentTokens - args.tokenCost;
+    await ctx.db.patch(user._id, {
+      tokens: newBalance,
+      lifetimeTokensUsed: (user.lifetimeTokensUsed ?? 0) + args.tokenCost,
+      updatedAt: Date.now(),
+    });
+
+    // Record transaction with appropriate description and metadata
+    const descriptions = {
+      "ai-generation": "AI image generation",
+      "background-removal": "Background removal",
+      "image-merge": "Image merge operation"
+    };
+
+    const metadata: any = {};
+    if (args.operationType === "ai-generation") {
+      metadata.aiGenerationId = args.operationId;
+    } else if (args.operationType === "background-removal") {
+      metadata.backgroundRemovalId = args.operationId;
+    } else if (args.operationType === "image-merge") {
+      metadata.imageMergeId = args.operationId;
+    }
+
+    await ctx.db.insert("tokenTransactions", {
+      userId: user._id,
+      type: "usage",
+      amount: -args.tokenCost,
+      balance: newBalance,
+      description: descriptions[args.operationType],
+      metadata,
+      createdAt: Date.now(),
+    });
+
+    return { newBalance };
+  },
+});
+
 // Internal mutation to credit tokens after successful Polar purchase
 export const creditTokensFromPurchase = internalMutation({
   args: {

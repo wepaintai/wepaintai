@@ -10,6 +10,7 @@ import { P2PDebugPanel } from './P2PDebugPanel'
 import { ImageUploadModal } from './ImageUploadModal'
 import { AIGenerationModal } from './AIGenerationModal'
 import { BackgroundRemovalModal } from './BackgroundRemovalModal'
+import { MergeTwoModal } from './MergeTwoModal'
 import { ExportModal } from './ExportModal'
 import { UserProfile } from './UserProfile'
 import { TokenDisplay } from './TokenDisplay'
@@ -217,6 +218,7 @@ export function PaintingView() {
   const [showImageUpload, setShowImageUpload] = useState(false)
   const [showAIGeneration, setShowAIGeneration] = useState(false)
   const [showBackgroundRemoval, setShowBackgroundRemoval] = useState(false)
+  const [showMergeTwo, setShowMergeTwo] = useState(false)
   const [showExportModal, setShowExportModal] = useState(false)
   const [exportCanvasDataUrl, setExportCanvasDataUrl] = useState<string>('')
   const [selectedTool, setSelectedTool] = useState('brush')
@@ -1018,6 +1020,7 @@ export function PaintingView() {
         onImageUpload={handleImageUpload}
         onAIGenerate={handleAIGenerate}
         onBackgroundRemoval={handleBackgroundRemoval}
+        onMergeTwo={() => setShowMergeTwo(true)}
         selectedTool={selectedTool}
         onToolChange={handleToolChange}
         layers={layers}
@@ -1079,6 +1082,18 @@ export function PaintingView() {
           onRemovalComplete={handleAIGenerationComplete}
           layers={layers}
           activeLayerId={activeLayerId}
+        />
+      )}
+      {showMergeTwo && sessionId && (
+        <MergeTwoModal
+          isOpen={showMergeTwo}
+          onClose={() => {
+            setShowMergeTwo(false)
+            setSelectedTool('brush')
+          }}
+          sessionId={sessionId}
+          layers={layers}
+          onMergeComplete={handleAIGenerationComplete}
         />
       )}
       {/* Admin Panel - only rendered when admin features are enabled */}

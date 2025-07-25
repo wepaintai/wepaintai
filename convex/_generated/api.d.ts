@@ -14,6 +14,7 @@ import type * as backgroundRemoval from "../backgroundRemoval.js";
 import type * as crons from "../crons.js";
 import type * as debug from "../debug.js";
 import type * as http from "../http.js";
+import type * as imageMerger from "../imageMerger.js";
 import type * as images from "../images.js";
 import type * as layers from "../layers.js";
 import type * as liveStrokes from "../liveStrokes.js";
@@ -55,6 +56,7 @@ declare const fullApi: ApiFromModules<{
   crons: typeof crons;
   debug: typeof debug;
   http: typeof http;
+  imageMerger: typeof imageMerger;
   images: typeof images;
   layers: typeof layers;
   liveStrokes: typeof liveStrokes;

@@ -26,7 +26,8 @@ import {
   Scissors,
   PlusCircle,
   Library,
-  Sliders
+  Sliders,
+  Merge
 } from 'lucide-react'
 import { AuthModal } from './AuthModal'
 import { LibraryModal } from './LibraryModal'
@@ -59,6 +60,7 @@ interface ToolPanelProps {
   onImageUpload?: () => void
   onAIGenerate?: () => void
   onBackgroundRemoval?: () => void
+  onMergeTwo?: () => void
   selectedTool?: string
   onToolChange?: (tool: string) => void
   layers?: Layer[]
@@ -472,6 +474,7 @@ export function ToolPanel({
   onImageUpload,
   onAIGenerate,
   onBackgroundRemoval,
+  onMergeTwo,
   selectedTool: externalSelectedTool,
   onToolChange,
   layers = [],
@@ -945,6 +948,13 @@ export function ToolPanel({
                       >
                         <Scissors className="w-4 h-4" />
                         Remove Background
+                      </button>
+                      <button
+                        onClick={onMergeTwo}
+                        className="w-full py-2 px-3 bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-medium transition-colors flex items-center justify-center gap-2 rounded"
+                      >
+                        <Merge className="w-4 h-4" />
+                        Merge Two
                       </button>
                       <p className="text-xs text-white/60 text-center">Transform your canvas with AI</p>
                     </>
