@@ -24,6 +24,7 @@ export function MergeTwoModal({
 }: MergeTwoModalProps) {
   const [firstLayerId, setFirstLayerId] = useState('')
   const [secondLayerId, setSecondLayerId] = useState('')
+  const [controlLayerId, setControlLayerId] = useState('')
   const [mergeMode, setMergeMode] = useState<MergeMode>('full')
   const [isMerging, setIsMerging] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -55,6 +56,7 @@ export function MergeTwoModal({
         sessionId,
         firstLayerId,
         secondLayerId,
+        controlLayerId: controlLayerId || undefined,
         mergeMode,
       })
 
@@ -178,6 +180,38 @@ export function MergeTwoModal({
                     />
                   </div>
                 )}
+              </div>
+
+              {/* Control Layer Selection (Optional) */}
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-white mb-2">
+                  Control Layer (Optional):
+                </label>
+                <select
+                  value={controlLayerId}
+                  onChange={(e) => setControlLayerId(e.target.value)}
+                  disabled={isMerging}
+                  className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-400 text-white [&>option]:bg-gray-900"
+                >
+                  <option value="">No control layer...</option>
+                  {availableLayers.map((layer) => (
+                    <option key={layer.id} value={layer.id}>
+                      {layer.name}
+                    </option>
+                  ))}
+                </select>
+                {controlLayerId && getLayerThumbnail(controlLayerId) && (
+                  <div className="mt-2">
+                    <img 
+                      src={getLayerThumbnail(controlLayerId)} 
+                      alt="Control layer preview" 
+                      className="w-full h-20 object-contain bg-white/10 rounded border border-white/20"
+                    />
+                  </div>
+                )}
+                <p className="text-xs text-white/60 mt-1">
+                  Optional control image for guiding the merge process
+                </p>
               </div>
 
               {/* Merge Mode Selection */}

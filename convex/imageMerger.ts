@@ -9,6 +9,7 @@ export const createMergeRequest = mutation({
     sessionId: v.id("paintingSessions"),
     firstLayerId: v.string(),
     secondLayerId: v.string(),
+    controlLayerId: v.optional(v.string()),
     mergeMode: v.union(v.literal("full"), v.literal("left_right"), v.literal("top_bottom")),
     status: v.union(v.literal("pending"), v.literal("processing"), v.literal("completed"), v.literal("failed")),
     error: v.optional(v.string()),
@@ -23,6 +24,7 @@ export const createMergeRequest = mutation({
       userId: identity?.subject,
       firstLayerId: args.firstLayerId,
       secondLayerId: args.secondLayerId,
+      controlLayerId: args.controlLayerId,
       mergeMode: args.mergeMode,
       status: args.status,
       error: args.error,
@@ -94,6 +96,7 @@ export const mergeImages = action({
     sessionId: v.id("paintingSessions"),
     firstLayerId: v.string(),
     secondLayerId: v.string(),
+    controlLayerId: v.optional(v.string()),
     mergeMode: v.union(v.literal("full"), v.literal("left_right"), v.literal("top_bottom")),
   },
   handler: async (ctx, args) => {
@@ -135,13 +138,15 @@ export const mergeImages = action({
         sessionId: args.sessionId,
         firstLayerId: args.firstLayerId,
         secondLayerId: args.secondLayerId,
+        controlLayerId: args.controlLayerId,
         mergeMode: args.mergeMode,
         status: "pending",
       });
 
-      // Get the image URLs for both layers
+      // Get the image URLs for both layers and optional control layer
       let firstImageUrl: string;
       let secondImageUrl: string;
+      let controlImageUrl: string | undefined;
       
       try {
         const firstLayerResult = await ctx.runQuery(api.imageMerger.getLayerImageUrl, {
@@ -165,9 +170,22 @@ export const mergeImages = action({
         firstImageUrl = firstLayerResult.url;
         secondImageUrl = secondLayerResult.url;
         
+        // Get control image URL if provided
+        if (args.controlLayerId) {
+          const controlLayerResult = await ctx.runQuery(api.imageMerger.getLayerImageUrl, {
+            sessionId: args.sessionId,
+            layerId: args.controlLayerId,
+          });
+          
+          if (controlLayerResult && controlLayerResult.url) {
+            controlImageUrl = controlLayerResult.url;
+          }
+        }
+        
         console.log('[IMAGE-MERGE] Retrieved image URLs:', {
           firstImageUrl: firstImageUrl?.substring(0, 100) + '...',
           secondImageUrl: secondImageUrl?.substring(0, 100) + '...',
+          controlImageUrl: controlImageUrl ? controlImageUrl.substring(0, 100) + '...' : 'none',
           firstType: firstLayerResult.type,
           secondType: secondLayerResult.type,
         });
@@ -182,14 +200,21 @@ export const mergeImages = action({
       }
 
       // Create prediction using Replicate API
+      const input: any = {
+        image_1: firstImageUrl,
+        image_2: secondImageUrl,
+        merge_option: args.mergeMode,
+        output_format: "png",
+      };
+      
+      // Add control image if provided
+      if (controlImageUrl) {
+        input.control_image = controlImageUrl;
+      }
+      
       const requestBody = {
         version: "db2c826b6a7215fd31695acb73b5b2c91a077f88a2a264c003745e62901e2867", // fofr/image-merger latest version
-        input: {
-          image_1: firstImageUrl,
-          image_2: secondImageUrl,
-          merge_option: args.mergeMode,
-          output_format: "png",
-        },
+        input,
       };
       
       console.log('[IMAGE-MERGE] Sending to Replicate:', {
@@ -197,7 +222,8 @@ export const mergeImages = action({
         input: {
           ...requestBody.input,
           image_1: requestBody.input.image_1.substring(0, 100) + '...',
-          image_2: requestBody.input.image_2.substring(0, 100) + '...'
+          image_2: requestBody.input.image_2.substring(0, 100) + '...',
+          control_image: requestBody.input.control_image ? requestBody.input.control_image.substring(0, 100) + '...' : undefined
         }
       });
 

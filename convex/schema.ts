@@ -250,6 +250,7 @@ const schema = defineSchema({
     userId: v.optional(v.string()), // User identity subject
     firstLayerId: v.string(), // ID of first layer to merge
     secondLayerId: v.string(), // ID of second layer to merge
+    controlLayerId: v.optional(v.string()), // Optional control layer ID for controlnet
     mergeMode: v.union(v.literal("full"), v.literal("left_right"), v.literal("top_bottom")),
     status: v.union(v.literal("pending"), v.literal("processing"), v.literal("completed"), v.literal("failed")),
     error: v.optional(v.string()),
