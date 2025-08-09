@@ -941,6 +941,7 @@ export function PaintingView() {
             selectedTool={selectedTool}
             activeLayerId={activeLayerId}
             activePaintLayerId={activePaintLayerId}
+            onImageUploaded={handleImageUploaded}
             // perfect-freehand options
             smoothing={brushSettings.smoothing}
             thinning={brushSettings.thinning}

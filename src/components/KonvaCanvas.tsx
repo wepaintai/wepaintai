@@ -10,6 +10,7 @@ import { Layer as LayerType } from './ToolPanel'
 import { useQuery, useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import { shouldShowAdminFeatures } from '../utils/environment'
+import { uploadImageFile, validateImageFile, ACCEPTED_TYPES } from '../utils/imageUpload'
 
 const average = (a: number, b: number): number => (a + b) / 2
 
@@ -184,6 +185,7 @@ interface KonvaCanvasProps {
   selectedTool?: string
   activeLayerId?: string
   activePaintLayerId?: string | null
+  onImageUploaded?: (imageId: Id<"uploadedImages">) => void
   // perfect-freehand options
   smoothing?: number
   thinning?: number
@@ -215,6 +217,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     activePaintLayerId,
     selectedTool = 'brush',
     activeLayerId,
+    onImageUploaded,
     // perfect-freehand options
     smoothing = 0.75,
     thinning = 0.5,
@@ -248,6 +251,9 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   const [isMouseOverCanvas, setIsMouseOverCanvas] = useState(false)
   // Eraser masks for image layers - maps layer ID to array of eraser strokes
   const [imageMasks, setImageMasks] = useState<Map<string, LocalStroke[]>>(new Map())
+  // Drag and drop state
+  const [isDragOver, setIsDragOver] = useState(false)
+  const [isUploading, setIsUploading] = useState(false)
 
   // Use the painting session hook
   const {
@@ -282,6 +288,10 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   // Mutations for updating positions
   const updateImageTransform = useMutation(api.images.updateImageTransform)
   const updateAIImageTransform = useMutation(api.images.updateAIImageTransform)
+  
+  // Mutations for image upload
+  const generateUploadUrl = useMutation(api.images.generateUploadUrl)
+  const uploadImage = useMutation(api.images.uploadImage)
 
   // P2P preview layer
   const {
@@ -759,6 +769,78 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     }
   }, [])
 
+  // Drag and drop handlers
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    
+    // Check if the dragged item contains files
+    const hasFiles = e.dataTransfer.types.includes('Files')
+    if (hasFiles) {
+      setIsDragOver(true)
+    }
+  }, [])
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    
+    // Only hide drag over state if we're leaving the container entirely
+    const rect = containerRef.current?.getBoundingClientRect()
+    if (rect) {
+      const isOutside = e.clientX < rect.left || e.clientX > rect.right || 
+                       e.clientY < rect.top || e.clientY > rect.bottom
+      if (isOutside) {
+        setIsDragOver(false)
+      }
+    }
+  }, [])
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(false)
+
+    if (!sessionId || isUploading) return
+
+    const files = Array.from(e.dataTransfer.files)
+    const imageFile = files.find(file => file.type.startsWith('image/'))
+    
+    if (!imageFile) return
+
+    // Validate the file
+    const validation = validateImageFile(imageFile)
+    if (!validation.valid) {
+      console.error('Invalid file:', validation.error)
+      return
+    }
+
+    setIsUploading(true)
+
+    try {
+      const result = await uploadImageFile(
+        imageFile,
+        {
+          sessionId,
+          userId: currentUser.id,
+          canvasWidth: dimensions.width || 800,
+          canvasHeight: dimensions.height || 600,
+          onImageUploaded,
+        },
+        generateUploadUrl,
+        uploadImage
+      )
+
+      if (!result.success) {
+        console.error('Upload failed:', result.error)
+      }
+    } catch (error) {
+      console.error('Drag and drop upload error:', error)
+    } finally {
+      setIsUploading(false)
+    }
+  }, [sessionId, isUploading, currentUser.id, dimensions, onImageUploaded, generateUploadUrl, uploadImage])
+
   // Expose methods via ref
   useImperativeHandle(ref, () => ({
     clear: () => {
@@ -903,13 +985,39 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   return (
     <div 
       ref={containerRef} 
-      className="relative w-full h-full"
+      className={`relative w-full h-full transition-all duration-200 ${
+        isDragOver ? 'ring-4 ring-blue-400 ring-opacity-50 bg-blue-50/20' : ''
+      }`}
       onMouseEnter={() => setIsMouseOverCanvas(true)}
       onMouseLeave={() => {
         setIsMouseOverCanvas(false)
         setCursorPosition(null)
       }}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
     >
+      {/* Drag and drop overlay */}
+      {isDragOver && (
+        <div className="absolute inset-0 bg-blue-500/10 border-4 border-dashed border-blue-400 flex items-center justify-center z-40 pointer-events-none">
+          <div className="bg-white/90 backdrop-blur-sm rounded-lg p-6 text-center shadow-lg">
+            <div className="text-2xl mb-2">📁</div>
+            <div className="text-lg font-semibold text-gray-800">Drop image here</div>
+            <div className="text-sm text-gray-600">PNG, JPG, GIF, WebP • Max 5MB</div>
+          </div>
+        </div>
+      )}
+
+      {/* Upload progress overlay */}
+      {isUploading && (
+        <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 text-center shadow-lg">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+            <div className="text-lg font-semibold text-gray-800">Uploading image...</div>
+          </div>
+        </div>
+      )}
+
       {/* Debug overlay to show layer order */}
       {process.env.NODE_ENV === 'development' && shouldShowAdminFeatures() && (
         <div className="absolute top-2 right-2 bg-black/80 text-white text-xs p-2 z-50 rounded">
