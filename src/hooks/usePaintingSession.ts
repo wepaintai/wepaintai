@@ -3,6 +3,7 @@ import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { useCallback, useEffect, useState, useRef, useMemo } from "react";
 import { p2pLogger } from "../lib/p2p-logger";
+import { convexLow } from "../lib/convex";
 
 export interface PaintPoint {
   x: number;
@@ -109,7 +110,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
   const clearSessionMutation = useMutation(api.strokes.clearSession);
   const removeLastStroke = useMutation(api.strokes.removeLastStroke);
   const restoreLastDeletedStroke = useMutation(api.strokes.restoreLastDeletedStroke);
-  const updatePresence = useMutation(api.presence.updatePresence);
+  // presence updates use convexLow.mutation with throttling; see updateUserPresence below
   const leaveSession = useMutation(api.presence.leaveSession);
   const updateLiveStroke = useMutation(api.liveStrokes.updateLiveStroke);
   const clearLiveStroke = useMutation(api.liveStrokes.clearLiveStroke);
@@ -129,9 +130,9 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
   useEffect(() => {
     if (authenticatedUser) {
       setCurrentUser({
-        id: authenticatedUser.userId as Id<"users">,
+        id: authenticatedUser._id as Id<"users">,
         name: authenticatedUser.name || authenticatedUser.email || 'User',
-        color: getUserColor(authenticatedUser.userId),
+        color: getUserColor(authenticatedUser._id),
       });
     } else {
       // For anonymous users, we'll use a session-based identifier
@@ -212,29 +213,91 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     return strokeId;
   }, [sessionId, addStroke, currentUser]);
 
-  // Update user presence
-  const updateUserPresence = useCallback(async (
-    cursorX: number,
-    cursorY: number,
-    isDrawing: boolean,
-    currentTool: string
-  ) => {
-    if (!sessionId) {
-      console.log('⚠️ Skipping presence update - no session');
-      return;
+  // Presence throttling and heartbeat
+  const presenceIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const lastPresenceSentAtRef = useRef<number>(0);
+  const pendingPresenceRef = useRef<{
+    cursorX: number;
+    cursorY: number;
+    isDrawing: boolean;
+    currentTool: string;
+  } | null>(null);
+
+  // Send coarse presence heartbeat every 20s using low-priority client
+  useEffect(() => {
+    if (!sessionId) return;
+
+    if (presenceIntervalRef.current) {
+      clearInterval(presenceIntervalRef.current);
+      presenceIntervalRef.current = null;
     }
-    
-    return await updatePresence({
-      sessionId,
-      userId: currentUser.id || undefined,  // Allow undefined for guest users
-      userColor: currentUser.color,
-      userName: currentUser.name,
-      cursorX,
-      cursorY,
-      isDrawing,
-      currentTool,
-    });
-  }, [sessionId, updatePresence, currentUser]);
+
+    presenceIntervalRef.current = setInterval(async () => {
+      try {
+        const payload =
+          pendingPresenceRef.current || {
+            cursorX: 0,
+            cursorY: 0,
+            isDrawing: false,
+            currentTool: "brush",
+          };
+
+        await convexLow.mutation(api.presence.updatePresence, {
+          sessionId,
+          userId: currentUser.id || undefined,
+          userColor: currentUser.color,
+          userName: currentUser.name,
+          ...payload,
+        });
+        lastPresenceSentAtRef.current = Date.now();
+        pendingPresenceRef.current = null;
+      } catch (e) {
+        // ignore heartbeat errors
+      }
+    }, 20000); // 20s
+
+    return () => {
+      if (presenceIntervalRef.current) {
+        clearInterval(presenceIntervalRef.current);
+        presenceIntervalRef.current = null;
+      }
+    };
+  }, [sessionId, currentUser.id, currentUser.color, currentUser.name]);
+
+  // Update user presence (enqueue latest + leading-edge send if stale)
+  const updateUserPresence = useCallback(
+    async (
+      cursorX: number,
+      cursorY: number,
+      isDrawing: boolean,
+      currentTool: string
+    ) => {
+      if (!sessionId) return;
+
+      pendingPresenceRef.current = { cursorX, cursorY, isDrawing, currentTool };
+
+      const now = Date.now();
+      if (now - lastPresenceSentAtRef.current > 20000) {
+        try {
+          await convexLow.mutation(api.presence.updatePresence, {
+            sessionId,
+            userId: currentUser.id || undefined,
+            userColor: currentUser.color,
+            userName: currentUser.name,
+            cursorX,
+            cursorY,
+            isDrawing,
+            currentTool,
+          });
+          lastPresenceSentAtRef.current = now;
+          pendingPresenceRef.current = null;
+        } catch (e) {
+          // ignore
+        }
+      }
+    },
+    [sessionId, currentUser.id, currentUser.color, currentUser.name]
+  );
 
   // Clear all strokes from the session
   const clearSession = useCallback(async () => {
@@ -373,7 +436,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     const currentUserName = currentUser.name; // Capture userName for cleanup
     return () => {
       if (currentSessionId && currentViewerId) {
-        leaveSession({ sessionId: currentSessionId, userId: currentViewerId });
+        convexLow.mutation(api.presence.leaveSession, { sessionId: currentSessionId, userId: currentViewerId });
         removeViewerState({ sessionId: currentSessionId, viewerId: currentViewerId });
       }
       // Clean up any pending live stroke updates
