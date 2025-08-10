@@ -29,7 +29,7 @@ interface StrokePathProps {
 
 // Component for rendering rainbow strokes as multiple segments
 const RainbowStroke = memo(({ stroke }: { stroke: Stroke }) => {
-  const segments = []
+  const segments: React.ReactElement[] = []
   const points = stroke.points
   
   if (points.length < 2) return null
@@ -172,6 +172,7 @@ interface LocalStroke {
   isLive?: boolean
   isEraser?: boolean
   colorMode?: 'solid' | 'rainbow'
+  targetLayerId?: string
 }
 
 interface KonvaCanvasProps {
@@ -492,15 +493,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       return
     }
     
-    // Only allow brush on paint layers
-    if (selectedTool === 'brush') {
-      const activeLayer = layers.find(l => l.id === activeLayerId)
-      // console.log('[KonvaCanvas] Brush tool - activeLayer:', activeLayer)
-      if (!activeLayer || (activeLayer.type !== 'stroke' && activeLayer.type !== 'paint')) {
-        // console.log('[KonvaCanvas] Blocking brush - not a paint layer')
-        return
-      }
-    }
+    // Brush now allowed on all layer types; target layer is resolved on stroke end
     
     // Check if erasing on a valid layer
     if (selectedTool === 'eraser') {
@@ -607,21 +600,27 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       const isErasingOnImageLayer = selectedTool === 'eraser' && activeLayer && activeLayer.type !== 'stroke' && activeLayer.type !== 'paint'
       
       if (isErasingOnImageLayer) {
-        // Add eraser stroke to the image mask
-        const eraserStroke: LocalStroke = {
+        const tempId = crypto.randomUUID()
+        const newPendingStroke: LocalStroke = {
           points: finalStrokePoints,
           color: '#000000',
           size,
           opacity: 1,
-          id: crypto.randomUUID(),
+          id: tempId,
+          isPending: true,
           isEraser: true,
+          colorMode: 'solid',
+          targetLayerId: activeLayerId,
         }
-        
-        setImageMasks(prev => {
-          const newMasks = new Map(prev)
-          const layerMasks = newMasks.get(activeLayerId) || []
-          newMasks.set(activeLayerId, [...layerMasks, eraserStroke])
-          return newMasks
+        setPendingStrokes(prev => new Map(prev).set(tempId, newPendingStroke))
+        pendingStrokeIdsRef.current.set(tempId, null)
+        const layerIdToUse = activeLayerId || null
+        addStrokeToSession(finalStrokePoints, '#000000', size, 1, true, layerIdToUse, 'solid').then(strokeId => {
+          if (strokeId) {
+            pendingStrokeIdsRef.current.set(tempId, strokeId)
+          }
+        }).catch(err => {
+          console.error('[KonvaCanvas] Error saving eraser stroke on image layer:', err)
         })
       } else {
         // Normal paint layer behavior
@@ -642,9 +641,24 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
         pendingStrokeIdsRef.current.set(tempId, null)
         // Use activeLayerId when erasing on a paint layer, otherwise use activePaintLayerId for brush
         // If activePaintLayerId is null and we're using brush, fall back to activeLayerId if it's a paint layer
-        let layerIdToUse = (selectedTool === 'eraser' && activeLayer && activeLayer.type === 'paint') 
-          ? activeLayerId 
-          : (activePaintLayerId || (activeLayer && activeLayer.type === 'paint' ? activeLayerId : null))
+        let layerIdToUse: string | null = null
+        if (activeLayer) {
+          if (selectedTool === 'brush' && (activeLayer.type === 'image' || activeLayer.type === 'ai-image')) {
+            layerIdToUse = activeLayerId || null
+          } else if (selectedTool === 'eraser' && activeLayer.type === 'paint') {
+            layerIdToUse = activeLayerId || null
+          } else if (activeLayer.type === 'paint') {
+            layerIdToUse = (activePaintLayerId || activeLayerId) || null
+          }
+        }
+        // Fallbacks for paint layer when nothing selected/resolved
+        if (!layerIdToUse) {
+          const firstPaintLayer = layers.find(l => l.type === 'paint')
+          if (firstPaintLayer) {
+            layerIdToUse = firstPaintLayer.id
+            console.log('[KonvaCanvas] No layerId determined, using first paint layer:', layerIdToUse)
+          }
+        }
         
         // Fallback: if no layerId is determined, use the first paint layer
         if (!layerIdToUse) {
@@ -654,6 +668,14 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
             console.log('[KonvaCanvas] No layerId determined, using first paint layer:', layerIdToUse)
           }
         }
+
+        // Set target layer for pending preview
+        setPendingStrokes(prev => {
+          const map = new Map(prev)
+          const ps = map.get(tempId)
+          if (ps) ps.targetLayerId = layerIdToUse || undefined
+          return map
+        })
         
         console.log('[KonvaCanvas] Saving stroke with layerId:', layerIdToUse, 'isEraser:', selectedTool === 'eraser', 'activeLayerId:', activeLayerId, 'activePaintLayerId:', activePaintLayerId, 'activeLayer:', activeLayer)
         addStrokeToSession(finalStrokePoints, color, size, opacity, selectedTool === 'eraser', layerIdToUse, selectedTool === 'eraser' ? 'solid' : colorMode).then(strokeId => {
@@ -688,21 +710,25 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
         const isErasingOnImageLayer = selectedTool === 'eraser' && activeLayer && activeLayer.type !== 'stroke' && activeLayer.type !== 'paint'
         
         if (isErasingOnImageLayer) {
-          // Add eraser stroke to the image mask
-          const eraserStroke: LocalStroke = {
+          const tempId = crypto.randomUUID()
+          const newPendingStroke: LocalStroke = {
             points: currentStroke,
             color: '#000000',
             size,
             opacity: 1,
-            id: crypto.randomUUID(),
+            id: tempId,
+            isPending: true,
             isEraser: true,
+            colorMode: 'solid',
+            targetLayerId: activeLayerId,
           }
-          
-          setImageMasks(prev => {
-            const newMasks = new Map(prev)
-            const layerMasks = newMasks.get(activeLayerId) || []
-            newMasks.set(activeLayerId, [...layerMasks, eraserStroke])
-            return newMasks
+          setPendingStrokes(prev => new Map(prev).set(tempId, newPendingStroke))
+          pendingStrokeIdsRef.current.set(tempId, null)
+          const layerIdToUse = activeLayerId || null
+          addStrokeToSession(currentStroke, '#000000', size, 1, true, layerIdToUse, 'solid').then(strokeId => {
+            if (strokeId) {
+              pendingStrokeIdsRef.current.set(tempId, strokeId)
+            }
           })
         } else {
           // Normal paint layer behavior
@@ -723,10 +749,24 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
           pendingStrokeIdsRef.current.set(tempId, null)
           // Use activeLayerId when erasing on a paint layer, otherwise use activePaintLayerId for brush
           // If activePaintLayerId is null and we're using brush, fall back to activeLayerId if it's a paint layer
-          const layerIdToUse = (selectedTool === 'eraser' && activeLayer && (activeLayer.type === 'stroke' || activeLayer.type === 'paint')) 
-            ? activeLayerId 
-            : (activePaintLayerId || (activeLayer && (activeLayer.type === 'stroke' || activeLayer.type === 'paint') ? activeLayerId : null))
-          
+          let layerIdToUse: string | null = null
+          if (activeLayer) {
+            if (selectedTool === 'brush' && (activeLayer.type === 'image' || activeLayer.type === 'ai-image')) {
+              layerIdToUse = activeLayerId || null
+            } else if (selectedTool === 'eraser' && (activeLayer.type === 'paint' || activeLayer.type === 'stroke')) {
+              layerIdToUse = activeLayerId || null
+            } else if (activeLayer.type === 'paint' || activeLayer.type === 'stroke') {
+              layerIdToUse = (activePaintLayerId || activeLayerId) || null
+            }
+          }
+          // Set target layer for pending preview
+          setPendingStrokes(prev => {
+            const map = new Map(prev)
+            const ps = map.get(tempId)
+            if (ps) ps.targetLayerId = layerIdToUse || undefined
+            return map
+          })
+
           addStrokeToSession(currentStroke, color, size, opacity, selectedTool === 'eraser', layerIdToUse, selectedTool === 'eraser' ? 'solid' : colorMode).then(strokeId => {
             if (strokeId) {
               pendingStrokeIdsRef.current.set(tempId, strokeId)
@@ -1131,11 +1171,11 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       return <StrokePath key={stroke._id} stroke={stroke} pathData={pathData} />
                     })}
                   
-                  {/* Render pending strokes */}
-                  {Array.from(pendingStrokes.values()).map((pendingStroke) => {
+                  {/* Render pending strokes (only those targeting this paint layer) */}
+                  {Array.from(pendingStrokes.values()).filter(ps => ps.targetLayerId === layer.id).map((pendingStroke) => {
                     if (pendingStroke.colorMode === 'rainbow' && !pendingStroke.isEraser && pendingStroke.points.length >= 2) {
                       // Render rainbow pending stroke
-                      const segments = []
+                      const segments: React.ReactElement[] = []
                       const SEGMENT_LENGTH = 15
                       const SEGMENT_OVERLAP = 5
                       
@@ -1220,7 +1260,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       
                       // For rainbow strokes during live drawing
                       if (colorMode === 'rainbow' && selectedTool === 'brush' && currentStroke.length >= 2) {
-                        const segments = []
+                        const segments: React.ReactElement[] = []
                         const SEGMENT_LENGTH = 15
                         const SEGMENT_OVERLAP = 5
                         
@@ -1328,19 +1368,91 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       }}
                     />
                     
-                    {/* Render eraser masks */}
-                    {imageMasks.get(layer.id)?.map((maskStroke) => {
-                      const { pathData } = getStrokePathData(maskStroke)
-                      if (!pathData) return null
-                      
-                      return (
-                        <Path
-                          key={maskStroke.id}
-                          data={pathData}
-                          fill="#000000"
-                          globalCompositeOperation="destination-out"
-                        />
-                      )
+                    {/* Render persisted strokes for this image layer */}
+                    {strokes
+                      .filter(s => s.layerId === layer.id)
+                      .sort((a, b) => a.strokeOrder - b.strokeOrder)
+                      .map((stroke) => {
+                        const { pathData } = getStrokePathData({
+                          points: stroke.points,
+                          color: stroke.brushColor,
+                          size: stroke.brushSize,
+                          opacity: stroke.opacity,
+                          isPending: false,
+                          colorMode: stroke.colorMode,
+                        })
+                        if (!pathData) return null
+                        return (
+                          <Path
+                            key={stroke._id}
+                            data={pathData}
+                            fill={stroke.isEraser ? '#000000' : stroke.brushColor}
+                            opacity={stroke.opacity}
+                            globalCompositeOperation={stroke.isEraser ? 'destination-out' : 'source-over'}
+                          />
+                        )
+                      })}
+                    
+                    {/* Render pending strokes targeting this image layer */}
+                    {Array.from(pendingStrokes.values()).filter(ps => ps.targetLayerId === layer.id).map((pendingStroke) => {
+                      if (pendingStroke.colorMode === 'rainbow' && !pendingStroke.isEraser && pendingStroke.points.length >= 2) {
+                        const segments: React.ReactElement[] = []
+                        const SEGMENT_LENGTH = 15
+                        const SEGMENT_OVERLAP = 5
+                        let totalDistanceTraveled = 0
+                        let currentSegmentDistance = 0
+                        let segmentStartIdx = 0
+                        for (let i = 1; i < pendingStroke.points.length; i++) {
+                          const dx = pendingStroke.points[i].x - pendingStroke.points[i - 1].x
+                          const dy = pendingStroke.points[i].y - pendingStroke.points[i - 1].y
+                          const distance = Math.sqrt(dx * dx + dy * dy)
+                          currentSegmentDistance += distance
+                          totalDistanceTraveled += distance
+                          if (currentSegmentDistance >= SEGMENT_LENGTH - SEGMENT_OVERLAP || i === pendingStroke.points.length - 1) {
+                            const segmentPoints = pendingStroke.points.slice(segmentStartIdx, i + 1)
+                            if (segmentPoints.length >= 2) {
+                              const segmentMidDistance = totalDistanceTraveled - (currentSegmentDistance / 2)
+                              const colorProgress = (segmentMidDistance / 200) % 1
+                              const rainbowColor = getRainbowColor(colorProgress)
+                              const options = {
+                                size: pendingStroke.size,
+                                smoothing: 0.35,
+                                thinning: 0.2,
+                                streamline: 0.4,
+                                easing: (t: number) => t,
+                                start: { taper: 0, cap: true },
+                                end: { taper: 0, cap: true },
+                                last: i === pendingStroke.points.length - 1,
+                              }
+                              const outlinePoints = getStroke(segmentPoints, options)
+                              const pathData = getSvgPathFromStroke(outlinePoints)
+                              segments.push(
+                                <Path
+                                  key={`${pendingStroke.id}-${segmentStartIdx}`}
+                                  data={pathData}
+                                  fill={rainbowColor}
+                                  opacity={pendingStroke.opacity || 1}
+                                />
+                              )
+                            }
+                            segmentStartIdx = Math.max(0, i - 2)
+                            currentSegmentDistance = SEGMENT_OVERLAP
+                          }
+                        }
+                        return <React.Fragment key={pendingStroke.id}>{segments}</React.Fragment>
+                      } else {
+                        const { pathData } = getStrokePathData(pendingStroke)
+                        if (!pathData) return null
+                        return (
+                          <Path
+                            key={pendingStroke.id}
+                            data={pathData}
+                            fill={pendingStroke.isEraser ? '#000000' : pendingStroke.color}
+                            opacity={pendingStroke.opacity || 1}
+                            globalCompositeOperation={pendingStroke.isEraser ? 'destination-out' : 'source-over'}
+                          />
+                        )
+                      }
                     })}
                     
                     {/* Render current eraser stroke if erasing this layer */}
@@ -1356,6 +1468,23 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                         }).pathData}
                         fill="#000000"
                         globalCompositeOperation="destination-out"
+                      />
+                    )}
+                    {/* Render current brush stroke if painting this image layer */}
+                    {isDrawing && currentStroke.length > 0 && selectedTool === 'brush' && activeLayerId === layer.id && (
+                      <Path
+                        data={getStrokePathData({
+                          points: currentStroke,
+                          color,
+                          size,
+                          opacity,
+                          isLive: true,
+                          isEraser: false,
+                          colorMode,
+                        }).pathData}
+                        fill={color}
+                        opacity={opacity}
+                        globalCompositeOperation="source-over"
                       />
                     )}
                   </Group>
@@ -1399,19 +1528,91 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       }}
                     />
                     
-                    {/* Render eraser masks */}
-                    {imageMasks.get(layer.id)?.map((maskStroke) => {
-                      const { pathData } = getStrokePathData(maskStroke)
-                      if (!pathData) return null
-                      
-                      return (
-                        <Path
-                          key={maskStroke.id}
-                          data={pathData}
-                          fill="#000000"
-                          globalCompositeOperation="destination-out"
-                        />
-                      )
+                    {/* Render persisted strokes for this AI image layer */}
+                    {strokes
+                      .filter(s => s.layerId === layer.id)
+                      .sort((a, b) => a.strokeOrder - b.strokeOrder)
+                      .map((stroke) => {
+                        const { pathData } = getStrokePathData({
+                          points: stroke.points,
+                          color: stroke.brushColor,
+                          size: stroke.brushSize,
+                          opacity: stroke.opacity,
+                          isPending: false,
+                          colorMode: stroke.colorMode,
+                        })
+                        if (!pathData) return null
+                        return (
+                          <Path
+                            key={stroke._id}
+                            data={pathData}
+                            fill={stroke.isEraser ? '#000000' : stroke.brushColor}
+                            opacity={stroke.opacity}
+                            globalCompositeOperation={stroke.isEraser ? 'destination-out' : 'source-over'}
+                          />
+                        )
+                      })}
+                    
+                    {/* Render pending strokes targeting this AI image layer */}
+                    {Array.from(pendingStrokes.values()).filter(ps => ps.targetLayerId === layer.id).map((pendingStroke) => {
+                      if (pendingStroke.colorMode === 'rainbow' && !pendingStroke.isEraser && pendingStroke.points.length >= 2) {
+                        const segments: React.ReactElement[] = []
+                        const SEGMENT_LENGTH = 15
+                        const SEGMENT_OVERLAP = 5
+                        let totalDistanceTraveled = 0
+                        let currentSegmentDistance = 0
+                        let segmentStartIdx = 0
+                        for (let i = 1; i < pendingStroke.points.length; i++) {
+                          const dx = pendingStroke.points[i].x - pendingStroke.points[i - 1].x
+                          const dy = pendingStroke.points[i].y - pendingStroke.points[i - 1].y
+                          const distance = Math.sqrt(dx * dx + dy * dy)
+                          currentSegmentDistance += distance
+                          totalDistanceTraveled += distance
+                          if (currentSegmentDistance >= SEGMENT_LENGTH - SEGMENT_OVERLAP || i === pendingStroke.points.length - 1) {
+                            const segmentPoints = pendingStroke.points.slice(segmentStartIdx, i + 1)
+                            if (segmentPoints.length >= 2) {
+                              const segmentMidDistance = totalDistanceTraveled - (currentSegmentDistance / 2)
+                              const colorProgress = (segmentMidDistance / 200) % 1
+                              const rainbowColor = getRainbowColor(colorProgress)
+                              const options = {
+                                size: pendingStroke.size,
+                                smoothing: 0.35,
+                                thinning: 0.2,
+                                streamline: 0.4,
+                                easing: (t: number) => t,
+                                start: { taper: 0, cap: true },
+                                end: { taper: 0, cap: true },
+                                last: i === pendingStroke.points.length - 1,
+                              }
+                              const outlinePoints = getStroke(segmentPoints, options)
+                              const pathData = getSvgPathFromStroke(outlinePoints)
+                              segments.push(
+                                <Path
+                                  key={`${pendingStroke.id}-${segmentStartIdx}`}
+                                  data={pathData}
+                                  fill={rainbowColor}
+                                  opacity={pendingStroke.opacity || 1}
+                                />
+                              )
+                            }
+                            segmentStartIdx = Math.max(0, i - 2)
+                            currentSegmentDistance = SEGMENT_OVERLAP
+                          }
+                        }
+                        return <React.Fragment key={pendingStroke.id}>{segments}</React.Fragment>
+                      } else {
+                        const { pathData } = getStrokePathData(pendingStroke)
+                        if (!pathData) return null
+                        return (
+                          <Path
+                            key={pendingStroke.id}
+                            data={pathData}
+                            fill={pendingStroke.isEraser ? '#000000' : pendingStroke.color}
+                            opacity={pendingStroke.opacity || 1}
+                            globalCompositeOperation={pendingStroke.isEraser ? 'destination-out' : 'source-over'}
+                          />
+                        )
+                      }
                     })}
                     
                     {/* Render current eraser stroke if erasing this layer */}
@@ -1427,6 +1628,23 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                         }).pathData}
                         fill="#000000"
                         globalCompositeOperation="destination-out"
+                      />
+                    )}
+                    {/* Render current brush stroke if painting this AI image layer */}
+                    {isDrawing && currentStroke.length > 0 && selectedTool === 'brush' && activeLayerId === layer.id && (
+                      <Path
+                        data={getStrokePathData({
+                          points: currentStroke,
+                          color,
+                          size,
+                          opacity,
+                          isLive: true,
+                          isEraser: false,
+                          colorMode,
+                        }).pathData}
+                        fill={color}
+                        opacity={opacity}
+                        globalCompositeOperation="source-over"
                       />
                     )}
                   </Group>

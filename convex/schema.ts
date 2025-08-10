@@ -25,7 +25,7 @@ const schema = defineSchema({
 
   strokes: defineTable({
     sessionId: v.id("paintingSessions"),
-    layerId: v.optional(v.id("paintLayers")), // Reference to paint layer (optional for backward compatibility)
+    layerId: v.optional(v.union(v.id("paintLayers"), v.id("uploadedImages"), v.id("aiGeneratedImages"))), // Reference to paint, uploaded image, or AI image layer
     userId: v.optional(v.id("users")),
     userColor: v.string(), // For anonymous users
     points: v.array(v.object({
@@ -171,7 +171,7 @@ const schema = defineSchema({
   // Deleted strokes for undo/redo functionality
   deletedStrokes: defineTable({
     sessionId: v.id("paintingSessions"),
-    layerId: v.optional(v.id("paintLayers")), // Reference to paint layer
+    layerId: v.optional(v.union(v.id("paintLayers"), v.id("uploadedImages"), v.id("aiGeneratedImages"))), // Reference to paint, uploaded image, or AI image layer
     userId: v.optional(v.id("users")),
     userColor: v.string(),
     points: v.array(v.object({
@@ -187,6 +187,7 @@ const schema = defineSchema({
     colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))), // Color mode for special effects
     deletedAt: v.number(),
   }).index("by_session_deleted", ["sessionId", "deletedAt"])
+    .index("by_session_layer_deleted", ["sessionId", "layerId", "deletedAt"])
     .index("by_session_stroke", ["sessionId", "strokeOrder"]),
 
   // Paint layers for multi-layer painting support

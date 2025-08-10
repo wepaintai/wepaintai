@@ -15,7 +15,7 @@ export interface Stroke {
   _id: Id<"strokes">;
   _creationTime: number;
   sessionId: Id<"paintingSessions">;
-  layerId?: Id<"paintLayers">;
+  layerId?: Id<"paintLayers"> | Id<"uploadedImages"> | Id<"aiGeneratedImages">;
   userId?: Id<"users">;
   userColor: string;
   points: PaintPoint[];
@@ -199,7 +199,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     
     const strokeId = await addStroke({
       sessionId,
-      layerId: layerId ? layerId as Id<"paintLayers"> : undefined,
+      layerId: layerId ? (layerId as Id<"paintLayers"> | Id<"uploadedImages"> | Id<"aiGeneratedImages">) : undefined,
       userId: currentUser.id || undefined,  // Allow undefined for guest users
       userColor: currentUser.color,
       points,

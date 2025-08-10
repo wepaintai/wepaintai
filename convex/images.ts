@@ -326,6 +326,28 @@ export const deleteImage = mutation({
     const image = await ctx.db.get(args.imageId);
     if (!image) throw new Error("Image not found");
 
+    // Delete any strokes attached to this image layer
+    const attachedStrokes = await ctx.db
+      .query("strokes")
+      .withIndex("by_layer", (q) =>
+        q.eq("sessionId", image.sessionId).eq("layerId", args.imageId)
+      )
+      .collect();
+    for (const s of attachedStrokes) {
+      await ctx.db.delete(s._id);
+    }
+
+    // Delete any deletedStrokes cached for this image layer
+    const attachedDeleted = await ctx.db
+      .query("deletedStrokes")
+      .withIndex("by_session_layer_deleted", (q) =>
+        q.eq("sessionId", image.sessionId).eq("layerId", args.imageId)
+      )
+      .collect();
+    for (const ds of attachedDeleted) {
+      await ctx.db.delete(ds._id);
+    }
+
     // Delete from storage
     await ctx.storage.delete(image.storageId);
 
@@ -471,6 +493,28 @@ export const deleteAIImage = mutation({
     }
     
     console.log('[deleteAIImage] Found image to delete:', image);
+
+    // Delete any strokes attached to this AI image layer
+    const attachedStrokes = await ctx.db
+      .query("strokes")
+      .withIndex("by_layer", (q) =>
+        q.eq("sessionId", image.sessionId).eq("layerId", args.imageId)
+      )
+      .collect();
+    for (const s of attachedStrokes) {
+      await ctx.db.delete(s._id);
+    }
+
+    // Delete any deletedStrokes cached for this AI image layer
+    const attachedDeleted = await ctx.db
+      .query("deletedStrokes")
+      .withIndex("by_session_layer_deleted", (q) =>
+        q.eq("sessionId", image.sessionId).eq("layerId", args.imageId)
+      )
+      .collect();
+    for (const ds of attachedDeleted) {
+      await ctx.db.delete(ds._id);
+    }
 
     // Delete the record
     await ctx.db.delete(args.imageId);
