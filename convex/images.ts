@@ -14,6 +14,8 @@ export const uploadImage = mutation({
     height: v.number(),
     x: v.number(),
     y: v.number(),
+    canvasWidth: v.optional(v.number()),
+    canvasHeight: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     // Get the current max layer order from ALL images (uploaded and AI)
@@ -30,6 +32,13 @@ export const uploadImage = mutation({
     // Get painting session to check paint layer order
     const uploadSession = await ctx.db.get(args.sessionId);
     const paintLayerOrder = uploadSession?.paintLayerOrder ?? 0;
+    // Compute scale to fit original image within canvas without altering the stored pixels
+    const canvasWidth = args.canvasWidth ?? uploadSession?.canvasWidth ?? args.width;
+    const canvasHeight = args.canvasHeight ?? uploadSession?.canvasHeight ?? args.height;
+    const scaleX = canvasWidth / args.width;
+    const scaleY = canvasHeight / args.height;
+    // Use "cover" fit (fill canvas; may crop) but never upscale above 1
+    const computedScale = Math.min(Math.max(scaleX, scaleY), 1);
     
     // Find max layer order across all images
     let maxLayerOrder = paintLayerOrder; // Start with paint layer order
@@ -56,7 +65,7 @@ export const uploadImage = mutation({
       height: args.height,
       x: args.x,
       y: args.y,
-      scale: 1,
+      scale: computedScale,
       rotation: 0,
       opacity: 1,
       layerOrder: newLayerOrder,

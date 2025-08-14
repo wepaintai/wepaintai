@@ -244,6 +244,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   const containerRef = useRef<HTMLDivElement>(null)
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 })
   const [konvaImages, setKonvaImages] = useState<Map<string, HTMLImageElement>>(new Map())
+  // Track which images we have auto-fitted to avoid re-fitting after user moves/scales
+  const autoFittedRef = useRef<Set<string>>(new Set())
   // Map to track pending strokes by their temporary IDs to backend IDs
   const pendingStrokeIdsRef = useRef<Map<string, Id<"strokes"> | null>>(new Map())
   // Cursor position for brush size indicator
@@ -372,6 +374,52 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     window.addEventListener('resize', updateDimensions)
     return () => window.removeEventListener('resize', updateDimensions)
   }, [])
+
+  // Auto-fit newly loaded uploaded images to current canvas dimensions once
+  useEffect(() => {
+    if (!images || dimensions.width === 0 || dimensions.height === 0) return
+    images
+      .filter((img: any) => !img.type || img.type === 'uploaded')
+      .forEach((img: any) => {
+        if (!img || autoFittedRef.current.has(img._id)) return
+        // Use "cover" fit so the image fills the canvas (may crop on one axis), never upscale above 1
+        const desiredScale = Math.min(Math.max(dimensions.width / img.width, dimensions.height / img.height), 1)
+        const desiredX = dimensions.width / 2
+        const desiredY = dimensions.height / 2
+        const currentScale = typeof img.scale === 'number' ? img.scale : 1
+        if (Math.abs(currentScale - desiredScale) > 0.02 || Math.abs(img.x - desiredX) > 2 || Math.abs(img.y - desiredY) > 2) {
+          updateImageTransform({
+            imageId: img._id as Id<"uploadedImages">,
+            scale: desiredScale,
+            x: desiredX,
+            y: desiredY
+          })
+          autoFittedRef.current.add(img._id)
+        }
+      })
+  }, [images, dimensions.width, dimensions.height, updateImageTransform])
+
+  // Auto-fit newly loaded AI images once as well
+  useEffect(() => {
+    if (!aiImages || dimensions.width === 0 || dimensions.height === 0) return
+    aiImages.forEach((img: any) => {
+      if (!img || autoFittedRef.current.has(img._id)) return
+      // Use "cover" fit for AI images as well
+      const desiredScale = Math.min(Math.max(dimensions.width / img.width, dimensions.height / img.height), 1)
+      const desiredX = dimensions.width / 2
+      const desiredY = dimensions.height / 2
+      const currentScale = typeof img.scale === 'number' ? img.scale : 1
+      if (Math.abs(currentScale - desiredScale) > 0.02 || Math.abs(img.x - desiredX) > 2 || Math.abs(img.y - desiredY) > 2) {
+        updateAIImageTransform({
+          imageId: img._id as Id<"aiGeneratedImages">,
+          scale: desiredScale,
+          x: desiredX,
+          y: desiredY
+        })
+        autoFittedRef.current.add(img._id)
+      }
+    })
+  }, [aiImages, dimensions.width, dimensions.height, updateAIImageTransform])
 
   // Remove confirmed strokes from pending when they appear in the strokes array
   useEffect(() => {
@@ -904,66 +952,60 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     getImageData: () => {
       const stage = stageRef.current
       if (!stage) {
-        // console.error('[KonvaCanvas] getImageData: No stage ref')
         return ''
       }
       
       try {
-        // Log current state
-        // console.log('[KonvaCanvas] getImageData called')
-        // console.log('[KonvaCanvas] Stage dimensions:', stage.width(), 'x', stage.height())
-        // console.log('[KonvaCanvas] Number of layers:', stage.children.length)
-        // console.log('[KonvaCanvas] Visible layers:', stage.children.filter(l => l.visible()).length)
-        // Note: strokes array might be empty here due to closure, but the rendered paths are what matters
-        
-        // Log what's actually rendered in each layer
-        stage.children.forEach((layer, idx) => {
-          const childCount = layer.children.length
-          // console.log(`[KonvaCanvas] Layer ${idx}: visible=${layer.visible()}, opacity=${layer.opacity()}, children=${childCount}`)
-          
-          // Log first few children details
-          if (childCount > 0) {
-            const firstChild = layer.children[0]
-            // console.log(`  - First child type: ${firstChild.className}, visible: ${firstChild.visible()}`)
-          }
-        })
-        
-        // Force draw before capturing
+        // Determine export pixel ratio based on the most downscaled visible image
+        const imgScales: number[] = []
+        if (images && Array.isArray(images)) {
+          images.forEach((img: any) => {
+            if (img && typeof img.scale === 'number' && (img.opacity === undefined || img.opacity > 0)) {
+              imgScales.push(img.scale)
+            }
+          })
+        }
+        if (aiImages && Array.isArray(aiImages)) {
+          aiImages.forEach((img: any) => {
+            if (img && typeof img.scale === 'number' && (img.opacity === undefined || img.opacity > 0)) {
+              imgScales.push(img.scale)
+            }
+          })
+        }
+        const minScale = imgScales.length ? Math.min(...imgScales) : 1
+        // Export at native pixels of the smallest-scaled image; never downscale
+        const exportPixelRatio = Math.max(1, (minScale > 0 && isFinite(minScale)) ? (1 / minScale) : 1)
+
+        // Ensure latest render before capture
         stage.batchDraw()
         
-        // Create a temporary canvas with white background
+        // Render stage to high-res canvas
+        const stageCanvas = stage.toCanvas({ pixelRatio: exportPixelRatio })
+        
+        // Create a temporary canvas with white background at the export size
         const tempCanvas = document.createElement('canvas')
-        tempCanvas.width = stage.width()
-        tempCanvas.height = stage.height()
+        tempCanvas.width = stageCanvas.width
+        tempCanvas.height = stageCanvas.height
         const tempCtx = tempCanvas.getContext('2d')
         
         if (tempCtx) {
-          // Fill with white background
+          // Fill with white background (avoid transparent PNG checkerboard look)
           tempCtx.fillStyle = 'white'
           tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height)
           
           // Draw the stage content on top
-          const stageCanvas = stage.toCanvas({ pixelRatio: 1 })
           tempCtx.drawImage(stageCanvas, 0, 0)
           
-          // Get data URL from temp canvas
-          const dataUrl = tempCanvas.toDataURL('image/png')
-          // console.log('[KonvaCanvas] Data URL with white background length:', dataUrl.length)
-          return dataUrl
+          // Return PNG data URL
+          return tempCanvas.toDataURL('image/png')
         }
         
-        // Fallback to original method
-        const dataUrl = stage.toDataURL({ 
-          pixelRatio: 1,
+        // Fallback to Konva direct export
+        return stage.toDataURL({ 
+          pixelRatio: exportPixelRatio,
           mimeType: 'image/png'
         })
-        // console.log('[KonvaCanvas] Data URL length:', dataUrl.length)
-        // console.log('[KonvaCanvas] Data URL preview:', dataUrl.substring(0, 100))
-        
-        
-        return dataUrl
-      } catch (err) {
-        // console.error('[KonvaCanvas] Failed to get canvas data:', err)
+      } catch {
         return ''
       }
     },
@@ -990,7 +1032,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
         stageRef.current.batchDraw()
       }
     },
-  }), [dimensions])
+  }), [dimensions, images, aiImages])
 
   // Find layer info
   const getLayerInfo = (layerId: string) => {
@@ -1355,8 +1397,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       width={image.width * image.scale}
                       height={image.height * image.scale}
                       rotation={image.rotation}
-                      offsetX={image.width / 2}
-                      offsetY={image.height / 2}
+                      offsetX={(image.width * image.scale) / 2}
+                      offsetY={(image.height * image.scale) / 2}
                       draggable={selectedTool === 'pan'}
                       onDragEnd={async (e) => {
                         const node = e.target

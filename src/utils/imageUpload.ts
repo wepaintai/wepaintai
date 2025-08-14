@@ -125,21 +125,9 @@ export async function uploadImageFile(
     // Get image dimensions
     const originalDimensions = await getImageDimensions(file)
     
-    // Check if image needs resizing
+    // Preserve original resolution: always upload the original file and record its natural dimensions
     let fileToUpload: File | Blob = file
     let finalDimensions = originalDimensions
-    
-    if (originalDimensions.width > canvasWidth || originalDimensions.height > canvasHeight) {
-      const resized = await resizeImageToFitCanvas(
-        file, 
-        originalDimensions.width, 
-        originalDimensions.height,
-        canvasWidth,
-        canvasHeight
-      )
-      fileToUpload = resized.blob
-      finalDimensions = { width: resized.width, height: resized.height }
-    }
     
     // Generate upload URL
     const uploadUrl = await generateUploadUrl()
@@ -171,6 +159,8 @@ export async function uploadImageFile(
       height: finalDimensions.height,
       x,
       y,
+      canvasWidth,
+      canvasHeight,
     }
     
     // Only include userId if it's defined and not null
