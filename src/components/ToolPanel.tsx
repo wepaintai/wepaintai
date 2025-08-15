@@ -34,6 +34,7 @@ import { LibraryModal } from './LibraryModal'
 import { BrushSettingsModal, type BrushSettings } from './BrushSettingsModal'
 import { useAuth, useUser } from '@clerk/tanstack-start'
 import { useLibrary } from '../hooks/useLibrary'
+import { useClipboardContext } from '../context/ClipboardContext'
 
 // Types
 export interface Layer {
@@ -493,6 +494,7 @@ export function ToolPanel({
   canRedo = true,
 }: ToolPanelProps) {
   const { userId, isLoaded } = useAuth()
+  const { setIsMouseOverToolbox } = useClipboardContext()
   const { isSignedIn, user } = useUser()
   const [internalSelectedTool, setInternalSelectedTool] = React.useState('brush')
   const selectedTool = externalSelectedTool || internalSelectedTool
@@ -717,6 +719,8 @@ export function ToolPanel({
       }}
       role="toolbar"
       aria-label="wepaint.ai tools"
+      onMouseEnter={() => setIsMouseOverToolbox(true)}
+      onMouseLeave={() => setIsMouseOverToolbox(false)}
     >
       <div 
         className="bg-black/90 backdrop-blur-md border border-white/20 overflow-hidden"

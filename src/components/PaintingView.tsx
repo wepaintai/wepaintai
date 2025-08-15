@@ -23,6 +23,7 @@ import { initP2PLogger } from '../lib/p2p-logger'
 import { useMutation, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import { useThumbnailGenerator } from '../hooks/useThumbnailGenerator'
+import { ClipboardProvider } from '../context/ClipboardContext'
 
 // Wrapper component for background removal modal
 function BackgroundRemovalModalWrapper({ 
@@ -907,7 +908,8 @@ export function PaintingView() {
   }, [sessionId, paintLayers, createPaintLayer])
 
   return (
-    <div className="relative w-full h-full bg-gray-50">
+    <ClipboardProvider isAIModalOpen={showAIGeneration}>
+      <div className="relative w-full h-full bg-gray-50">
       {/* Button to toggle Admin Panel - only shown when admin features are enabled */}
       {adminFeaturesEnabled && (
         <>
@@ -1103,5 +1105,6 @@ export function PaintingView() {
         defaultFilename={`wepaintai-${Date.now()}`}
       />
     </div>
+      </ClipboardProvider>
   )
 }

@@ -11,6 +11,7 @@ import { useQuery, useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import { shouldShowAdminFeatures } from '../utils/environment'
 import { uploadImageFile, validateImageFile, ACCEPTED_TYPES } from '../utils/imageUpload'
+import { useClipboardContext } from '../context/ClipboardContext'
 
 const average = (a: number, b: number): number => (a + b) / 2
 
@@ -250,8 +251,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   const pendingStrokeIdsRef = useRef<Map<string, Id<"strokes"> | null>>(new Map())
   // Cursor position for brush size indicator
   const [cursorPosition, setCursorPosition] = useState<Point | null>(null)
-  // Track if mouse is over the canvas stage
-  const [isMouseOverCanvas, setIsMouseOverCanvas] = useState(false)
+  // Track if mouse is over the canvas stage (via shared context)
+  const { isMouseOverCanvas, setIsMouseOverCanvas, isMouseOverToolbox, isAIModalOpen } = useClipboardContext()
   // Eraser masks for image layers - maps layer ID to array of eraser strokes
   const [imageMasks, setImageMasks] = useState<Map<string, LocalStroke[]>>(new Map())
   // Drag and drop state
@@ -928,6 +929,93 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       setIsUploading(false)
     }
   }, [sessionId, isUploading, currentUser.id, dimensions, onImageUploaded, generateUploadUrl, uploadImage])
+
+  // Clipboard paste handler: allow when over canvas or toolbox and when AI modal not open
+  useEffect(() => {
+    const onPaste = async (e: ClipboardEvent) => {
+      if (!sessionId || isUploading) return;
+
+      // Block if AI modal is open
+      try {
+        if (isAIModalOpen) return;
+      } catch {}
+
+      // Allow paste if mouse is over canvas or toolbox
+      if (!isMouseOverCanvas && !isMouseOverToolbox) return;
+
+      const active = document.activeElement as HTMLElement | null;
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) {
+        return;
+      }
+
+      const dt = e.clipboardData;
+      if (!dt) return;
+
+      const items = Array.from(dt.items || []);
+      const imageItem = items.find(it => it.type && it.type.startsWith('image/'));
+      if (!imageItem) return;
+
+      const file = imageItem.getAsFile();
+      if (!file) return;
+
+      e.preventDefault();
+
+      const ext = (file.type?.split('/')[1] || 'png').toLowerCase();
+      const filename = file.name && file.name.trim().length > 0 ? file.name : `pasted-image-${Date.now()}.${ext}`;
+
+      let fileWithName: File;
+      try {
+        fileWithName = new File([file], filename, { type: file.type || 'image/png' });
+      } catch {
+        (file as any).name = filename;
+        fileWithName = file as File;
+      }
+
+      const validation = validateImageFile(fileWithName);
+      if (!validation.valid) {
+        console.error('Invalid pasted image:', validation.error);
+        return;
+      }
+
+      setIsUploading(true);
+      try {
+        const result = await uploadImageFile(
+          fileWithName,
+          {
+            sessionId,
+            userId: currentUser.id,
+            canvasWidth: dimensions.width || 800,
+            canvasHeight: dimensions.height || 600,
+            onImageUploaded,
+          },
+          generateUploadUrl,
+          uploadImage
+        );
+        if (!result.success) {
+          console.error('Pasted image upload failed:', result.error);
+        }
+      } catch (err) {
+        console.error('Clipboard paste upload error:', err);
+      } finally {
+        setIsUploading(false);
+      }
+    };
+
+    document.addEventListener('paste', onPaste);
+    return () => document.removeEventListener('paste', onPaste);
+  }, [
+    sessionId,
+    isUploading,
+    isMouseOverCanvas,
+    isMouseOverToolbox,
+    isAIModalOpen,
+    currentUser.id,
+    dimensions.width,
+    dimensions.height,
+    onImageUploaded,
+    generateUploadUrl,
+    uploadImage,
+  ]);
 
   // Expose methods via ref
   useImperativeHandle(ref, () => ({
