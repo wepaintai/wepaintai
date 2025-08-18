@@ -80,7 +80,7 @@ export const removeBackground = action({
 
       // Poll for completion
       let attempts = 0;
-      const maxAttempts = 60; // 60 seconds timeout
+      const maxAttempts = parseInt(process.env.REPLICATE_TIMEOUT_SECONDS || "180"); // Default 180 seconds timeout
       let output: any;
 
       while (attempts < maxAttempts) {

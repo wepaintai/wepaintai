@@ -1,6 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react'
-import { Canvas, CanvasRef } from './Canvas'
-import { KonvaCanvas } from './KonvaCanvas'
+import { KonvaCanvas, CanvasRef } from './KonvaCanvas'
 import { ToolPanel, Layer } from './ToolPanel'
 import { type BrushSettings } from './BrushSettingsModal'
 import { AdminPanel } from './AdminPanel' // Import AdminPanel
@@ -10,6 +9,7 @@ import { P2PDebugPanel } from './P2PDebugPanel'
 import { ImageUploadModal } from './ImageUploadModal'
 import { AIGenerationModal } from './AIGenerationModal'
 import { BackgroundRemovalModal } from './BackgroundRemovalModal'
+import { MergeTwoModal } from './MergeTwoModal'
 import { ExportModal } from './ExportModal'
 import { UserProfile } from './UserProfile'
 import { TokenDisplay } from './TokenDisplay'
@@ -23,6 +23,7 @@ import { initP2PLogger } from '../lib/p2p-logger'
 import { useMutation, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import { useThumbnailGenerator } from '../hooks/useThumbnailGenerator'
+import { ClipboardProvider } from '../context/ClipboardContext'
 
 // Wrapper component for background removal modal
 function BackgroundRemovalModalWrapper({ 
@@ -34,11 +35,11 @@ function BackgroundRemovalModalWrapper({
   activeLayerId
 }: {
   sessionId: Id<"paintingSessions">
-  canvasRef: React.RefObject<CanvasRef>
+  canvasRef: React.RefObject<CanvasRef | null>
   onClose: () => void
   onRemovalComplete: (imageUrl: string) => void
   layers: Layer[]
-  activeLayerId?: string | null
+  activeLayerId?: string
 }) {
   const [canvasData, setCanvasData] = useState<string>('')
   const [isLoading, setIsLoading] = useState(true)
@@ -86,7 +87,7 @@ function AIGenerationModalWrapper({
   strokes 
 }: {
   sessionId: Id<"paintingSessions">
-  canvasRef: React.RefObject<CanvasRef>
+  canvasRef: React.RefObject<CanvasRef | null>
   onClose: () => void
   onGenerationComplete: (imageUrl: string) => void
   layers: Layer[]
@@ -166,7 +167,7 @@ function AIGenerationModalWrapper({
 }
 
 export function PaintingView() {
-  const canvasRef = useRef<CanvasRef>(null)
+  const canvasRef = useRef<CanvasRef | null>(null)
   const [color, setColor] = useState('#000000')
   const [size, setSize] = useState(20) // perfect-freehand: size
   const [opacity, setOpacity] = useState(1.0)
@@ -193,9 +194,6 @@ export function PaintingView() {
     }
   })
   
-  // Feature flag to enable Konva canvas - can be toggled via environment variable or local storage
-  const useKonvaCanvas = import.meta.env.VITE_USE_KONVA_CANVAS === 'true' || 
-                        (typeof window !== 'undefined' && localStorage.getItem('useKonvaCanvas') === 'true')
 
   // Save brush settings to localStorage when they change
   useEffect(() => {
@@ -217,10 +215,11 @@ export function PaintingView() {
   const [showImageUpload, setShowImageUpload] = useState(false)
   const [showAIGeneration, setShowAIGeneration] = useState(false)
   const [showBackgroundRemoval, setShowBackgroundRemoval] = useState(false)
+  const [showMergeTwo, setShowMergeTwo] = useState(false)
   const [showExportModal, setShowExportModal] = useState(false)
   const [exportCanvasDataUrl, setExportCanvasDataUrl] = useState<string>('')
   const [selectedTool, setSelectedTool] = useState('brush')
-  const [activeLayerId, setActiveLayerId] = useState<string | null>(null)
+  const [activeLayerId, setActiveLayerId] = useState<string | undefined>(undefined)
   // Check if admin features should be shown based on environment
   const adminFeaturesEnabled = shouldShowAdminFeatures()
   const [isAdminPanelVisible, setIsAdminPanelVisible] = useState(adminFeaturesEnabled)
@@ -339,6 +338,18 @@ export function PaintingView() {
   useEffect(() => {
     if (paintLayers && paintLayers.length > 0 && !activePaintLayerId) {
       setActivePaintLayerId(paintLayers[0]._id)
+    }
+  }, [paintLayers, activePaintLayerId])
+
+  // Keep active paint layer valid after deletions
+  useEffect(() => {
+    if (!paintLayers) return
+    const currentIds = new Set(paintLayers.map(pl => pl._id))
+    if (activePaintLayerId && !currentIds.has(activePaintLayerId)) {
+      const fallback = paintLayers[0]
+      if (fallback) {
+        setActivePaintLayerId(fallback._id)
+      }
     }
   }, [paintLayers, activePaintLayerId])
 
@@ -897,7 +908,8 @@ export function PaintingView() {
   }, [sessionId, paintLayers, createPaintLayer])
 
   return (
-    <div className="relative w-full h-full bg-gray-50">
+    <ClipboardProvider isAIModalOpen={showAIGeneration}>
+      <div className="relative w-full h-full bg-gray-50">
       {/* Button to toggle Admin Panel - only shown when admin features are enabled */}
       {adminFeaturesEnabled && (
         <>
@@ -909,69 +921,33 @@ export function PaintingView() {
             {isAdminPanelVisible ? 'Hide' : 'Show'} Admin
           </button>
           
-          {/* Canvas implementation toggle - only in development */}
-          {process.env.NODE_ENV === 'development' && (
-            <button
-              onClick={() => {
-                const newValue = !useKonvaCanvas
-                localStorage.setItem('useKonvaCanvas', String(newValue))
-                window.location.reload()
-              }}
-              className="absolute top-2 right-2 z-50 bg-purple-600/90 backdrop-blur-md border border-white/20 hover:bg-purple-700/80 text-white font-bold py-1 px-2 rounded text-xs"
-              title="Toggle between Canvas implementations"
-            >
-              {useKonvaCanvas ? 'Konva' : 'Canvas'} Mode
-            </button>
-          )}
         </>
       )}
 
       {sessionId ? (
-        useKonvaCanvas ? (
-          <KonvaCanvas
-            ref={canvasRef}
-            sessionId={sessionId}
-            color={color}
-            size={size}
-            opacity={opacity}
-            colorMode={colorMode}
-            layers={layers}
-            selectedTool={selectedTool}
-            activeLayerId={activeLayerId}
-            activePaintLayerId={activePaintLayerId}
-            // perfect-freehand options
-            smoothing={brushSettings.smoothing}
-            thinning={brushSettings.thinning}
-            streamline={brushSettings.streamline}
-            easing={easing}
-            startTaper={brushSettings.startTaper}
-            startCap={startCap}
-            endTaper={brushSettings.endTaper}
-            endCap={endCap}
-            onStrokeEnd={handleStrokeEnd}
-          />
-        ) : (
-          <Canvas
-            ref={canvasRef}
-            sessionId={sessionId}
-            color={color}
-            size={size}
-            opacity={opacity}
-            colorMode={colorMode}
-            layers={layers}
-            activePaintLayerId={activePaintLayerId}
-            // perfect-freehand options
-            smoothing={brushSettings.smoothing}
-            thinning={brushSettings.thinning}
-            streamline={brushSettings.streamline}
-            easing={easing}
-            startTaper={brushSettings.startTaper}
-            startCap={startCap}
-            endTaper={brushSettings.endTaper}
-            endCap={endCap}
-            onStrokeEnd={handleStrokeEnd}
-          />
-        )
+        <KonvaCanvas
+          ref={canvasRef}
+          sessionId={sessionId}
+          color={color}
+          size={size}
+          opacity={opacity}
+          colorMode={colorMode}
+          layers={layers}
+          selectedTool={selectedTool}
+          activeLayerId={activeLayerId}
+          activePaintLayerId={activePaintLayerId}
+          onImageUploaded={handleImageUploaded}
+          // perfect-freehand options
+          smoothing={brushSettings.smoothing}
+          thinning={brushSettings.thinning}
+          streamline={brushSettings.streamline}
+          easing={easing}
+          startTaper={brushSettings.startTaper}
+          startCap={startCap}
+          endTaper={brushSettings.endTaper}
+          endCap={endCap}
+          onStrokeEnd={handleStrokeEnd}
+        />
       ) : (
         <div className="absolute inset-0 flex items-center justify-center bg-gray-100">
           <div className="text-center">
@@ -1018,6 +994,7 @@ export function PaintingView() {
         onImageUpload={handleImageUpload}
         onAIGenerate={handleAIGenerate}
         onBackgroundRemoval={handleBackgroundRemoval}
+        onMergeTwo={() => setShowMergeTwo(true)}
         selectedTool={selectedTool}
         onToolChange={handleToolChange}
         layers={layers}
@@ -1058,7 +1035,7 @@ export function PaintingView() {
       {showAIGeneration && sessionId && (
         <AIGenerationModalWrapper
           sessionId={sessionId}
-          canvasRef={canvasRef as React.RefObject<CanvasRef>}
+          canvasRef={canvasRef}
           onClose={() => {
             setShowAIGeneration(false)
             setSelectedTool('brush')
@@ -1071,14 +1048,26 @@ export function PaintingView() {
       {showBackgroundRemoval && sessionId && (
         <BackgroundRemovalModalWrapper
           sessionId={sessionId}
-          canvasRef={canvasRef as React.RefObject<CanvasRef>}
+          canvasRef={canvasRef}
           onClose={() => {
             setShowBackgroundRemoval(false)
             setSelectedTool('brush')
           }}
           onRemovalComplete={handleAIGenerationComplete}
           layers={layers}
-          activeLayerId={activeLayerId}
+          activeLayerId={activeLayerId || undefined}
+        />
+      )}
+      {showMergeTwo && sessionId && (
+        <MergeTwoModal
+          isOpen={showMergeTwo}
+          onClose={() => {
+            setShowMergeTwo(false)
+            setSelectedTool('brush')
+          }}
+          sessionId={sessionId}
+          layers={layers}
+          onMergeComplete={handleAIGenerationComplete}
         />
       )}
       {/* Admin Panel - only rendered when admin features are enabled */}
@@ -1116,5 +1105,6 @@ export function PaintingView() {
         defaultFilename={`wepaintai-${Date.now()}`}
       />
     </div>
+      </ClipboardProvider>
   )
 }

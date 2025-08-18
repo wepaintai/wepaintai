@@ -26,13 +26,15 @@ import {
   Scissors,
   PlusCircle,
   Library,
-  Sliders
+  Sliders,
+  Merge
 } from 'lucide-react'
 import { AuthModal } from './AuthModal'
 import { LibraryModal } from './LibraryModal'
 import { BrushSettingsModal, type BrushSettings } from './BrushSettingsModal'
 import { useAuth, useUser } from '@clerk/tanstack-start'
 import { useLibrary } from '../hooks/useLibrary'
+import { useClipboardContext } from '../context/ClipboardContext'
 
 // Types
 export interface Layer {
@@ -59,6 +61,7 @@ interface ToolPanelProps {
   onImageUpload?: () => void
   onAIGenerate?: () => void
   onBackgroundRemoval?: () => void
+  onMergeTwo?: () => void
   selectedTool?: string
   onToolChange?: (tool: string) => void
   layers?: Layer[]
@@ -472,6 +475,7 @@ export function ToolPanel({
   onImageUpload,
   onAIGenerate,
   onBackgroundRemoval,
+  onMergeTwo,
   selectedTool: externalSelectedTool,
   onToolChange,
   layers = [],
@@ -490,6 +494,7 @@ export function ToolPanel({
   canRedo = true,
 }: ToolPanelProps) {
   const { userId, isLoaded } = useAuth()
+  const { setIsMouseOverToolbox } = useClipboardContext()
   const { isSignedIn, user } = useUser()
   const [internalSelectedTool, setInternalSelectedTool] = React.useState('brush')
   const selectedTool = externalSelectedTool || internalSelectedTool
@@ -714,6 +719,8 @@ export function ToolPanel({
       }}
       role="toolbar"
       aria-label="wepaint.ai tools"
+      onMouseEnter={() => setIsMouseOverToolbox(true)}
+      onMouseLeave={() => setIsMouseOverToolbox(false)}
     >
       <div 
         className="bg-black/90 backdrop-blur-md border border-white/20 overflow-hidden"
@@ -945,6 +952,13 @@ export function ToolPanel({
                       >
                         <Scissors className="w-4 h-4" />
                         Remove Background
+                      </button>
+                      <button
+                        onClick={onMergeTwo}
+                        className="w-full py-2 px-3 bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-medium transition-colors flex items-center justify-center gap-2 rounded"
+                      >
+                        <Merge className="w-4 h-4" />
+                        Merge Two
                       </button>
                       <p className="text-xs text-white/60 text-center">Transform your canvas with AI</p>
                     </>

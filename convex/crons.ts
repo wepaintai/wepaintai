@@ -11,11 +11,19 @@ crons.interval(
   {}
 );
 
-// Clean up old WebRTC signals every minute
+/* Clean up old WebRTC signals every minute */
 crons.interval(
   "cleanup old webrtc signals",
   { minutes: 1 },
   internal.webrtc.cleanupOldSignals,
+  {}
+);
+
+// Clean up old presence records periodically to expire stale users
+crons.interval(
+  "cleanup old presence",
+  { minutes: 5 },
+  internal.presence.cleanupOldPresenceInternal,
   {}
 );
 

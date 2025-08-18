@@ -1,4 +1,4 @@
-import { mutation, query } from "./_generated/server";
+import { mutation, query, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 
 /**
@@ -120,6 +120,28 @@ export const leaveSession = mutation({
  * Clean up old presence records (internal function)
  */
 export const cleanupOldPresence = mutation({
+  args: {},
+  returns: v.null(),
+  handler: async (ctx) => {
+    const oneHourAgo = Date.now() - 60 * 60 * 1000; // 1 hour
+    
+    const oldPresence = await ctx.db
+      .query("userPresence")
+      .filter((q) => q.lt(q.field("lastSeen"), oneHourAgo))
+      .collect();
+
+    for (const presence of oldPresence) {
+      await ctx.db.delete(presence._id);
+    }
+
+    return null;
+  },
+});
+
+/**
+ * Internal cron-safe cleanup for old presence records
+ */
+export const cleanupOldPresenceInternal = internalMutation({
   args: {},
   returns: v.null(),
   handler: async (ctx) => {

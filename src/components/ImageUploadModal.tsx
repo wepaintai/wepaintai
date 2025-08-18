@@ -3,6 +3,7 @@ import { Upload, X } from 'lucide-react'
 import { useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import { Id } from '../../convex/_generated/dataModel'
+import { uploadImageFile, validateImageFile, ACCEPTED_TYPES, MAX_FILE_SIZE } from '../utils/imageUpload'
 
 interface ImageUploadModalProps {
   sessionId: Id<"paintingSessions"> | null
@@ -13,8 +14,7 @@ interface ImageUploadModalProps {
   canvasHeight?: number
 }
 
-const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB
-const ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp']
+
 
 export function ImageUploadModal({ 
   sessionId, 
@@ -37,14 +37,10 @@ export function ImageUploadModal({
   const handleFileSelect = useCallback(async (file: File) => {
     console.log('File selected:', file.name, 'Type:', file.type, 'Size:', file.size)
     
-    // Validate file
-    if (!ACCEPTED_TYPES.includes(file.type)) {
-      setError('Please select a valid image file (PNG, JPG, GIF, WebP)')
-      return
-    }
-
-    if (file.size > MAX_FILE_SIZE) {
-      setError('File size must be less than 5MB')
+    // Validate file using shared utility
+    const validation = validateImageFile(file)
+    if (!validation.valid) {
+      setError(validation.error || 'Invalid file')
       return
     }
 
@@ -84,81 +80,7 @@ export function ImageUploadModal({
     setIsDragging(false)
   }, [])
 
-  const getImageDimensions = (file: File): Promise<{ width: number; height: number }> => {
-    return new Promise((resolve, reject) => {
-      const img = new Image()
-      const url = URL.createObjectURL(file)
-      
-      img.onload = () => {
-        URL.revokeObjectURL(url)
-        resolve({ width: img.width, height: img.height })
-      }
-      
-      img.onerror = () => {
-        URL.revokeObjectURL(url)
-        reject(new Error('Failed to load image'))
-      }
-      
-      img.src = url
-    })
-  }
 
-  const resizeImageToFitCanvas = async (
-    file: File, 
-    originalWidth: number, 
-    originalHeight: number
-  ): Promise<{ blob: Blob; width: number; height: number }> => {
-    return new Promise((resolve, reject) => {
-      const img = new Image()
-      const url = URL.createObjectURL(file)
-      
-      img.onload = async () => {
-        URL.revokeObjectURL(url)
-        
-        // Calculate scale to fit within canvas
-        const scaleX = canvasWidth / originalWidth
-        const scaleY = canvasHeight / originalHeight
-        const scale = Math.min(scaleX, scaleY, 1) // Never scale up, only down
-        
-        const newWidth = Math.floor(originalWidth * scale)
-        const newHeight = Math.floor(originalHeight * scale)
-        
-        // Create temporary canvas for resizing
-        const canvas = document.createElement('canvas')
-        canvas.width = newWidth
-        canvas.height = newHeight
-        
-        const ctx = canvas.getContext('2d')
-        if (!ctx) {
-          reject(new Error('Failed to get canvas context'))
-          return
-        }
-        
-        // Draw resized image
-        ctx.drawImage(img, 0, 0, newWidth, newHeight)
-        
-        // Convert to blob
-        canvas.toBlob(
-          (blob) => {
-            if (blob) {
-              resolve({ blob, width: newWidth, height: newHeight })
-            } else {
-              reject(new Error('Failed to create blob'))
-            }
-          },
-          file.type,
-          0.9 // Quality for JPEG/WebP
-        )
-      }
-      
-      img.onerror = () => {
-        URL.revokeObjectURL(url)
-        reject(new Error('Failed to load image for resizing'))
-      }
-      
-      img.src = url
-    })
-  }
 
   const handleUpload = async () => {
     if (!selectedFile || !sessionId) return
@@ -167,78 +89,24 @@ export function ImageUploadModal({
     setError(null)
 
     try {
-      // Get image dimensions
-      console.log('Getting image dimensions...')
-      const originalDimensions = await getImageDimensions(selectedFile)
-      console.log('Original image dimensions:', originalDimensions)
-      console.log('Canvas dimensions:', canvasWidth, 'x', canvasHeight)
-      
-      // Check if image needs resizing
-      let fileToUpload: File | Blob = selectedFile
-      let finalDimensions = originalDimensions
-      
-      if (originalDimensions.width > canvasWidth || originalDimensions.height > canvasHeight) {
-        console.log('Image exceeds canvas bounds, resizing...')
-        const resized = await resizeImageToFitCanvas(
-          selectedFile, 
-          originalDimensions.width, 
-          originalDimensions.height
-        )
-        fileToUpload = resized.blob
-        finalDimensions = { width: resized.width, height: resized.height }
-        console.log('Resized dimensions:', finalDimensions)
+      const result = await uploadImageFile(
+        selectedFile,
+        {
+          sessionId,
+          userId,
+          canvasWidth,
+          canvasHeight,
+          onImageUploaded,
+        },
+        generateUploadUrl,
+        uploadImage
+      )
+
+      if (result.success) {
+        onClose()
+      } else {
+        setError(result.error || 'Failed to upload image. Please try again.')
       }
-      
-      // Generate upload URL
-      console.log('Generating upload URL...')
-      const uploadUrl = await generateUploadUrl()
-      console.log('Upload URL generated')
-      
-      // Upload to Convex storage
-      console.log('Uploading to Convex storage...')
-      const response = await fetch(uploadUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': selectedFile.type },
-        body: fileToUpload,
-      })
-
-      if (!response.ok) {
-        console.error('Upload response not OK:', response.status, response.statusText)
-        throw new Error('Failed to upload file')
-      }
-
-      const { storageId } = await response.json()
-      console.log('File uploaded, storage ID:', storageId)
-
-      // Center the image on the canvas
-      // Since KonvaImage uses offsetX/offsetY to center the image anchor,
-      // we position at the canvas center directly
-      const x = canvasWidth / 2
-      const y = canvasHeight / 2
-
-      // Create image record
-      console.log('Creating image record in database...')
-      const uploadArgs: any = {
-        sessionId,
-        storageId,
-        filename: selectedFile.name,
-        mimeType: selectedFile.type,
-        width: finalDimensions.width,
-        height: finalDimensions.height,
-        x, // Centered position
-        y,
-      }
-      
-      // Only include userId if it's defined and not null
-      if (userId) {
-        uploadArgs.userId = userId
-      }
-      
-      const imageId = await uploadImage(uploadArgs)
-      console.log('Image record created:', imageId)
-
-      onImageUploaded?.(imageId)
-      onClose()
     } catch (err) {
       console.error('Upload error:', err)
       setError('Failed to upload image. Please try again.')

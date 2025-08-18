@@ -260,7 +260,7 @@ export const generateImage = action({
 
       // Poll for completion
       let attempts = 0;
-      const maxAttempts = 60; // 60 seconds timeout
+      const maxAttempts = parseInt(process.env.REPLICATE_TIMEOUT_SECONDS || "180"); // Default 180 seconds timeout
       
       console.log('[AI-GEN] Starting to poll for prediction:', prediction.id);
       

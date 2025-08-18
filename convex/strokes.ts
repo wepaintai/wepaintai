@@ -7,7 +7,7 @@ import { v } from "convex/values";
 export const addStroke = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
-    layerId: v.optional(v.id("paintLayers")), // Layer to add stroke to
+    layerId: v.optional(v.union(v.id("paintLayers"), v.id("uploadedImages"), v.id("aiGeneratedImages"))), // Layer to add stroke to (paint, uploaded image, or AI image)
     userId: v.optional(v.id("users")),
     userColor: v.string(),
     points: v.array(v.object({
@@ -99,7 +99,7 @@ export const getSessionStrokes = query({
     _id: v.id("strokes"),
     _creationTime: v.number(),
     sessionId: v.id("paintingSessions"),
-    layerId: v.optional(v.id("paintLayers")),
+    layerId: v.optional(v.union(v.id("paintLayers"), v.id("uploadedImages"), v.id("aiGeneratedImages"))),
     userId: v.optional(v.id("users")),
     userColor: v.string(),
     points: v.array(v.object({
@@ -133,13 +133,9 @@ export const getSessionStrokes = query({
       const needsCacheUpdate = !session.recentStrokeIds || session.recentStrokeIds.length === 0;
       
       if (needsCacheUpdate) {
-        // Populate cache with the last 10 strokes for faster undo
-        const lastStrokes = strokes.slice(-10);
-        
-        await ctx.db.patch(args.sessionId, {
-          recentStrokeOrders: lastStrokes.map(s => s.strokeOrder),
-          recentStrokeIds: lastStrokes.map(s => s._id),
-        });
+        // Cache warming removed from query to avoid writes in query context
+        // const lastStrokes = strokes.slice(-10);
+        // (No-op)
       }
     }
     
@@ -153,13 +149,13 @@ export const getSessionStrokes = query({
 export const getLayerStrokes = query({
   args: {
     sessionId: v.id("paintingSessions"),
-    layerId: v.id("paintLayers"),
+    layerId: v.union(v.id("paintLayers"), v.id("uploadedImages"), v.id("aiGeneratedImages")),
   },
   returns: v.array(v.object({
     _id: v.id("strokes"),
     _creationTime: v.number(),
     sessionId: v.id("paintingSessions"),
-    layerId: v.optional(v.id("paintLayers")),
+    layerId: v.optional(v.union(v.id("paintLayers"), v.id("uploadedImages"), v.id("aiGeneratedImages"))),
     userId: v.optional(v.id("users")),
     userColor: v.string(),
     points: v.array(v.object({
@@ -196,7 +192,7 @@ export const getStrokesAfter = query({
     _id: v.id("strokes"),
     _creationTime: v.number(),
     sessionId: v.id("paintingSessions"),
-    layerId: v.optional(v.id("paintLayers")),
+    layerId: v.optional(v.union(v.id("paintLayers"), v.id("uploadedImages"), v.id("aiGeneratedImages"))),
     userId: v.optional(v.id("users")),
     userColor: v.string(),
     points: v.array(v.object({
@@ -396,13 +392,16 @@ export const restoreLastDeletedStroke = mutation({
       .order("desc")
       .first();
     
-    await ctx.db.patch(args.sessionId, {
+    const sessionPatch: any = {
       strokeCounter: Math.max(session.strokeCounter, lastDeletedStroke.strokeOrder),
       recentStrokeOrders: updatedRecentOrders,
       recentStrokeIds: updatedRecentIds,
       deletedStrokeCount: deletedCount,
-      lastDeletedStrokeOrder: nextDeletedStroke?.strokeOrder,
-    });
+    };
+    if (nextDeletedStroke) {
+      sessionPatch.lastDeletedStrokeOrder = nextDeletedStroke.strokeOrder;
+    }
+    await ctx.db.patch(args.sessionId, sessionPatch);
 
     return true;
   },
@@ -532,7 +531,7 @@ export const getUndoRedoAvailability = query({
     
     // If cache is not warmed and we have strokes, warm it now
     if (!cacheWarmed && session.strokeCounter > 0) {
-      // Get the last 10 strokes to populate cache
+      // Get the last 10 strokes to compute availability quickly
       const recentStrokes = await ctx.db
         .query("strokes")
         .withIndex("by_session", (q) => 
@@ -543,11 +542,6 @@ export const getUndoRedoAvailability = query({
       
       if (recentStrokes.length > 0) {
         const sortedRecent = recentStrokes.reverse(); // Back to ascending order
-        await ctx.db.patch(args.sessionId, {
-          recentStrokeOrders: sortedRecent.map(s => s.strokeOrder),
-          recentStrokeIds: sortedRecent.map(s => s._id),
-        });
-        
         return {
           canUndo: true,
           canRedo: deletedCount > 0,

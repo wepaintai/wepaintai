@@ -14,6 +14,8 @@ export const uploadImage = mutation({
     height: v.number(),
     x: v.number(),
     y: v.number(),
+    canvasWidth: v.optional(v.number()),
+    canvasHeight: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     // Get the current max layer order from ALL images (uploaded and AI)
@@ -30,6 +32,13 @@ export const uploadImage = mutation({
     // Get painting session to check paint layer order
     const uploadSession = await ctx.db.get(args.sessionId);
     const paintLayerOrder = uploadSession?.paintLayerOrder ?? 0;
+    // Compute scale to fit original image within canvas without altering the stored pixels
+    const canvasWidth = args.canvasWidth ?? uploadSession?.canvasWidth ?? args.width;
+    const canvasHeight = args.canvasHeight ?? uploadSession?.canvasHeight ?? args.height;
+    const scaleX = canvasWidth / args.width;
+    const scaleY = canvasHeight / args.height;
+    // Use "cover" fit (fill canvas; may crop) but never upscale above 1
+    const computedScale = Math.min(Math.max(scaleX, scaleY), 1);
     
     // Find max layer order across all images
     let maxLayerOrder = paintLayerOrder; // Start with paint layer order
@@ -56,7 +65,7 @@ export const uploadImage = mutation({
       height: args.height,
       x: args.x,
       y: args.y,
-      scale: 1,
+      scale: computedScale,
       rotation: 0,
       opacity: 1,
       layerOrder: newLayerOrder,
@@ -326,6 +335,28 @@ export const deleteImage = mutation({
     const image = await ctx.db.get(args.imageId);
     if (!image) throw new Error("Image not found");
 
+    // Delete any strokes attached to this image layer
+    const attachedStrokes = await ctx.db
+      .query("strokes")
+      .withIndex("by_layer", (q) =>
+        q.eq("sessionId", image.sessionId).eq("layerId", args.imageId)
+      )
+      .collect();
+    for (const s of attachedStrokes) {
+      await ctx.db.delete(s._id);
+    }
+
+    // Delete any deletedStrokes cached for this image layer
+    const attachedDeleted = await ctx.db
+      .query("deletedStrokes")
+      .withIndex("by_session_layer_deleted", (q) =>
+        q.eq("sessionId", image.sessionId).eq("layerId", args.imageId)
+      )
+      .collect();
+    for (const ds of attachedDeleted) {
+      await ctx.db.delete(ds._id);
+    }
+
     // Delete from storage
     await ctx.storage.delete(image.storageId);
 
@@ -471,6 +502,28 @@ export const deleteAIImage = mutation({
     }
     
     console.log('[deleteAIImage] Found image to delete:', image);
+
+    // Delete any strokes attached to this AI image layer
+    const attachedStrokes = await ctx.db
+      .query("strokes")
+      .withIndex("by_layer", (q) =>
+        q.eq("sessionId", image.sessionId).eq("layerId", args.imageId)
+      )
+      .collect();
+    for (const s of attachedStrokes) {
+      await ctx.db.delete(s._id);
+    }
+
+    // Delete any deletedStrokes cached for this AI image layer
+    const attachedDeleted = await ctx.db
+      .query("deletedStrokes")
+      .withIndex("by_session_layer_deleted", (q) =>
+        q.eq("sessionId", image.sessionId).eq("layerId", args.imageId)
+      )
+      .collect();
+    for (const ds of attachedDeleted) {
+      await ctx.db.delete(ds._id);
+    }
 
     // Delete the record
     await ctx.db.delete(args.imageId);

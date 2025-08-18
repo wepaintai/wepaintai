@@ -82,6 +82,7 @@ Note: No test or lint commands are currently configured.
 Set these in the Convex dashboard (Settings > Environment Variables):
 - `REPLICATE_API_TOKEN`: Your Replicate API token for AI image generation
 - `REPLICATE_MODEL_VERSION`: Replicate model version ID (default: `15589a1a9e6b240d246752fc688267b847db4858910cc390794703384b6a5443` for Flux Kontext Pro)
+- `REPLICATE_TIMEOUT_SECONDS`: Timeout for Replicate API calls in seconds (default: 180) - applies to AI generation, background removal, and image merge operations
 - `POLAR_API_KEY`: Your Polar API key for payment processing
 - `POLAR_WEBHOOK_SECRET`: Webhook secret from Polar for signature verification
 - `POLAR_API_BASE_URL`: (Optional) API base URL
