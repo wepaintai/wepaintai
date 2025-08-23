@@ -622,7 +622,36 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
         const container = stage.container()
         if (container) {
           if (selectedTool === 'transform') {
-            container.style.cursor = isDrawing ? 'grabbing' : 'grab'
+            // Determine cursor by hovered transformer anchor or target
+            const target: any = e.target
+            const parent = target?.getParent?.()
+            const isTransformerChild = parent?.getClassName?.() === 'Transformer'
+            if (isTransformerChild) {
+              const name = target?.name?.() || ''
+              // Rotation handle
+              if (name === 'rotater') {
+                container.style.cursor = "url('/cursors/rotate.svg') 12 12, crosshair"
+              } else if (name === 'top-left' || name === 'bottom-right') {
+                container.style.cursor = 'nwse-resize'
+              } else if (name === 'top-right' || name === 'bottom-left') {
+                container.style.cursor = 'nesw-resize'
+              } else if (name === 'middle-left' || name === 'middle-right') {
+                container.style.cursor = 'ew-resize'
+              } else if (name === 'top-center' || name === 'bottom-center') {
+                container.style.cursor = 'ns-resize'
+              } else {
+                container.style.cursor = "url('/cursors/move.svg') 12 12, move"
+              }
+            } else {
+              const className = target?.getClassName?.()
+              if (className === 'Image' || className === 'Group') {
+                // Over the node itself => move
+                container.style.cursor = "url('/cursors/move.svg') 12 12, move"
+              } else {
+                // Empty canvas area
+                container.style.cursor = 'default'
+              }
+            }
           } else if (selectedTool === 'eraser' || selectedTool === 'brush') {
             container.style.cursor = 'none' // Hide default cursor, we'll show our custom one
           } else {
@@ -1365,6 +1394,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                     scaleX={plScaleX}
                     scaleY={plScaleY}
                     draggable={selectedTool === 'transform'}
+                    dragCursor={"url('/cursors/move.svg') 12 12, grabbing"}
                     onDragEnd={async (e) => {
                       const node = e.target as Konva.Group
                       await updatePaintLayerTransform({
@@ -1614,6 +1644,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       offsetX={image.width / 2}
                       offsetY={image.height / 2}
                       draggable={selectedTool === 'transform'}
+                      dragCursor={"url('/cursors/move.svg') 12 12, grabbing"}
                       onDragEnd={async (e) => {
                         const node = e.target
                         await updateImageTransform({
@@ -1801,6 +1832,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       offsetX={aiImage.width / 2}
                       offsetY={aiImage.height / 2}
                       draggable={selectedTool === 'transform'}
+                      dragCursor={"url('/cursors/move.svg') 12 12, grabbing"}
                       onDragEnd={async (e) => {
                         const node = e.target
                         await updateAIImageTransform({
@@ -2099,6 +2131,11 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
               ref={transformerRef}
               rotateEnabled
               resizeEnabled
+              padding={12}
+              anchorSize={16}
+              anchorCornerRadius={2}
+              anchorStrokeWidth={2}
+              rotateAnchorOffset={48}
               // Allow non-uniform by default; enforce uniform only for corner anchors
               keepRatio={false}
               enabledAnchors={["top-left","top-right","bottom-left","bottom-right","middle-right","middle-left","top-center","bottom-center"]}

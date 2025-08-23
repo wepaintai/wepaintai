@@ -20,14 +20,14 @@ import {
   EyeOff,
   Trash2,
   GripVertical,
-  Hand,
   Eraser,
   Plus,
   Scissors,
   PlusCircle,
   Library,
   Sliders,
-  Merge
+  Merge,
+  Scan
 } from 'lucide-react'
 import { AuthModal } from './AuthModal'
 import { LibraryModal } from './LibraryModal'
@@ -102,7 +102,7 @@ interface SliderProps {
 const tools: Tool[] = [
   { id: 'brush', icon: Paintbrush, label: 'Brush', ariaLabel: 'Select brush tool', keyboardShortcut: 'B' },
   { id: 'eraser', icon: Eraser, label: 'Eraser', ariaLabel: 'Eraser tool', keyboardShortcut: 'E' },
-  { id: 'transform', icon: Hand, label: 'Transform', ariaLabel: 'Move/Rotate/Scale layer', keyboardShortcut: 'H' },
+  { id: 'transform', icon: Scan, label: 'Transform', ariaLabel: 'Move/Rotate/Scale layer', keyboardShortcut: 'H' },
   { id: 'upload', icon: ImagePlus, label: 'Upload', ariaLabel: 'Upload image', keyboardShortcut: 'U' },
   // { id: 'ai', icon: Sparkles, label: 'AI', ariaLabel: 'AI Generation', keyboardShortcut: 'G' },
   // { id: 'inpaint', icon: Palette, label: 'Inpaint', ariaLabel: 'Inpaint tool', keyboardShortcut: 'I' },
