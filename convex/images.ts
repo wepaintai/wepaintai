@@ -66,6 +66,9 @@ export const uploadImage = mutation({
       x: args.x,
       y: args.y,
       scale: computedScale,
+      // Initialize per-axis scale to uniform until edited
+      scaleX: computedScale,
+      scaleY: computedScale,
       rotation: 0,
       opacity: 1,
       layerOrder: newLayerOrder,
@@ -154,6 +157,9 @@ export const addAIGeneratedImage = mutation({
       x: x, // Center horizontally if needed
       y: y, // Center vertically if needed
       scale: scale, // Scale to fit canvas
+      // Initialize per-axis scale to uniform until edited
+      scaleX: scale,
+      scaleY: scale,
       rotation: 0,
       opacity: 1,
       layerOrder: newLayerOrder,
@@ -218,6 +224,8 @@ export const updateImageTransform = mutation({
     x: v.optional(v.number()),
     y: v.optional(v.number()),
     scale: v.optional(v.number()),
+    scaleX: v.optional(v.number()),
+    scaleY: v.optional(v.number()),
     rotation: v.optional(v.number()),
     opacity: v.optional(v.number()),
   },
@@ -229,6 +237,8 @@ export const updateImageTransform = mutation({
     if (updates.x !== undefined) updateFields.x = updates.x;
     if (updates.y !== undefined) updateFields.y = updates.y;
     if (updates.scale !== undefined) updateFields.scale = updates.scale;
+    if (updates.scaleX !== undefined) updateFields.scaleX = updates.scaleX;
+    if (updates.scaleY !== undefined) updateFields.scaleY = updates.scaleY;
     if (updates.rotation !== undefined) updateFields.rotation = updates.rotation;
     if (updates.opacity !== undefined) updateFields.opacity = updates.opacity;
 
@@ -243,6 +253,8 @@ export const updateAIImageTransform = mutation({
     x: v.optional(v.number()),
     y: v.optional(v.number()),
     scale: v.optional(v.number()),
+    scaleX: v.optional(v.number()),
+    scaleY: v.optional(v.number()),
     rotation: v.optional(v.number()),
     opacity: v.optional(v.number()),
   },
@@ -254,6 +266,8 @@ export const updateAIImageTransform = mutation({
     if (updates.x !== undefined) updateFields.x = updates.x;
     if (updates.y !== undefined) updateFields.y = updates.y;
     if (updates.scale !== undefined) updateFields.scale = updates.scale;
+    if (updates.scaleX !== undefined) updateFields.scaleX = updates.scaleX;
+    if (updates.scaleY !== undefined) updateFields.scaleY = updates.scaleY;
     if (updates.rotation !== undefined) updateFields.rotation = updates.rotation;
     if (updates.opacity !== undefined) updateFields.opacity = updates.opacity;
 

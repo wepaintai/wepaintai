@@ -123,6 +123,9 @@ const schema = defineSchema({
     x: v.number(),
     y: v.number(),
     scale: v.number(),
+    // Optional per-axis scales for non-uniform resizing
+    scaleX: v.optional(v.number()),
+    scaleY: v.optional(v.number()),
     rotation: v.number(),
     opacity: v.number(),
     layerOrder: v.number(),
@@ -162,6 +165,9 @@ const schema = defineSchema({
     x: v.number(),
     y: v.number(),
     scale: v.number(),
+    // Optional per-axis scales for non-uniform resizing
+    scaleX: v.optional(v.number()),
+    scaleY: v.optional(v.number()),
     rotation: v.number(),
     opacity: v.number(),
     layerOrder: v.number(),
@@ -197,6 +203,14 @@ const schema = defineSchema({
     layerOrder: v.number(),
     visible: v.boolean(),
     opacity: v.number(),
+    // Transform (optional for backward compatibility)
+    x: v.optional(v.number()),
+    y: v.optional(v.number()),
+    scale: v.optional(v.number()),
+    // Optional per-axis scales for non-uniform resizing
+    scaleX: v.optional(v.number()),
+    scaleY: v.optional(v.number()),
+    rotation: v.optional(v.number()),
     createdBy: v.optional(v.id("users")),
     createdAt: v.number(),
   }).index("by_session", ["sessionId", "layerOrder"]),

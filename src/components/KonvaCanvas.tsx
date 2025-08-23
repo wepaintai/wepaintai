@@ -392,9 +392,11 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
           updateImageTransform({
             imageId: img._id as Id<"uploadedImages">,
             scale: desiredScale,
+            scaleX: desiredScale,
+            scaleY: desiredScale,
             x: desiredX,
             y: desiredY
-          })
+          } as any)
           autoFittedRef.current.add(img._id)
         }
       })
@@ -414,9 +416,11 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
         updateAIImageTransform({
           imageId: img._id as Id<"aiGeneratedImages">,
           scale: desiredScale,
+          scaleX: desiredScale,
+          scaleY: desiredScale,
           x: desiredX,
           y: desiredY
-        })
+        } as any)
         autoFittedRef.current.add(img._id)
       }
     })
@@ -1048,15 +1052,21 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
         const imgScales: number[] = []
         if (images && Array.isArray(images)) {
           images.forEach((img: any) => {
-            if (img && typeof img.scale === 'number' && (img.opacity === undefined || img.opacity > 0)) {
-              imgScales.push(img.scale)
+            if (img && (img.opacity === undefined || img.opacity > 0)) {
+              const sx = img.scaleX ?? img.scale
+              const sy = img.scaleY ?? img.scale
+              const s = Math.min(sx ?? 1, sy ?? 1)
+              if (typeof s === 'number' && isFinite(s) && s > 0) imgScales.push(s)
             }
           })
         }
         if (aiImages && Array.isArray(aiImages)) {
           aiImages.forEach((img: any) => {
-            if (img && typeof img.scale === 'number' && (img.opacity === undefined || img.opacity > 0)) {
-              imgScales.push(img.scale)
+            if (img && (img.opacity === undefined || img.opacity > 0)) {
+              const sx = img.scaleX ?? img.scale
+              const sy = img.scaleY ?? img.scale
+              const s = Math.min(sx ?? 1, sy ?? 1)
+              if (typeof s === 'number' && isFinite(s) && s > 0) imgScales.push(s)
             }
           })
         }
@@ -1235,6 +1245,13 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
 
             // Paint layer
             if (layer.type === 'paint') {
+              // Read transform for this paint layer (defaults center + identity)
+              const paintLayer = paintLayersData?.find((pl: any) => pl._id === layer.id)
+              const plX = paintLayer?.x ?? dimensions.width / 2
+              const plY = paintLayer?.y ?? dimensions.height / 2
+              const plScaleX = (paintLayer as any)?.scaleX ?? paintLayer?.scale ?? 1
+              const plScaleY = (paintLayer as any)?.scaleY ?? paintLayer?.scale ?? 1
+              const plRotation = paintLayer?.rotation ?? 0
               // Filter strokes for this specific paint layer
               const layerStrokes = strokes.filter(stroke => stroke.layerId === layer.id)
               // console.log('[KonvaCanvas] Paint layer strokes:', {
@@ -1276,6 +1293,43 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                   listening={selectedTool === 'pan'} 
                   opacity={layer.opacity}
                 >
+                  <Group
+                    ref={(node) => {
+                      if (node) paintGroupRefs.current.set(layer.id, node)
+                      else paintGroupRefs.current.delete(layer.id)
+                    }}
+                    x={plX}
+                    y={plY}
+                    rotation={plRotation}
+                    scaleX={plScaleX}
+                    scaleY={plScaleY}
+                    draggable={selectedTool === 'transform'}
+                    onDragEnd={async (e) => {
+                      const node = e.target as Konva.Group
+                      await updatePaintLayerTransform({
+                        layerId: layer.id as any,
+                        x: node.x(),
+                        y: node.y(),
+                      } as any)
+                    }}
+                    onTransformEnd={async (e) => {
+                      const node = e.target as Konva.Group
+                      const sx = node.scaleX()
+                      const sy = node.scaleY()
+                      const newRotation = node.rotation()
+                      await updatePaintLayerTransform({
+                        layerId: layer.id as any,
+                        scale: Math.min(sx, sy),
+                        scaleX: sx,
+                        scaleY: sy,
+                        rotation: newRotation,
+                        x: node.x(),
+                        y: node.y(),
+                      } as any)
+                      node.scaleX(1)
+                      node.scaleY(1)
+                    }}
+                  >
                   {/* Render confirmed strokes */}
                   {layerStrokes
                     .sort((a, b) => a.strokeOrder - b.strokeOrder)
@@ -1458,6 +1512,9 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       )
                     })()
                   }
+                  
+                  {/* Close paint group */}
+                  </Group>
                 </Layer>
               )
             }
@@ -1485,9 +1542,11 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       width={image.width * image.scale}
                       height={image.height * image.scale}
                       rotation={image.rotation}
-                      offsetX={(image.width * image.scale) / 2}
-                      offsetY={(image.height * image.scale) / 2}
-                      draggable={selectedTool === 'pan'}
+                      scaleX={(image as any).scaleX ?? image.scale}
+                      scaleY={(image as any).scaleY ?? image.scale}
+                      offsetX={image.width / 2}
+                      offsetY={image.height / 2}
+                      draggable={selectedTool === 'transform'}
                       onDragEnd={async (e) => {
                         const node = e.target
                         await updateImageTransform({
@@ -1495,6 +1554,23 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                           x: node.x(),
                           y: node.y()
                         })
+                      }}
+                      onTransformEnd={async (e) => {
+                        const node = e.target as Konva.Image
+                        const sx = node.scaleX()
+                        const sy = node.scaleY()
+                        const newRotation = node.rotation()
+                        await updateImageTransform({
+                          imageId: layer.id as Id<"uploadedImages">,
+                          scale: Math.min(sx, sy),
+                          scaleX: sx,
+                          scaleY: sy,
+                          rotation: newRotation,
+                          x: node.x(),
+                          y: node.y(),
+                        } as any)
+                        node.scaleX(1)
+                        node.scaleY(1)
                       }}
                     />
                     
@@ -1645,9 +1721,11 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       width={aiImage.width * aiImage.scale}
                       height={aiImage.height * aiImage.scale}
                       rotation={aiImage.rotation}
-          offsetX={(aiImage.width * aiImage.scale) / 2}
-          offsetY={(aiImage.height * aiImage.scale) / 2}
-          draggable={selectedTool === 'pan'}
+                      scaleX={(aiImage as any).scaleX ?? aiImage.scale}
+                      scaleY={(aiImage as any).scaleY ?? aiImage.scale}
+                      offsetX={aiImage.width / 2}
+                      offsetY={aiImage.height / 2}
+                      draggable={selectedTool === 'transform'}
                       onDragEnd={async (e) => {
                         const node = e.target
                         await updateAIImageTransform({
@@ -1655,6 +1733,23 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                           x: node.x(),
                           y: node.y()
                         })
+                      }}
+                      onTransformEnd={async (e) => {
+                        const node = e.target as Konva.Image
+                        const sx = node.scaleX()
+                        const sy = node.scaleY()
+                        const newRotation = node.rotation()
+                        await updateAIImageTransform({
+                          imageId: layer.id as Id<"aiGeneratedImages">,
+                          scale: Math.min(sx, sy),
+                          scaleX: sx,
+                          scaleY: sy,
+                          rotation: newRotation,
+                          x: node.x(),
+                          y: node.y(),
+                        } as any)
+                        node.scaleX(1)
+                        node.scaleY(1)
                       }}
                     />
                     
@@ -1918,6 +2013,46 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
               )
             )}
           </Layer>
+        {/* Shared transformer for transform tool (render on top for hit-testing) */}
+        {selectedTool === 'transform' && (
+          <Layer>
+            <Transformer
+              ref={transformerRef}
+              rotateEnabled
+              resizeEnabled
+              keepRatio
+              enabledAnchors={["top-left","top-right","bottom-left","bottom-right","middle-right","middle-left","top-center","bottom-center"]}
+              boundBoxFunc={(oldBox, proposed) => {
+                const minSize = 10
+                // Clone to avoid mutating input
+                const newBox = { ...proposed }
+                // Enforce minimum size on absolute values but do not move the box
+                if (Math.abs(newBox.width) < minSize) newBox.width = Math.sign(newBox.width || 1) * minSize
+                if (Math.abs(newBox.height) < minSize) newBox.height = Math.sign(newBox.height || 1) * minSize
+
+                const anchor = transformerRef.current?.getActiveAnchor()
+                const isSide = anchor ? (
+                  anchor === 'middle-left' || anchor === 'middle-right' || anchor === 'top-center' || anchor === 'bottom-center'
+                ) : false
+
+                if (isSide) {
+                  // Override keepRatio for side anchors: lock the non-dragged dimension
+                  if (anchor === 'middle-left' || anchor === 'middle-right') {
+                    // Horizontal stretch only
+                    newBox.height = oldBox.height
+                  } else if (anchor === 'top-center' || anchor === 'bottom-center') {
+                    // Vertical stretch only
+                    newBox.width = oldBox.width
+                  }
+                  return newBox
+                }
+
+                // Corners: rely on keepRatio to maintain aspect and anchoring
+                return newBox
+              }}
+            />
+          </Layer>
+        )}
         </Stage>
       </div>
     )
