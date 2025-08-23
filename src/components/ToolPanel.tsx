@@ -102,7 +102,7 @@ interface SliderProps {
 const tools: Tool[] = [
   { id: 'brush', icon: Paintbrush, label: 'Brush', ariaLabel: 'Select brush tool', keyboardShortcut: 'B' },
   { id: 'eraser', icon: Eraser, label: 'Eraser', ariaLabel: 'Eraser tool', keyboardShortcut: 'E' },
-  { id: 'pan', icon: Hand, label: 'Pan', ariaLabel: 'Pan/Move layers', keyboardShortcut: 'H' },
+  { id: 'transform', icon: Hand, label: 'Transform', ariaLabel: 'Move/Rotate/Scale layer', keyboardShortcut: 'H' },
   { id: 'upload', icon: ImagePlus, label: 'Upload', ariaLabel: 'Upload image', keyboardShortcut: 'U' },
   // { id: 'ai', icon: Sparkles, label: 'AI', ariaLabel: 'AI Generation', keyboardShortcut: 'G' },
   // { id: 'inpaint', icon: Palette, label: 'Inpaint', ariaLabel: 'Inpaint tool', keyboardShortcut: 'I' },

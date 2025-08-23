@@ -651,7 +651,7 @@ export function PaintingView() {
             break
           case 'h':
             event.preventDefault()
-            setSelectedTool('pan')
+            setSelectedTool('transform')
             break
           case 'u':
             event.preventDefault()

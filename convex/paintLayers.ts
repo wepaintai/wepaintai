@@ -61,6 +61,11 @@ export const updatePaintLayer = mutation({
     name: v.optional(v.string()),
     visible: v.optional(v.boolean()),
     opacity: v.optional(v.number()),
+    // Allow transforms here for convenience
+    x: v.optional(v.number()),
+    y: v.optional(v.number()),
+    scale: v.optional(v.number()),
+    rotation: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const { layerId, ...updates } = args;
@@ -74,6 +79,31 @@ export const updatePaintLayer = mutation({
       await ctx.db.patch(layerId, cleanUpdates);
     }
     
+    return layerId;
+  },
+});
+
+// Dedicated transform updater (optional separate API)
+export const updatePaintLayerTransform = mutation({
+  args: {
+    layerId: v.id("paintLayers"),
+    x: v.optional(v.number()),
+    y: v.optional(v.number()),
+    scale: v.optional(v.number()),
+    rotation: v.optional(v.number()),
+    opacity: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const { layerId, ...updates } = args;
+    const updateFields: any = {};
+    if (updates.x !== undefined) updateFields.x = updates.x;
+    if (updates.y !== undefined) updateFields.y = updates.y;
+    if (updates.scale !== undefined) updateFields.scale = updates.scale;
+    if (updates.rotation !== undefined) updateFields.rotation = updates.rotation;
+    if (updates.opacity !== undefined) updateFields.opacity = updates.opacity;
+    if (Object.keys(updateFields).length > 0) {
+      await ctx.db.patch(layerId, updateFields);
+    }
     return layerId;
   },
 });
