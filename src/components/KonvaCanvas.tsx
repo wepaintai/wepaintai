@@ -400,9 +400,11 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
           updateImageTransform({
             imageId: img._id as Id<"uploadedImages">,
             scale: desiredScale,
+            scaleX: desiredScale,
+            scaleY: desiredScale,
             x: desiredX,
             y: desiredY
-          })
+          } as any)
           autoFittedRef.current.add(img._id)
         }
       })
@@ -422,9 +424,11 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
         updateAIImageTransform({
           imageId: img._id as Id<"aiGeneratedImages">,
           scale: desiredScale,
+          scaleX: desiredScale,
+          scaleY: desiredScale,
           x: desiredX,
           y: desiredY
-        })
+        } as any)
         autoFittedRef.current.add(img._id)
       }
     })
@@ -1306,7 +1310,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
               const paintLayer = paintLayersData?.find((pl: any) => pl._id === layer.id)
               const plX = paintLayer?.x ?? dimensions.width / 2
               const plY = paintLayer?.y ?? dimensions.height / 2
-              const plScale = paintLayer?.scale ?? 1
+              const plScaleX = (paintLayer as any)?.scaleX ?? paintLayer?.scale ?? 1
+              const plScaleY = (paintLayer as any)?.scaleY ?? paintLayer?.scale ?? 1
               const plRotation = paintLayer?.rotation ?? 0
               // Filter strokes for this specific paint layer
               const layerStrokes = strokes.filter(stroke => stroke.layerId === layer.id)
@@ -1357,8 +1362,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                     x={plX}
                     y={plY}
                     rotation={plRotation}
-                    scaleX={plScale}
-                    scaleY={plScale}
+                    scaleX={plScaleX}
+                    scaleY={plScaleY}
                     draggable={selectedTool === 'transform'}
                     onDragEnd={async (e) => {
                       const node = e.target as Konva.Group
@@ -1370,17 +1375,24 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                     }}
                     onTransformEnd={async (e) => {
                       const node = e.target as Konva.Group
-                      const newScale = node.scaleX()
+                      const newScaleX = node.scaleX()
+                      const newScaleY = node.scaleY()
                       const newRotation = node.rotation()
                       await updatePaintLayerTransform({
                         layerId: layer.id as any,
-                        scale: newScale,
+                        scaleX: newScaleX,
+                        scaleY: newScaleY,
                         rotation: newRotation,
                         x: node.x(),
                         y: node.y(),
-                      })
-                      node.scaleX(1)
-                      node.scaleY(1)
+                      } as any)
+                      // Do not reset node scale here; let controlled props re-render with persisted values
+                    }}
+                    onTransformStart={() => {
+                      const tr = transformerRef.current
+                      const active = tr?.getActiveAnchor?.()
+                      const isCorner = active === 'top-left' || active === 'top-right' || active === 'bottom-left' || active === 'bottom-right'
+                      tr?.setAttr('keepRatio', !!isCorner)
                     }}
                   >
                   {/* Render confirmed strokes */}
@@ -1597,8 +1609,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       width={image.width}
                       height={image.height}
                       rotation={image.rotation}
-                      scaleX={image.scale}
-                      scaleY={image.scale}
+                      scaleX={(image as any).scaleX ?? image.scale}
+                      scaleY={(image as any).scaleY ?? image.scale}
                       offsetX={image.width / 2}
                       offsetY={image.height / 2}
                       draggable={selectedTool === 'transform'}
@@ -1612,17 +1624,24 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       }}
                       onTransformEnd={async (e) => {
                         const node = e.target as Konva.Image
-                        const newScale = node.scaleX()
+                        const newScaleX = node.scaleX()
+                        const newScaleY = node.scaleY()
                         const newRotation = node.rotation()
                         await updateImageTransform({
                           imageId: layer.id as Id<"uploadedImages">,
-                          scale: newScale,
+                          scaleX: newScaleX,
+                          scaleY: newScaleY,
                           rotation: newRotation,
                           x: node.x(),
                           y: node.y(),
-                        })
-                        node.scaleX(1)
-                        node.scaleY(1)
+                        } as any)
+                        // Do not reset node scale here; let controlled props re-render with persisted values
+                      }}
+                      onTransformStart={() => {
+                        const tr = transformerRef.current
+                        const active = tr?.getActiveAnchor?.()
+                        const isCorner = active === 'top-left' || active === 'top-right' || active === 'bottom-left' || active === 'bottom-right'
+                        tr?.setAttr('keepRatio', !!isCorner)
                       }}
                     />
                     
@@ -1777,8 +1796,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       width={aiImage.width}
                       height={aiImage.height}
                       rotation={aiImage.rotation}
-                      scaleX={aiImage.scale}
-                      scaleY={aiImage.scale}
+                      scaleX={(aiImage as any).scaleX ?? aiImage.scale}
+                      scaleY={(aiImage as any).scaleY ?? aiImage.scale}
                       offsetX={aiImage.width / 2}
                       offsetY={aiImage.height / 2}
                       draggable={selectedTool === 'transform'}
@@ -1792,17 +1811,24 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       }}
                       onTransformEnd={async (e) => {
                         const node = e.target as Konva.Image
-                        const newScale = node.scaleX()
+                        const newScaleX = node.scaleX()
+                        const newScaleY = node.scaleY()
                         const newRotation = node.rotation()
                         await updateAIImageTransform({
                           imageId: layer.id as Id<"aiGeneratedImages">,
-                          scale: newScale,
+                          scaleX: newScaleX,
+                          scaleY: newScaleY,
                           rotation: newRotation,
                           x: node.x(),
                           y: node.y(),
-                        })
-                        node.scaleX(1)
-                        node.scaleY(1)
+                        } as any)
+                        // Do not reset node scale here; let controlled props re-render with persisted values
+                      }}
+                      onTransformStart={() => {
+                        const tr = transformerRef.current
+                        const active = tr?.getActiveAnchor?.()
+                        const isCorner = active === 'top-left' || active === 'top-right' || active === 'bottom-left' || active === 'bottom-right'
+                        tr?.setAttr('keepRatio', !!isCorner)
                       }}
                     />
                     
@@ -2073,13 +2099,36 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
               ref={transformerRef}
               rotateEnabled
               resizeEnabled
-              keepRatio
+              // Allow non-uniform by default; enforce uniform only for corner anchors
+              keepRatio={false}
               enabledAnchors={["top-left","top-right","bottom-left","bottom-right","middle-right","middle-left","top-center","bottom-center"]}
               boundBoxFunc={(oldBox, newBox) => {
                 const minSize = 10
                 if (Math.abs(newBox.width) < minSize || Math.abs(newBox.height) < minSize) {
                   return oldBox
                 }
+                // If dragging a corner, enforce uniform scaling and lock motion to the uniform path
+                try {
+                  const tr = transformerRef.current
+                  const active = tr?.getActiveAnchor?.()
+                  const isCorner = active === 'top-left' || active === 'top-right' || active === 'bottom-left' || active === 'bottom-right'
+                  if (isCorner) {
+                    const ow = oldBox.width
+                    const oh = oldBox.height
+                    if (ow === 0 || oh === 0) return oldBox
+                    const sW = newBox.width / ow
+                    const sH = newBox.height / oh
+                    if (!isFinite(sW) || !isFinite(sH)) return oldBox
+                    // Choose magnitude that best matches intent and keep signs from newBox
+                    const mag = Math.max(Math.abs(sW), Math.abs(sH))
+                    const signW = Math.sign(newBox.width) || 1
+                    const signH = Math.sign(newBox.height) || 1
+                    const nw = signW * Math.abs(ow) * mag
+                    const nh = signH * Math.abs(oh) * mag
+                    // Do not override x/y; let Konva keep the opposite corner fixed
+                    return { ...newBox, width: nw, height: nh }
+                  }
+                } catch {}
                 return newBox
               }}
             />

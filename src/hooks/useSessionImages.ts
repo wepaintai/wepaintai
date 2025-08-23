@@ -16,6 +16,8 @@ export interface SessionImage {
   x: number;
   y: number;
   scale: number;
+  scaleX?: number;
+  scaleY?: number;
   rotation: number;
   opacity: number;
   layerOrder: number;
@@ -74,6 +76,8 @@ export function useSessionImages(sessionId: Id<"paintingSessions"> | null) {
       x?: number;
       y?: number;
       scale?: number;
+      scaleX?: number;
+      scaleY?: number;
       rotation?: number;
       opacity?: number;
     }

@@ -122,7 +122,10 @@ const schema = defineSchema({
     height: v.number(),
     x: v.number(),
     y: v.number(),
+    // Legacy uniform scale. New fields below support non-uniform scaling.
     scale: v.number(),
+    scaleX: v.optional(v.number()),
+    scaleY: v.optional(v.number()),
     rotation: v.number(),
     opacity: v.number(),
     layerOrder: v.number(),
@@ -161,7 +164,10 @@ const schema = defineSchema({
     height: v.number(),
     x: v.number(),
     y: v.number(),
+    // Legacy uniform scale. New fields below support non-uniform scaling.
     scale: v.number(),
+    scaleX: v.optional(v.number()),
+    scaleY: v.optional(v.number()),
     rotation: v.number(),
     opacity: v.number(),
     layerOrder: v.number(),
@@ -200,7 +206,10 @@ const schema = defineSchema({
     // Transform (optional for backward compatibility)
     x: v.optional(v.number()),
     y: v.optional(v.number()),
+    // Legacy uniform scale. New fields below support non-uniform scaling.
     scale: v.optional(v.number()),
+    scaleX: v.optional(v.number()),
+    scaleY: v.optional(v.number()),
     rotation: v.optional(v.number()),
     createdBy: v.optional(v.id("users")),
     createdAt: v.number(),
