@@ -595,9 +595,10 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       ? toActivePaintLayerLocal(stagePoint)
       : stagePoint
 
-    // Update cursor position for brush size indicator
+    // Update cursor position for brush size indicator (use stage coords)
     if (selectedTool === 'brush' || selectedTool === 'eraser') {
-      setCursorPosition(point)
+      // Use untransformed stage coordinates so the indicator overlays the actual cursor
+      setCursorPosition(stagePoint)
     } else {
       setCursorPosition(null)
     }
@@ -1280,25 +1281,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
         onPointerLeave={handlePointerLeave}
         style={{ touchAction: 'none' }}
       >
-        {/* Shared transformer for transform tool */}
-        {selectedTool === 'transform' && (
-          <Layer listening={false}>
-            <Transformer
-              ref={transformerRef}
-              rotateEnabled
-              resizeEnabled
-              keepRatio
-              enabledAnchors={["top-left","top-right","bottom-left","bottom-right","middle-right","middle-left","top-center","bottom-center"]}
-              boundBoxFunc={(oldBox, newBox) => {
-                const minSize = 10
-                if (Math.abs(newBox.width) < minSize || Math.abs(newBox.height) < minSize) {
-                  return oldBox
-                }
-                return newBox
-              }}
-            />
-          </Layer>
-        )}
+        {/* Content layers render first; transformer should be above them */}
         {/* Render layers in order */}
         {layers
           .sort((a, b) => a.order - b.order)
@@ -2083,6 +2066,25 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
               )
             )}
           </Layer>
+        {/* Shared transformer for transform tool (render on top for hit-testing) */}
+        {selectedTool === 'transform' && (
+          <Layer>
+            <Transformer
+              ref={transformerRef}
+              rotateEnabled
+              resizeEnabled
+              keepRatio
+              enabledAnchors={["top-left","top-right","bottom-left","bottom-right","middle-right","middle-left","top-center","bottom-center"]}
+              boundBoxFunc={(oldBox, newBox) => {
+                const minSize = 10
+                if (Math.abs(newBox.width) < minSize || Math.abs(newBox.height) < minSize) {
+                  return oldBox
+                }
+                return newBox
+              }}
+            />
+          </Layer>
+        )}
         </Stage>
       </div>
     )
