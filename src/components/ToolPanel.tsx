@@ -16,7 +16,6 @@ import {
   MoreVertical,
   User,
   Layers,
-  Settings,
   EyeOff,
   Trash2,
   GripVertical,
@@ -35,6 +34,7 @@ import { BrushSettingsModal, type BrushSettings } from './BrushSettingsModal'
 import { useAuth, useUser } from '@clerk/tanstack-start'
 import { useLibrary } from '../hooks/useLibrary'
 import { useClipboardContext } from '../context/ClipboardContext'
+import { DraggableWindow } from './DraggableWindow'
 
 // Types
 export interface Layer {
@@ -249,15 +249,33 @@ const ColorMixer = React.memo(({
   colorMode?: 'solid' | 'rainbow',
   onColorModeChange?: (mode: 'solid' | 'rainbow') => void
 }) => {
+  const [showModeMenu, setShowModeMenu] = React.useState(false)
+
   const handleColorChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onColorChange(e.target.value)
   }
+
+  // Close popover on outside click
+  const containerRef = React.useRef<HTMLDivElement>(null)
+  React.useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      if (!containerRef.current) return
+      if (!containerRef.current.contains(e.target as Node)) {
+        setShowModeMenu(false)
+      }
+    }
+    if (showModeMenu) {
+      document.addEventListener('mousedown', onDocClick)
+      return () => document.removeEventListener('mousedown', onDocClick)
+    }
+  }, [showModeMenu])
   
   return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-2 mb-3" role="group" aria-labelledby="color-mixer-label">
-        <Pipette className="w-4 h-4 text-white/60 flex-shrink-0" aria-hidden="true" />
-        <div className="flex-1 relative">
+    <div className="mb-3" ref={containerRef}>
+      {/* Row: color swatch (1/2) + mode display (1/2) */}
+      <div className="grid grid-cols-2 gap-2 items-center" role="group" aria-labelledby="color-mixer-label">
+        {/* Color swatch / picker */}
+        <div className="relative">
           <div
             className="w-full h-6 border border-white/20 rounded transition-all duration-100 hover:border-blue-400 overflow-hidden"
             style={{ 
@@ -283,36 +301,49 @@ const ColorMixer = React.memo(({
               aria-label="Color picker"
             />
           )}
+          <span id="color-mixer-label" className="sr-only">Color mixer</span>
         </div>
-        <span id="color-mixer-label" className="sr-only">Color mixer</span>
+
+        {/* Mode display with popover switcher */}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setShowModeMenu((v) => !v)}
+            className="w-full h-6 px-2 text-[11px] rounded border border-white/20 bg-white/5 text-white/80 hover:bg-white/10 flex items-center justify-between"
+            aria-haspopup="menu"
+            aria-expanded={showModeMenu}
+            aria-label="Color mode"
+            title="Click to switch color mode"
+          >
+            <span className="inline-flex items-center gap-1">
+              <Pipette className="w-3.5 h-3.5 text-white/60" />
+              {colorMode === 'rainbow' ? 'Rainbow' : 'Solid'}
+            </span>
+            <ChevronUp className={`w-3 h-3 text-white/50 transition-transform ${showModeMenu ? 'rotate-180' : ''}`} />
+          </button>
+          {showModeMenu && onColorModeChange && (
+            <div
+              role="menu"
+              className="absolute z-10 mt-1 right-0 w-28 bg-black/95 border border-white/20 rounded shadow-lg py-1"
+            >
+              <button
+                onClick={() => { onColorModeChange('solid'); setShowModeMenu(false) }}
+                className={`w-full text-left px-2 py-1 text-xs transition-colors ${colorMode === 'solid' ? 'text-white bg-white/10' : 'text-white/70 hover:text-white hover:bg-white/10'}`}
+                role="menuitem"
+              >
+                Solid
+              </button>
+              <button
+                onClick={() => { onColorModeChange('rainbow'); setShowModeMenu(false) }}
+                className={`w-full text-left px-2 py-1 text-xs transition-colors ${colorMode === 'rainbow' ? 'text-white bg-white/10' : 'text-white/70 hover:text-white hover:bg-white/10'}`}
+                role="menuitem"
+              >
+                Rainbow
+              </button>
+            </div>
+          )}
+        </div>
       </div>
-      
-      {onColorModeChange && (
-        <div className="flex items-center gap-2 px-0.5">
-          <button
-            onClick={() => onColorModeChange('solid')}
-            className={`flex-1 py-1 px-2 text-xs rounded transition-colors ${
-              colorMode === 'solid'
-                ? 'bg-blue-500 text-white'
-                : 'bg-white/10 text-white/60 hover:bg-white/20'
-            }`}
-            aria-pressed={colorMode === 'solid'}
-          >
-            Solid
-          </button>
-          <button
-            onClick={() => onColorModeChange('rainbow')}
-            className={`flex-1 py-1 px-2 text-xs rounded transition-colors ${
-              colorMode === 'rainbow'
-                ? 'bg-blue-500 text-white'
-                : 'bg-white/10 text-white/60 hover:bg-white/20'
-            }`}
-            aria-pressed={colorMode === 'rainbow'}
-          >
-            Rainbow
-          </button>
-        </div>
-      )}
     </div>
   )
 })
@@ -320,7 +351,7 @@ const ColorMixer = React.memo(({
 ColorMixer.displayName = 'ColorMixer'
 
 // Tab definitions
-type TabId = 'tools' | 'layers' | 'ai' | 'settings'
+type TabId = 'tools' | 'layers' | 'ai'
 
 interface Tab {
   id: TabId
@@ -332,7 +363,6 @@ const tabs: Tab[] = [
   { id: 'tools', label: 'Tools', icon: Paintbrush },
   { id: 'layers', label: 'Layers', icon: Layers },
   { id: 'ai', label: 'AI', icon: Sparkles },
-  { id: 'settings', label: 'Settings', icon: Settings },
 ]
 
 // Layer item component
@@ -523,6 +553,11 @@ export function ToolPanel({
   const [showAuthModal, setShowAuthModal] = React.useState(false)
   const [menuPosition, setMenuPosition] = React.useState({ x: 0, y: 0 })
   const [activeTab, setActiveTab] = React.useState<TabId>('tools')
+  // Detachable tabs state: when a tab is detached, it won't render in the toolbox
+  const [detachedTabs, setDetachedTabs] = React.useState<Partial<Record<TabId, { x: number; y: number }>>>({})
+  const [draggingTab, setDraggingTab] = React.useState<null | { id: TabId; startX: number; startY: number }>(null)
+  const [draggingDetached, setDraggingDetached] = React.useState<null | { id: TabId; offsetX: number; offsetY: number }>(null)
+  const [autoCollapsed, setAutoCollapsed] = React.useState(false)
   const { isLibraryModalOpen, openLibrary, closeLibrary } = useLibrary()
   const [showBrushSettings, setShowBrushSettings] = React.useState(false)
   
@@ -538,6 +573,20 @@ export function ToolPanel({
     if (typeof window !== 'undefined') {
       setPosition({ x: 24, y: window.innerHeight / 2 - 150 })
     }
+    // Restore detached tabs from localStorage
+    try {
+      const raw = localStorage.getItem('wepaint.detachedTabs')
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        setDetachedTabs(parsed || {})
+        // Ensure activeTab is visible
+        const visible = (id: TabId) => !parsed?.[id]
+        if (!visible(activeTab)) {
+          const fallback = (['tools', 'layers', 'ai'] as TabId[]).find(t => visible(t as TabId)) || 'tools'
+          setActiveTab(fallback as TabId)
+        }
+      }
+    } catch {}
   }, [])
 
   // Handle drag start
@@ -619,6 +668,25 @@ export function ToolPanel({
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
   }, [])
+
+  // Persist detached tabs positions
+  React.useEffect(() => {
+    try {
+      localStorage.setItem('wepaint.detachedTabs', JSON.stringify(detachedTabs))
+    } catch {}
+  }, [detachedTabs])
+
+  // Auto collapse when all tabs are detached; auto expand when any docks back
+  React.useEffect(() => {
+    const allDetached = ['tools', 'layers', 'ai'].every(t => Boolean((detachedTabs as any)[t]))
+    if (allDetached && !autoCollapsed) {
+      setIsCollapsed(true)
+      setAutoCollapsed(true)
+    } else if (!allDetached && autoCollapsed) {
+      setIsCollapsed(false)
+      setAutoCollapsed(false)
+    }
+  }, [detachedTabs, autoCollapsed])
 
   // Handle tool selection
   const handleToolSelect = React.useCallback((toolId: string) => {
@@ -708,6 +776,238 @@ export function ToolPanel({
     }
   }, [showMenu])
 
+  // Tab detach drag handlers
+  const onTabMouseDown = React.useCallback((e: React.MouseEvent, id: TabId) => {
+    setDraggingTab({ id, startX: e.clientX, startY: e.clientY })
+  }, [])
+
+  React.useEffect(() => {
+    if (!draggingTab) return
+    const onMove = (e: MouseEvent) => {
+      if (!panelRef.current) return
+      const rect = panelRef.current.getBoundingClientRect()
+      const { clientX, clientY } = e
+      const movedEnough = Math.hypot(clientX - draggingTab.startX, clientY - draggingTab.startY) > 10
+      const outside = clientX < rect.left - 8 || clientX > rect.right + 8 || clientY < rect.top - 8 || clientY > rect.bottom + 8
+      if (movedEnough && outside) {
+        // Detach this tab near cursor
+        const offsetX = 12
+        const offsetY = 12
+        const x = Math.min(Math.max(0, clientX - offsetX), window.innerWidth - 220)
+        const y = Math.min(Math.max(0, clientY - offsetY), window.innerHeight - 280)
+        const nextDetached = { ...detachedTabs, [draggingTab.id]: { x, y } }
+        setDetachedTabs(nextDetached)
+        // If the active tab was detached, switch to first attached tab
+        if (activeTab === draggingTab.id) {
+          const firstAttached = (['tools', 'layers', 'ai'] as TabId[]).find(t => !nextDetached[t as TabId]) || 'tools'
+          setActiveTab(firstAttached as TabId)
+        }
+        setDraggingTab(null)
+        // Continue dragging the newly detached window with the mouse until mouseup
+        setDraggingDetached({ id: draggingTab.id, offsetX, offsetY })
+      }
+    }
+    const onUp = () => setDraggingTab(null)
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+    return () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+  }, [draggingTab, activeTab, detachedTabs])
+
+  // Handle continuing drag after detaching a tab
+  React.useEffect(() => {
+    if (!draggingDetached) return
+    const onMove = (e: MouseEvent) => {
+      const clientX = e.clientX
+      const clientY = e.clientY
+      const x = Math.min(Math.max(0, clientX - draggingDetached.offsetX), window.innerWidth - 240)
+      const y = Math.min(Math.max(0, clientY - draggingDetached.offsetY), window.innerHeight - 300)
+      setDetachedTabs(prev => ({ ...prev, [draggingDetached.id]: { x, y } }))
+    }
+    const onUp = (e: MouseEvent) => {
+      // If mouse released over toolbox, snap back (dock)
+      const rect = panelRef.current?.getBoundingClientRect()
+      if (rect && e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom) {
+        setDetachedTabs(prev => {
+          const n = { ...prev }
+          delete (n as any)[draggingDetached.id]
+          return n
+        })
+        // Ensure activeTab shows docked tab
+        setActiveTab(draggingDetached.id)
+      }
+      setDraggingDetached(null)
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+    return () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+  }, [draggingDetached])
+
+  // Helper to test overlap between two rects
+  const rectsOverlap = (a: DOMRect, b: DOMRect) => !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom)
+
+  const isDetached = React.useCallback((id: TabId) => Boolean(detachedTabs[id]), [detachedTabs])
+  const visibleTabs = React.useMemo(() => tabs.filter(t => !isDetached(t.id)), [detachedTabs])
+
+  // Helpers to render per-tab content so we can reuse inside floating windows
+  const renderToolsTab = React.useCallback(() => (
+    <>
+      {/* Tool Selection */}
+      <div className="grid grid-cols-4 mb-[10px]">
+        {tools.map((tool, index) => {
+          const isAIDisabled = tool.id === 'ai' && !effectiveIsSignedIn
+          return (
+            <div key={tool.id} className={`${index < tools.length - 1 ? 'border-r border-white/20' : ''}`}>
+              <ToolButton
+                tool={tool}
+                isSelected={selectedTool === tool.id}
+                onClick={() => handleToolSelect(tool.id)}
+                disabled={isAIDisabled}
+              />
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Color Mixer */}
+      <ColorMixer
+        color={color}
+        onColorChange={onColorChange}
+        colorMode={colorMode}
+        onColorModeChange={onColorModeChange}
+      />
+
+      {/* Sliders */}
+      <div className="border-b border-white/20 mb-3 pb-3">
+        <Slider
+          value={size}
+          min={1}
+          max={100}
+          onChange={onSizeChange}
+          icon={Circle}
+          label="Brush Size"
+          color="hsl(var(--primary))"
+        />
+        <Slider
+          value={opacity * 100}
+          min={0}
+          max={100}
+          onChange={(value) => onOpacityChange(value / 100)}
+          icon={Eye}
+          label="Opacity"
+          color="hsl(0, 0%, 50%)"
+        />
+      </div>
+
+      {/* Action Buttons */}
+      <div className="grid grid-cols-4">
+        <div className="border-r border-white/20">
+          <ActionButton icon={Undo2} label="Undo" onClick={onUndo} disabled={!canUndo} />
+        </div>
+        <div className="border-r border-white/20">
+          <ActionButton icon={Redo2} label="Redo" onClick={onRedo} disabled={!canRedo} />
+        </div>
+        <div className="border-r border-white/20">
+          <ActionButton icon={X} label="Clear Canvas" onClick={onClear} />
+        </div>
+        <div>
+          <ActionButton icon={Save} label="Export" onClick={onExport} />
+        </div>
+      </div>
+    </>
+  ), [selectedTool, handleToolSelect, effectiveIsSignedIn, color, onColorChange, colorMode, onColorModeChange, size, onSizeChange, opacity, onOpacityChange, onUndo, canUndo, onRedo, canRedo, onClear, onExport])
+
+  const renderLayersTab = React.useCallback(() => (
+    <div className="space-y-2">
+      {layers.length === 0 ? (
+        <p className="text-xs text-white/60 text-center py-4">No layers yet</p>
+      ) : (
+        <>
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-xs font-medium text-white/80">Layers ({layers.length})</div>
+            {onCreatePaintLayer && (
+              <button
+                onClick={onCreatePaintLayer}
+                className="p-0.5 hover:bg-white/20 rounded transition-colors flex items-center gap-1"
+                aria-label="Add new paint layer"
+                title="Add new paint layer"
+              >
+                <Plus className="w-3.5 h-3.5 text-white/60 hover:text-white" />
+                <span className="text-[10px] text-white/60">New</span>
+              </button>
+            )}
+          </div>
+          <div className="space-y-1 max-h-[300px] overflow-y-auto">
+            {[...layers].sort((a, b) => b.order - a.order).map((layer, index) => (
+              <LayerItem
+                key={layer.id}
+                layer={layer}
+                isActive={activeLayerId === layer.id}
+                onActivate={() => onActiveLayerChange?.(layer.id)}
+                onVisibilityChange={(visible) => onLayerVisibilityChange?.(layer.id, visible)}
+                onDelete={() => onLayerDelete?.(layer.id)}
+                onReorder={(direction) => {
+                  if (direction === 'up') {
+                    onLayerReorder?.(layer.id, layer.order + 1)
+                  } else if (direction === 'down') {
+                    onLayerReorder?.(layer.id, layer.order - 1)
+                  }
+                }}
+                onOpacityChange={(opacity) => onLayerOpacityChange?.(layer.id, opacity)}
+                totalLayers={layers.length}
+                isTopLayer={index === 0}
+                isBottomLayer={index === [...layers].sort((a, b) => b.order - a.order).length - 1}
+              />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  ), [layers, onCreatePaintLayer, activeLayerId, onActiveLayerChange, onLayerVisibilityChange, onLayerDelete, onLayerReorder, onLayerOpacityChange])
+
+  const renderAITab = React.useCallback(() => (
+    <div className="space-y-2">
+      {!effectiveIsSignedIn ? (
+        <div className="text-center py-4">
+          <p className="text-sm text-white/60 mb-2">Sign in to use AI generation</p>
+          <button onClick={() => !authDisabled && setShowAuthModal(true)} className="text-blue-400 hover:text-blue-300 text-sm underline">
+            Sign in
+          </button>
+        </div>
+      ) : (
+        <>
+          <button
+            onClick={onAIGenerate}
+            className="w-full py-2 px-3 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-colors flex items-center justify-center gap-2 rounded"
+          >
+            <Sparkles className="w-4 h-4" />
+            Generate AI Image
+          </button>
+          <button
+            onClick={onBackgroundRemoval}
+            className="w-full py-2 px-3 bg-purple-500 hover:bg-purple-600 text-white text-sm font-medium transition-colors flex items-center justify-center gap-2 rounded"
+          >
+            <Scissors className="w-4 h-4" />
+            Remove Background
+          </button>
+          <button
+            onClick={onMergeTwo}
+            className="w-full py-2 px-3 bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-medium transition-colors flex items-center justify-center gap-2 rounded"
+          >
+            <Merge className="w-4 h-4" />
+            Merge Two
+          </button>
+          <p className="text-xs text-white/60 text-center">Transform your canvas with AI</p>
+        </>
+      )}
+    </div>
+  ), [effectiveIsSignedIn, authDisabled, onAIGenerate, onBackgroundRemoval, onMergeTwo])
+
   return (
     <div
       ref={panelRef}
@@ -772,9 +1072,10 @@ export function ToolPanel({
           <div>
             {/* Tab Navigation */}
             <div className="flex border-b border-white/20">
-              {tabs.map((tab) => (
+              {visibleTabs.map((tab) => (
                 <button
                   key={tab.id}
+                  onMouseDown={(e) => onTabMouseDown(e, tab.id)}
                   onClick={() => setActiveTab(tab.id)}
                   className={`flex-1 px-2 py-1.5 text-xs font-medium transition-colors flex items-center justify-center gap-1 ${
                     activeTab === tab.id
@@ -792,185 +1093,9 @@ export function ToolPanel({
 
             {/* Tab Content */}
             <div className="p-2">
-              {activeTab === 'tools' && (
-                <>
-                  {/* Tool Selection */}
-                  <div className="grid grid-cols-4 mb-[10px]">
-                    {tools.map((tool, index) => {
-                      // Only disable AI tool for unauthenticated users
-                      const isAIDisabled = tool.id === 'ai' && !effectiveIsSignedIn
-                      
-                      // if (tool.id === 'ai') {
-                      //   console.log('[ToolPanel] AI tool button - effectiveIsSignedIn:', effectiveIsSignedIn, 'authDisabled:', authDisabled, 'disabled:', isAIDisabled)
-                      // }
-                      
-                      return (
-                        <div 
-                          key={tool.id} 
-                          className={`${index < tools.length - 1 ? 'border-r border-white/20' : ''}`}
-                        >
-                          <ToolButton
-                            tool={tool}
-                            isSelected={selectedTool === tool.id}
-                            onClick={() => handleToolSelect(tool.id)}
-                            disabled={isAIDisabled}
-                          />
-                        </div>
-                      )
-                    })}
-                  </div>
-
-                  {/* Color Mixer */}
-                  <ColorMixer
-                    color={color}
-                    onColorChange={onColorChange}
-                    colorMode={colorMode}
-                    onColorModeChange={onColorModeChange}
-                  />
-
-                  {/* Sliders */}
-                  <div className="border-b border-white/20 mb-3 pb-3">
-                    <Slider
-                      value={size}
-                      min={1}
-                      max={100}
-                      onChange={onSizeChange}
-                      icon={Circle}
-                      label="Brush Size"
-                      color="hsl(var(--primary))"
-                    />
-                    
-                    <Slider
-                      value={opacity * 100}
-                      min={0}
-                      max={100}
-                      onChange={(value) => onOpacityChange(value / 100)}
-                      icon={Eye}
-                      label="Opacity"
-                      color="hsl(0, 0%, 50%)"
-                    />
-                  </div>
-
-                  {/* Action Buttons */}
-                  <div className="grid grid-cols-4">
-                    <div className="border-r border-white/20">
-                      <ActionButton icon={Undo2} label="Undo" onClick={onUndo} disabled={!canUndo} />
-                    </div>
-                    <div className="border-r border-white/20">
-                      <ActionButton icon={Redo2} label="Redo" onClick={onRedo} disabled={!canRedo} />
-                    </div>
-                    <div className="border-r border-white/20">
-                      <ActionButton icon={X} label="Clear Canvas" onClick={onClear} />
-                    </div>
-                    <div>
-                      <ActionButton icon={Save} label="Export" onClick={onExport} />
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {activeTab === 'layers' && (
-                <div className="space-y-2">
-                  {layers.length === 0 ? (
-                    <p className="text-xs text-white/60 text-center py-4">No layers yet</p>
-                  ) : (
-                    <>
-                      <div className="flex items-center justify-between mb-1">
-                        <div className="text-xs font-medium text-white/80">Layers ({layers.length})</div>
-                        {onCreatePaintLayer && (
-                          <button
-                            onClick={onCreatePaintLayer}
-                            className="p-0.5 hover:bg-white/20 rounded transition-colors flex items-center gap-1"
-                            aria-label="Add new paint layer"
-                            title="Add new paint layer"
-                          >
-                            <Plus className="w-3.5 h-3.5 text-white/60 hover:text-white" />
-                            <span className="text-[10px] text-white/60">New</span>
-                          </button>
-                        )}
-                      </div>
-                      <div className="space-y-1 max-h-[300px] overflow-y-auto">
-                        {[...layers].sort((a, b) => b.order - a.order).map((layer, index) => (
-                          <LayerItem
-                            key={layer.id}
-                            layer={layer}
-                            isActive={activeLayerId === layer.id}
-                            onActivate={() => onActiveLayerChange?.(layer.id)}
-                            onVisibilityChange={(visible) => onLayerVisibilityChange?.(layer.id, visible)}
-                            onDelete={() => onLayerDelete?.(layer.id)}
-                            onReorder={(direction) => {
-                              // Layers are displayed from top to bottom (highest order to lowest)
-                              // Moving "up" in the UI means increasing the order value
-                              // Moving "down" in the UI means decreasing the order value
-                              
-                              if (direction === 'up') {
-                                // Increase order to move layer up in the visual stack
-                                onLayerReorder?.(layer.id, layer.order + 1)
-                              } else if (direction === 'down') {
-                                // Decrease order to move layer down in the visual stack
-                                onLayerReorder?.(layer.id, layer.order - 1)
-                              }
-                            }}
-                            onOpacityChange={(opacity) => onLayerOpacityChange?.(layer.id, opacity)}
-                            totalLayers={layers.length}
-                            isTopLayer={index === 0}
-                            isBottomLayer={index === [...layers].sort((a, b) => b.order - a.order).length - 1}
-                          />
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-
-              {activeTab === 'ai' && (
-                <div className="space-y-2">
-                  {!effectiveIsSignedIn ? (
-                    <>
-                      <div className="text-center py-4">
-                        <p className="text-sm text-white/60 mb-2">Sign in to use AI generation</p>
-                        <button
-                          onClick={() => !authDisabled && setShowAuthModal(true)}
-                          className="text-blue-400 hover:text-blue-300 text-sm underline"
-                        >
-                          Sign in
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        onClick={onAIGenerate}
-                        className="w-full py-2 px-3 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-colors flex items-center justify-center gap-2 rounded"
-                      >
-                        <Sparkles className="w-4 h-4" />
-                        Generate AI Image
-                      </button>
-                      <button
-                        onClick={onBackgroundRemoval}
-                        className="w-full py-2 px-3 bg-purple-500 hover:bg-purple-600 text-white text-sm font-medium transition-colors flex items-center justify-center gap-2 rounded"
-                      >
-                        <Scissors className="w-4 h-4" />
-                        Remove Background
-                      </button>
-                      <button
-                        onClick={onMergeTwo}
-                        className="w-full py-2 px-3 bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-medium transition-colors flex items-center justify-center gap-2 rounded"
-                      >
-                        <Merge className="w-4 h-4" />
-                        Merge Two
-                      </button>
-                      <p className="text-xs text-white/60 text-center">Transform your canvas with AI</p>
-                    </>
-                  )}
-                </div>
-              )}
-
-              {activeTab === 'settings' && (
-                <div className="space-y-2">
-                  <p className="text-xs text-white/60 text-center py-4">Settings coming soon...</p>
-                </div>
-              )}
+              {activeTab === 'tools' && !isDetached('tools') && renderToolsTab()}
+              {activeTab === 'layers' && !isDetached('layers') && renderLayersTab()}
+              {activeTab === 'ai' && !isDetached('ai') && renderAITab()}
             </div>
           </div>
         )}
@@ -1083,6 +1208,67 @@ export function ToolPanel({
         </div>
       )}
       
+      {/* Floating detached tabs */}
+      {detachedTabs['tools'] && (
+        <DraggableWindow
+          title="Tools"
+          position={detachedTabs['tools']!}
+          onMove={(p) => setDetachedTabs(prev => ({ ...prev, tools: p }))}
+          onDragEnd={(_, rect) => {
+            const panel = panelRef.current?.getBoundingClientRect()
+            if (rect && panel && rectsOverlap(rect, panel)) {
+              setDetachedTabs(prev => { const n = { ...prev }; delete (n as any)['tools']; return n })
+              setActiveTab('tools')
+            }
+          }}
+          onDock={() => setDetachedTabs(prev => { const n = { ...prev }; delete (n as any)['tools']; return n })}
+          onMouseOverToolbox={setIsMouseOverToolbox}
+          width={220}
+        >
+          {renderToolsTab()}
+        </DraggableWindow>
+      )}
+
+      {detachedTabs['layers'] && (
+        <DraggableWindow
+          title="Layers"
+          position={detachedTabs['layers']!}
+          onMove={(p) => setDetachedTabs(prev => ({ ...prev, layers: p }))}
+          onDragEnd={(_, rect) => {
+            const panel = panelRef.current?.getBoundingClientRect()
+            if (rect && panel && rectsOverlap(rect, panel)) {
+              setDetachedTabs(prev => { const n = { ...prev }; delete (n as any)['layers']; return n })
+              setActiveTab('layers')
+            }
+          }}
+          onDock={() => setDetachedTabs(prev => { const n = { ...prev }; delete (n as any)['layers']; return n })}
+          onMouseOverToolbox={setIsMouseOverToolbox}
+          width={220}
+        >
+          {renderLayersTab()}
+        </DraggableWindow>
+      )}
+
+      {detachedTabs['ai'] && (
+        <DraggableWindow
+          title="AI"
+          position={detachedTabs['ai']!}
+          onMove={(p) => setDetachedTabs(prev => ({ ...prev, ai: p }))}
+          onDragEnd={(_, rect) => {
+            const panel = panelRef.current?.getBoundingClientRect()
+            if (rect && panel && rectsOverlap(rect, panel)) {
+              setDetachedTabs(prev => { const n = { ...prev }; delete (n as any)['ai']; return n })
+              setActiveTab('ai')
+            }
+          }}
+          onDock={() => setDetachedTabs(prev => { const n = { ...prev }; delete (n as any)['ai']; return n })}
+          onMouseOverToolbox={setIsMouseOverToolbox}
+          width={240}
+        >
+          {renderAITab()}
+        </DraggableWindow>
+      )}
+
       {/* Auth Modal - Only show if auth is not disabled */}
       {!authDisabled && (
         <AuthModal 
