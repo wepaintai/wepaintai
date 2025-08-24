@@ -528,7 +528,10 @@ export function PaintingView() {
   const handleImageUploaded = useCallback((imageId: Id<"uploadedImages">) => {
     // console.log('Image uploaded:', imageId)
     setShowImageUpload(false)
-    setSelectedTool('brush') // Switch back to brush tool
+    // Automatically select the newly uploaded image layer
+    setActiveLayerId(imageId)
+    // Switch to transform tool to position/resize the new image
+    setSelectedTool('transform')
   }, [])
 
   const handleAIGenerate = useCallback(() => {
@@ -584,7 +587,7 @@ export function PaintingView() {
         })
         
         // Add the AI-generated image to Convex
-        await addAIGeneratedImage({
+        const newImageId = await addAIGeneratedImage({
           sessionId,
           imageUrl,
           width: img.naturalWidth || img.width,
@@ -592,10 +595,15 @@ export function PaintingView() {
           canvasWidth: canvasDimensions.width,
           canvasHeight: canvasDimensions.height,
         })
+        // Automatically select the newly created AI image layer
+        if (newImageId) {
+          setActiveLayerId(newImageId)
+        }
         
         // console.log('AI-generated image added to canvas')
         setShowAIGeneration(false)
-        setSelectedTool('brush')
+        // Switch to transform tool to position/resize the new image
+        setSelectedTool('transform')
       } catch (error) {
         console.error('Failed to add AI-generated image:', error)
       }
@@ -903,6 +911,7 @@ export function PaintingView() {
     
     // Set the new layer as active
     if (layerId) {
+      setActiveLayerId(layerId)
       setActivePaintLayerId(layerId)
     }
   }, [sessionId, paintLayers, createPaintLayer])
