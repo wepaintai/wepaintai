@@ -24,7 +24,7 @@ import { useMutation, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import { useThumbnailGenerator } from '../hooks/useThumbnailGenerator'
 import { ClipboardProvider } from '../context/ClipboardContext'
-import { getCurrentGuestSession, setCurrentGuestSession, clearCurrentGuestSession } from '../utils/guestKey'
+import { getCurrentGuestSession, setCurrentGuestSession, clearCurrentGuestSession, getGuestKey } from '../utils/guestKey'
 
 // Wrapper component for background removal modal
 function BackgroundRemovalModalWrapper({ 
@@ -400,7 +400,7 @@ export function PaintingView() {
     }
   }, [createNewSession, sessionId])
 
-  // Keep URL masked for guests and explicit for signed-in users
+  // Keep URL masked for guest-owned sessions; show for others and signed-in users
   useEffect(() => {
     if (!sessionId) return
     try {
@@ -412,10 +412,20 @@ export function PaintingView() {
           window.history.replaceState({}, '', url.toString())
         }
       } else {
-        // Guest: mask session from URL
-        if (url.searchParams.has('session')) {
-          url.searchParams.delete('session')
-          window.history.replaceState({}, '', url.origin + url.pathname)
+        // Guest: mask only if this is their own session (they have the guest key)
+        const hasGuestKey = getGuestKey(sessionId as any)
+        if (hasGuestKey) {
+          // Owner (guest): mask
+          if (url.searchParams.has('session')) {
+            url.searchParams.delete('session')
+            window.history.replaceState({}, '', url.origin + url.pathname)
+          }
+        } else {
+          // Non-owner guest (e.g., public shared): show session param
+          if (url.searchParams.get('session') !== sessionId) {
+            url.searchParams.set('session', sessionId)
+            window.history.replaceState({}, '', url.toString())
+          }
         }
       }
     } catch {}

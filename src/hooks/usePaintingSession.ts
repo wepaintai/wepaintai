@@ -92,30 +92,31 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
   const localGuestKey = guestKeyState || getGuestKey(sessionId as any);
   const isGuest = !authenticatedUser;
   const canAccessAsGuest = Boolean(localGuestKey);
-  const shouldQuery = (sId: typeof sessionId) => !!sId && (authenticatedUser || canAccessAsGuest);
+  // Always fetch session when we have an ID; backend will enforce access
   const session = useQuery(
     api.paintingSessions.getSession,
-    shouldQuery(sessionId) ? { sessionId: sessionId!, guestKey: localGuestKey || undefined } : "skip"
+    sessionId ? { sessionId, guestKey: localGuestKey || undefined } : "skip"
   );
+  const canReadSessionData = Boolean(authenticatedUser) || canAccessAsGuest || (session?.isPublic === true);
   
   const strokes = useQuery(
     api.strokes.getSessionStrokes,
-    shouldQuery(sessionId) ? { sessionId: sessionId!, guestKey: localGuestKey || undefined } : "skip"
+    sessionId && canReadSessionData ? { sessionId, guestKey: localGuestKey || undefined } : "skip"
   );
   
   const presence = useQuery(
     api.presence.getSessionPresence,
-    shouldQuery(sessionId) ? { sessionId: sessionId!, guestKey: localGuestKey || undefined } : "skip"
+    sessionId && canReadSessionData ? { sessionId, guestKey: localGuestKey || undefined } : "skip"
   );
   
   const liveStrokes = useQuery(
     api.liveStrokes.getLiveStrokes,
-    shouldQuery(sessionId) ? { sessionId: sessionId!, guestKey: localGuestKey || undefined } : "skip"
+    sessionId && canReadSessionData ? { sessionId, guestKey: localGuestKey || undefined } : "skip"
   );
   
   const undoRedoAvailability = useQuery(
     api.strokes.getUndoRedoAvailability,
-    shouldQuery(sessionId) ? { sessionId: sessionId!, guestKey: localGuestKey || undefined } : "skip"
+    sessionId && canReadSessionData ? { sessionId, guestKey: localGuestKey || undefined } : "skip"
   );
 
   // Mutations
@@ -539,7 +540,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     
     // State
     isLoading: sessionId !== null && (
-      session === undefined || authenticatedUser === undefined || (isGuest && !canAccessAsGuest)
+      session === undefined || authenticatedUser === undefined || (isGuest && !canAccessAsGuest && session?.isPublic !== true)
     ),
   };
 }
