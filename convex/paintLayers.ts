@@ -61,19 +61,68 @@ export const updatePaintLayer = mutation({
     name: v.optional(v.string()),
     visible: v.optional(v.boolean()),
     opacity: v.optional(v.number()),
+    // Allow transforms here for convenience
+    x: v.optional(v.number()),
+    y: v.optional(v.number()),
+    // Legacy uniform scale (will also set scaleX/scaleY if provided)
+    scale: v.optional(v.number()),
+    // New non-uniform scales
+    scaleX: v.optional(v.number()),
+    scaleY: v.optional(v.number()),
+    rotation: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const { layerId, ...updates } = args;
     
     // Remove undefined values
-    const cleanUpdates = Object.fromEntries(
+    const cleanUpdates: any = Object.fromEntries(
       Object.entries(updates).filter(([_, v]) => v !== undefined)
     );
+    // If legacy scale provided, mirror to scaleX/scaleY
+    if (cleanUpdates.scale !== undefined) {
+      cleanUpdates.scaleX = cleanUpdates.scale;
+      cleanUpdates.scaleY = cleanUpdates.scale;
+    }
     
     if (Object.keys(cleanUpdates).length > 0) {
       await ctx.db.patch(layerId, cleanUpdates);
     }
     
+    return layerId;
+  },
+});
+
+// Dedicated transform updater (optional separate API)
+export const updatePaintLayerTransform = mutation({
+  args: {
+    layerId: v.id("paintLayers"),
+    x: v.optional(v.number()),
+    y: v.optional(v.number()),
+    // Legacy uniform scale (will also set scaleX/scaleY if provided)
+    scale: v.optional(v.number()),
+    // New non-uniform scales
+    scaleX: v.optional(v.number()),
+    scaleY: v.optional(v.number()),
+    rotation: v.optional(v.number()),
+    opacity: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const { layerId, ...updates } = args;
+    const updateFields: any = {};
+    if (updates.x !== undefined) updateFields.x = updates.x;
+    if (updates.y !== undefined) updateFields.y = updates.y;
+    if (updates.scale !== undefined) {
+      updateFields.scale = updates.scale;
+      updateFields.scaleX = updates.scale;
+      updateFields.scaleY = updates.scale;
+    }
+    if (updates.scaleX !== undefined) updateFields.scaleX = updates.scaleX;
+    if (updates.scaleY !== undefined) updateFields.scaleY = updates.scaleY;
+    if (updates.rotation !== undefined) updateFields.rotation = updates.rotation;
+    if (updates.opacity !== undefined) updateFields.opacity = updates.opacity;
+    if (Object.keys(updateFields).length > 0) {
+      await ctx.db.patch(layerId, updateFields);
+    }
     return layerId;
   },
 });

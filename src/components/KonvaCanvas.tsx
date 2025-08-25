@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback, forwardRef, useImperativeHandle, memo } from 'react'
-import { Stage, Layer, Path, Image as KonvaImage, Circle, Text, Group, Arc } from 'react-konva'
+import { Stage, Layer, Path, Image as KonvaImage, Circle, Text, Group, Arc, Transformer } from 'react-konva'
 import Konva from 'konva'
 import { getStroke } from 'perfect-freehand'
 import { usePaintingSession, type PaintPoint, type Stroke, type UserPresence, type LiveStroke } from '../hooks/usePaintingSession'
@@ -236,6 +236,11 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   const imageLayerRef = useRef<Konva.Layer>(null)
   const aiImageLayerRef = useRef<Konva.Layer>(null)
   const drawingLayerRef = useRef<Konva.Layer>(null)
+  const transformerRef = useRef<Konva.Transformer>(null)
+  // Node refs for attaching transformer
+  const paintGroupRefs = useRef<Map<string, Konva.Group>>(new Map())
+  const imageNodeRefs = useRef<Map<string, Konva.Image>>(new Map())
+  const aiImageNodeRefs = useRef<Map<string, Konva.Image>>(new Map())
     
   const [isDrawing, setIsDrawing] = useState(false)
   const [currentStroke, setCurrentStroke] = useState<Point[]>([])
@@ -288,10 +293,13 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   
   // Get AI generated images separately
   const aiImages = useQuery(api.images.getAIGeneratedImages, sessionId ? { sessionId } : 'skip')
+  // Get paint layers for transforms
+  const paintLayersData = useQuery(api.paintLayers.getPaintLayers, sessionId ? { sessionId } : 'skip')
   
   // Mutations for updating positions
   const updateImageTransform = useMutation(api.images.updateImageTransform)
   const updateAIImageTransform = useMutation(api.images.updateAIImageTransform)
+  const updatePaintLayerTransform = useMutation(api.paintLayers.updatePaintLayer)
   
   // Mutations for image upload
   const generateUploadUrl = useMutation(api.images.generateUploadUrl)
@@ -392,9 +400,11 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
           updateImageTransform({
             imageId: img._id as Id<"uploadedImages">,
             scale: desiredScale,
+            scaleX: desiredScale,
+            scaleY: desiredScale,
             x: desiredX,
             y: desiredY
-          })
+          } as any)
           autoFittedRef.current.add(img._id)
         }
       })
@@ -414,9 +424,11 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
         updateAIImageTransform({
           imageId: img._id as Id<"aiGeneratedImages">,
           scale: desiredScale,
+          scaleX: desiredScale,
+          scaleY: desiredScale,
           x: desiredX,
           y: desiredY
-        })
+        } as any)
         autoFittedRef.current.add(img._id)
       }
     })
@@ -537,8 +549,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     //   layers: layers.map(l => ({ id: l.id, type: l.type }))
     // })
     
-    // Don't start drawing if pan tool is selected
-    if (selectedTool === 'pan') {
+    // Don't start drawing if transform tool is selected
+    if (selectedTool === 'transform') {
       return
     }
     
@@ -553,7 +565,12 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       }
     }
     
-    const point = getPointerPosition(e)
+    const stagePoint = getPointerPosition(e)
+    // If painting on a transformed paint layer, convert to layer-local coords for drawing only
+    const activeLayer = layers.find(l => l.id === activeLayerId)
+    const point = ((selectedTool === 'brush' || selectedTool === 'eraser') && activeLayer?.type === 'paint')
+      ? toActivePaintLayerLocal(stagePoint)
+      : stagePoint
     
     // Normal brush/eraser behavior
     setIsDrawing(true)
@@ -576,11 +593,16 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
 
   // Handle pointer move
   const handlePointerMove = useCallback((e: Konva.KonvaEventObject<PointerEvent>) => {
-    const point = getPointerPosition(e)
+    const stagePoint = getPointerPosition(e)
+    const activeLayer = layers.find(l => l.id === activeLayerId)
+    const point = ((selectedTool === 'brush' || selectedTool === 'eraser') && activeLayer?.type === 'paint')
+      ? toActivePaintLayerLocal(stagePoint)
+      : stagePoint
 
-    // Update cursor position for brush size indicator
+    // Update cursor position for brush size indicator (use stage coords)
     if (selectedTool === 'brush' || selectedTool === 'eraser') {
-      setCursorPosition(point)
+      // Use untransformed stage coordinates so the indicator overlays the actual cursor
+      setCursorPosition(stagePoint)
     } else {
       setCursorPosition(null)
     }
@@ -588,19 +610,48 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     if (!isDrawing) {
       // Still update presence even if not drawing, for cursor tracking
       if (isP2PConnected && dimensions.width > 0) {
-        const normalizedX = point.x / dimensions.width
-        const normalizedY = point.y / dimensions.height
-        sendCursorPosition(normalizedX, normalizedY, false)
-      }
-      updateUserPresence(point.x, point.y, false, 'brush')
+      const normalizedX = stagePoint.x / dimensions.width
+      const normalizedY = stagePoint.y / dimensions.height
+      sendCursorPosition(normalizedX, normalizedY, false)
+    }
+    updateUserPresence(stagePoint.x, stagePoint.y, false, 'brush')
       
       // Update cursor based on tool
       const stage = e.target.getStage()
       if (stage) {
         const container = stage.container()
         if (container) {
-          if (selectedTool === 'pan') {
-            container.style.cursor = isDrawing ? 'grabbing' : 'grab'
+          if (selectedTool === 'transform') {
+            // Determine cursor by hovered transformer anchor or target
+            const target: any = e.target
+            const parent = target?.getParent?.()
+            const isTransformerChild = parent?.getClassName?.() === 'Transformer'
+            if (isTransformerChild) {
+              const name = target?.name?.() || ''
+              // Rotation handle
+              if (name === 'rotater') {
+                container.style.cursor = "url('/cursors/rotate.svg') 12 12, crosshair"
+              } else if (name === 'top-left' || name === 'bottom-right') {
+                container.style.cursor = 'nwse-resize'
+              } else if (name === 'top-right' || name === 'bottom-left') {
+                container.style.cursor = 'nesw-resize'
+              } else if (name === 'middle-left' || name === 'middle-right') {
+                container.style.cursor = 'ew-resize'
+              } else if (name === 'top-center' || name === 'bottom-center') {
+                container.style.cursor = 'ns-resize'
+              } else {
+                container.style.cursor = "url('/cursors/move.svg') 12 12, move"
+              }
+            } else {
+              const className = target?.getClassName?.()
+              if (className === 'Image' || className === 'Group') {
+                // Over the node itself => move
+                container.style.cursor = "url('/cursors/move.svg') 12 12, move"
+              } else {
+                // Empty canvas area
+                container.style.cursor = 'default'
+              }
+            }
           } else if (selectedTool === 'eraser' || selectedTool === 'brush') {
             container.style.cursor = 'none' // Hide default cursor, we'll show our custom one
           } else {
@@ -619,18 +670,18 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
 
     // Send points via P2P if connected
     if (isP2PConnected && currentStrokeId && dimensions.width > 0) {
-      const normalizedX = point.x / dimensions.width
-      const normalizedY = point.y / dimensions.height
+      const normalizedX = stagePoint.x / dimensions.width
+      const normalizedY = stagePoint.y / dimensions.height
       sendStrokePoint(currentStrokeId, normalizedX, normalizedY, point.pressure || 0.5)
     }
 
     // Update presence
     if (isP2PConnected && dimensions.width > 0) {
-      const normalizedX = point.x / dimensions.width
-      const normalizedY = point.y / dimensions.height
+      const normalizedX = stagePoint.x / dimensions.width
+      const normalizedY = stagePoint.y / dimensions.height
       sendCursorPosition(normalizedX, normalizedY, true)
     }
-    updateUserPresence(point.x, point.y, isDrawing, selectedTool)
+    updateUserPresence(stagePoint.x, stagePoint.y, isDrawing, selectedTool)
   }, [isDrawing, currentStroke, getPointerPosition, updateUserPresence, isP2PConnected, currentStrokeId, dimensions, sendStrokePoint, sendCursorPosition, selectedTool])
 
   // Handle pointer up
@@ -640,8 +691,12 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
 
     setIsDrawing(false)
 
-    const point = getPointerPosition(e)
-    const finalStrokePoints = [...currentStroke, point]
+    const stagePoint = getPointerPosition(e)
+    const activeLayer = layers.find(l => l.id === activeLayerId)
+    const drawPoint = ((selectedTool === 'brush' || selectedTool === 'eraser') && activeLayer?.type === 'paint')
+      ? toActivePaintLayerLocal(stagePoint)
+      : stagePoint
+    const finalStrokePoints = [...currentStroke, drawPoint]
 
     if (finalStrokePoints.length > 0) {
       // Check if we're erasing on an image layer (not a paint layer)
@@ -1127,6 +1182,50 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     return layers.find(l => l.id === layerId) || null
   }
 
+  // Attach transformer to active layer node when in transform mode
+  useEffect(() => {
+    const transformer = transformerRef.current
+    const stage = stageRef.current
+    if (!transformer || !stage) return
+    if (selectedTool !== 'transform' || !activeLayerId) {
+      transformer.nodes([])
+      stage.batchDraw()
+      return
+    }
+
+    // Determine node by layer type
+    const activeLayer = layers.find(l => l.id === activeLayerId)
+    let node: Konva.Node | undefined
+    if (activeLayer?.type === 'paint') {
+      node = paintGroupRefs.current.get(activeLayerId)
+    } else if (activeLayer?.type === 'image') {
+      node = imageNodeRefs.current.get(activeLayerId)
+    } else if (activeLayer?.type === 'ai-image') {
+      node = aiImageNodeRefs.current.get(activeLayerId)
+    }
+    if (node) {
+      transformer.nodes([node])
+      transformer.getLayer()?.batchDraw()
+    } else {
+      transformer.nodes([])
+      stage.batchDraw()
+    }
+  }, [selectedTool, activeLayerId, layers, images, aiImages])
+
+  // Helper: map stage point to active paint layer local coordinates
+  const toActivePaintLayerLocal = useCallback((pt: Point): Point => {
+    if (!activeLayerId) return pt
+    const activeLayer = layers.find(l => l.id === activeLayerId)
+    if (!activeLayer || activeLayer.type !== 'paint') return pt
+    const node = paintGroupRefs.current.get(activeLayerId)
+    const stage = stageRef.current
+    if (!node || !stage) return pt
+    const abs = node.getAbsoluteTransform().copy()
+    abs.invert()
+    const p = abs.point({ x: pt.x, y: pt.y })
+    return { x: p.x, y: p.y, pressure: pt.pressure }
+  }, [activeLayerId, layers])
+
   // Enforce correct layer ordering when layers change
   useEffect(() => {
     // Wait a bit for all layers to be rendered
@@ -1215,6 +1314,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
         onPointerLeave={handlePointerLeave}
         style={{ touchAction: 'none' }}
       >
+        {/* Content layers render first; transformer should be above them */}
         {/* Render layers in order */}
         {layers
           .sort((a, b) => a.order - b.order)
@@ -1235,6 +1335,13 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
 
             // Paint layer
             if (layer.type === 'paint') {
+              // Read transform for this paint layer (defaults center + identity)
+              const paintLayer = paintLayersData?.find((pl: any) => pl._id === layer.id)
+              const plX = paintLayer?.x ?? dimensions.width / 2
+              const plY = paintLayer?.y ?? dimensions.height / 2
+              const plScaleX = (paintLayer as any)?.scaleX ?? paintLayer?.scale ?? 1
+              const plScaleY = (paintLayer as any)?.scaleY ?? paintLayer?.scale ?? 1
+              const plRotation = paintLayer?.rotation ?? 0
               // Filter strokes for this specific paint layer
               const layerStrokes = strokes.filter(stroke => stroke.layerId === layer.id)
               // console.log('[KonvaCanvas] Paint layer strokes:', {
@@ -1273,9 +1380,51 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                 <Layer 
                   key={layer.id} 
                   ref={strokeLayerRef} 
-                  listening={selectedTool === 'pan'} 
+                  listening={selectedTool === 'transform'} 
                   opacity={layer.opacity}
                 >
+                  <Group
+                    ref={(node) => {
+                      if (node) paintGroupRefs.current.set(layer.id, node)
+                      else paintGroupRefs.current.delete(layer.id)
+                    }}
+                    x={plX}
+                    y={plY}
+                    rotation={plRotation}
+                    scaleX={plScaleX}
+                    scaleY={plScaleY}
+                    draggable={selectedTool === 'transform'}
+                    dragCursor={"url('/cursors/move.svg') 12 12, grabbing"}
+                    onDragEnd={async (e) => {
+                      const node = e.target as Konva.Group
+                      await updatePaintLayerTransform({
+                        layerId: layer.id as any,
+                        x: node.x(),
+                        y: node.y(),
+                      })
+                    }}
+                    onTransformEnd={async (e) => {
+                      const node = e.target as Konva.Group
+                      const newScaleX = node.scaleX()
+                      const newScaleY = node.scaleY()
+                      const newRotation = node.rotation()
+                      await updatePaintLayerTransform({
+                        layerId: layer.id as any,
+                        scaleX: newScaleX,
+                        scaleY: newScaleY,
+                        rotation: newRotation,
+                        x: node.x(),
+                        y: node.y(),
+                      } as any)
+                      // Do not reset node scale here; let controlled props re-render with persisted values
+                    }}
+                    onTransformStart={() => {
+                      const tr = transformerRef.current
+                      const active = tr?.getActiveAnchor?.()
+                      const isCorner = active === 'top-left' || active === 'top-right' || active === 'bottom-left' || active === 'bottom-right'
+                      tr?.setAttr('keepRatio', !!isCorner)
+                    }}
+                  >
                   {/* Render confirmed strokes */}
                   {layerStrokes
                     .sort((a, b) => a.strokeOrder - b.strokeOrder)
@@ -1458,6 +1607,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       )
                     })()
                   }
+                  </Group>
                 </Layer>
               )
             }
@@ -1473,21 +1623,28 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                 <Layer 
                   key={layer.id} 
                   ref={layer.id === images?.[0]?._id ? imageLayerRef : undefined} 
-                  listening={selectedTool === 'pan'} 
+                  listening={selectedTool === 'transform'} 
                   opacity={layer.opacity}
                 >
                   <Group>
                     <KonvaImage
                       id={layer.id}
+                      ref={(node) => {
+                        if (node) imageNodeRefs.current.set(layer.id, node)
+                        else imageNodeRefs.current.delete(layer.id)
+                      }}
                       image={loadedImage}
                       x={image.x}
                       y={image.y}
-                      width={image.width * image.scale}
-                      height={image.height * image.scale}
+                      width={image.width}
+                      height={image.height}
                       rotation={image.rotation}
-                      offsetX={(image.width * image.scale) / 2}
-                      offsetY={(image.height * image.scale) / 2}
-                      draggable={selectedTool === 'pan'}
+                      scaleX={(image as any).scaleX ?? image.scale}
+                      scaleY={(image as any).scaleY ?? image.scale}
+                      offsetX={image.width / 2}
+                      offsetY={image.height / 2}
+                      draggable={selectedTool === 'transform'}
+                      dragCursor={"url('/cursors/move.svg') 12 12, grabbing"}
                       onDragEnd={async (e) => {
                         const node = e.target
                         await updateImageTransform({
@@ -1495,6 +1652,27 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                           x: node.x(),
                           y: node.y()
                         })
+                      }}
+                      onTransformEnd={async (e) => {
+                        const node = e.target as Konva.Image
+                        const newScaleX = node.scaleX()
+                        const newScaleY = node.scaleY()
+                        const newRotation = node.rotation()
+                        await updateImageTransform({
+                          imageId: layer.id as Id<"uploadedImages">,
+                          scaleX: newScaleX,
+                          scaleY: newScaleY,
+                          rotation: newRotation,
+                          x: node.x(),
+                          y: node.y(),
+                        } as any)
+                        // Do not reset node scale here; let controlled props re-render with persisted values
+                      }}
+                      onTransformStart={() => {
+                        const tr = transformerRef.current
+                        const active = tr?.getActiveAnchor?.()
+                        const isCorner = active === 'top-left' || active === 'top-right' || active === 'bottom-left' || active === 'bottom-right'
+                        tr?.setAttr('keepRatio', !!isCorner)
                       }}
                     />
                     
@@ -1633,21 +1811,28 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                 <Layer 
                   key={layer.id} 
                   ref={layer.id === aiImages?.[0]?._id ? aiImageLayerRef : undefined} 
-                  listening={selectedTool === 'pan'} 
+                  listening={selectedTool === 'transform'} 
                   opacity={layer.opacity}
                 >
                   <Group>
                     <KonvaImage
                       id={layer.id}
+                      ref={(node) => {
+                        if (node) aiImageNodeRefs.current.set(layer.id, node)
+                        else aiImageNodeRefs.current.delete(layer.id)
+                      }}
                       image={loadedImage}
                       x={aiImage.x}
                       y={aiImage.y}
-                      width={aiImage.width * aiImage.scale}
-                      height={aiImage.height * aiImage.scale}
+                      width={aiImage.width}
+                      height={aiImage.height}
                       rotation={aiImage.rotation}
-          offsetX={(aiImage.width * aiImage.scale) / 2}
-          offsetY={(aiImage.height * aiImage.scale) / 2}
-          draggable={selectedTool === 'pan'}
+                      scaleX={(aiImage as any).scaleX ?? aiImage.scale}
+                      scaleY={(aiImage as any).scaleY ?? aiImage.scale}
+                      offsetX={aiImage.width / 2}
+                      offsetY={aiImage.height / 2}
+                      draggable={selectedTool === 'transform'}
+                      dragCursor={"url('/cursors/move.svg') 12 12, grabbing"}
                       onDragEnd={async (e) => {
                         const node = e.target
                         await updateAIImageTransform({
@@ -1655,6 +1840,27 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                           x: node.x(),
                           y: node.y()
                         })
+                      }}
+                      onTransformEnd={async (e) => {
+                        const node = e.target as Konva.Image
+                        const newScaleX = node.scaleX()
+                        const newScaleY = node.scaleY()
+                        const newRotation = node.rotation()
+                        await updateAIImageTransform({
+                          imageId: layer.id as Id<"aiGeneratedImages">,
+                          scaleX: newScaleX,
+                          scaleY: newScaleY,
+                          rotation: newRotation,
+                          x: node.x(),
+                          y: node.y(),
+                        } as any)
+                        // Do not reset node scale here; let controlled props re-render with persisted values
+                      }}
+                      onTransformStart={() => {
+                        const tr = transformerRef.current
+                        const active = tr?.getActiveAnchor?.()
+                        const isCorner = active === 'top-left' || active === 'top-right' || active === 'bottom-left' || active === 'bottom-right'
+                        tr?.setAttr('keepRatio', !!isCorner)
                       }}
                     />
                     
@@ -1918,6 +2124,53 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
               )
             )}
           </Layer>
+        {/* Shared transformer for transform tool (render on top for hit-testing) */}
+        {selectedTool === 'transform' && (
+          <Layer>
+            <Transformer
+              ref={transformerRef}
+              rotateEnabled
+              resizeEnabled
+              padding={12}
+              anchorSize={16}
+              anchorCornerRadius={2}
+              anchorStrokeWidth={2}
+              rotateAnchorOffset={48}
+              // Allow non-uniform by default; enforce uniform only for corner anchors
+              keepRatio={false}
+              enabledAnchors={["top-left","top-right","bottom-left","bottom-right","middle-right","middle-left","top-center","bottom-center"]}
+              boundBoxFunc={(oldBox, newBox) => {
+                const minSize = 10
+                if (Math.abs(newBox.width) < minSize || Math.abs(newBox.height) < minSize) {
+                  return oldBox
+                }
+                // If dragging a corner, enforce uniform scaling and lock motion to the uniform path
+                try {
+                  const tr = transformerRef.current
+                  const active = tr?.getActiveAnchor?.()
+                  const isCorner = active === 'top-left' || active === 'top-right' || active === 'bottom-left' || active === 'bottom-right'
+                  if (isCorner) {
+                    const ow = oldBox.width
+                    const oh = oldBox.height
+                    if (ow === 0 || oh === 0) return oldBox
+                    const sW = newBox.width / ow
+                    const sH = newBox.height / oh
+                    if (!isFinite(sW) || !isFinite(sH)) return oldBox
+                    // Choose magnitude that best matches intent and keep signs from newBox
+                    const mag = Math.max(Math.abs(sW), Math.abs(sH))
+                    const signW = Math.sign(newBox.width) || 1
+                    const signH = Math.sign(newBox.height) || 1
+                    const nw = signW * Math.abs(ow) * mag
+                    const nh = signH * Math.abs(oh) * mag
+                    // Do not override x/y; let Konva keep the opposite corner fixed
+                    return { ...newBox, width: nw, height: nh }
+                  }
+                } catch {}
+                return newBox
+              }}
+            />
+          </Layer>
+        )}
         </Stage>
       </div>
     )

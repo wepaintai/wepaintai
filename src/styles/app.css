@@ -72,7 +72,7 @@ html, body {
 /* Canvas styles */
 canvas {
   display: block;
-  cursor: crosshair;
+  cursor: inherit; /* Let container decide, so we can change per tool */
   touch-action: none;
 }
 
