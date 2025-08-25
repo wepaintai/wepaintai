@@ -292,9 +292,9 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   const { images } = useSessionImages(sessionId)
   
   // Get AI generated images separately
-  const aiImages = useQuery(api.images.getAIGeneratedImages, sessionId ? { sessionId } : 'skip')
+  const aiImages = useQuery(api.images.getAIGeneratedImages, sessionId ? { sessionId, guestKey: (typeof window !== 'undefined' ? (JSON.parse(localStorage.getItem('wepaint_guest_keys_v1') || '{}') || {})[sessionId as any] : undefined) } : 'skip')
   // Get paint layers for transforms
-  const paintLayersData = useQuery(api.paintLayers.getPaintLayers, sessionId ? { sessionId } : 'skip')
+  const paintLayersData = useQuery(api.paintLayers.getPaintLayers, sessionId ? { sessionId, guestKey: (typeof window !== 'undefined' ? (JSON.parse(localStorage.getItem('wepaint_guest_keys_v1') || '{}') || {})[sessionId as any] : undefined) } : 'skip')
   
   // Mutations for updating positions
   const updateImageTransform = useMutation(api.images.updateImageTransform)
@@ -760,16 +760,9 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
           const firstPaintLayer = layers.find(l => l.type === 'paint')
           if (firstPaintLayer) {
             layerIdToUse = firstPaintLayer.id
-            console.log('[KonvaCanvas] No layerId determined, using first paint layer:', layerIdToUse)
-          }
-        }
-        
-        // Fallback: if no layerId is determined, use the first paint layer
-        if (!layerIdToUse) {
-          const firstPaintLayer = layers.find(l => l.type === 'paint')
-          if (firstPaintLayer) {
-            layerIdToUse = firstPaintLayer.id
-            console.log('[KonvaCanvas] No layerId determined, using first paint layer:', layerIdToUse)
+          } else if (paintLayersData && (paintLayersData as any[]).length > 0) {
+            const firstFromData = (paintLayersData as any[])[0]?._id
+            if (firstFromData) layerIdToUse = firstFromData
           }
         }
 
@@ -861,6 +854,16 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
               layerIdToUse = activeLayerId || null
             } else if (activeLayer.type === 'paint' || activeLayer.type === 'stroke') {
               layerIdToUse = (activePaintLayerId || activeLayerId) || null
+            }
+          }
+          // Ensure we have a target layer id; fallback to first known paint layer
+          if (!layerIdToUse) {
+            const firstPaintLayer = layers.find(l => l.type === 'paint')
+            if (firstPaintLayer) {
+              layerIdToUse = firstPaintLayer.id
+            } else if (paintLayersData && (paintLayersData as any[]).length > 0) {
+              const firstFromData = (paintLayersData as any[])[0]?._id
+              if (firstFromData) layerIdToUse = firstFromData
             }
           }
           // Set target layer for pending preview

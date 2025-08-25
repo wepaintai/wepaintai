@@ -20,13 +20,31 @@ export const addStroke = mutation({
     opacity: v.number(),
     isEraser: v.optional(v.boolean()),
     colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))),
+    guestKey: v.optional(v.string()),
   },
   returns: v.id("strokes"),
   handler: async (ctx, args) => {
-    // Get the session to increment stroke counter
+    // Get the session to increment stroke counter and enforce access
     const session = await ctx.db.get(args.sessionId);
     if (!session) {
       throw new Error("Session not found");
+    }
+
+    // Authorization: allow if public or owner or guest owner
+    if (!session.isPublic) {
+      const identity = await ctx.auth.getUserIdentity();
+      if (identity) {
+        const user = await ctx.db
+          .query("users")
+          .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+          .first();
+        if (!user || session.createdBy !== user._id) {
+          // Fall through to guest key check
+          if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) throw new Error("Unauthorized");
+        }
+      } else {
+        if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) throw new Error("Unauthorized");
+      }
     }
 
     // Increment stroke counter for ordering
@@ -94,6 +112,7 @@ export const addStroke = mutation({
 export const getSessionStrokes = query({
   args: {
     sessionId: v.id("paintingSessions"),
+    guestKey: v.optional(v.string()),
   },
   returns: v.array(v.object({
     _id: v.id("strokes"),
@@ -119,6 +138,21 @@ export const getSessionStrokes = query({
     const session = await ctx.db.get(args.sessionId);
     if (!session) {
       return [];
+    }
+    // Authorization: allow if public or owner or guest owner
+    if (!session.isPublic) {
+      const identity = await ctx.auth.getUserIdentity();
+      if (identity) {
+        const user = await ctx.db
+          .query("users")
+          .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+          .first();
+        if (!user || session.createdBy !== user._id) {
+          if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
+        }
+      } else {
+        if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
+      }
     }
     
     // Use the index with order to get strokes already sorted
@@ -150,6 +184,7 @@ export const getLayerStrokes = query({
   args: {
     sessionId: v.id("paintingSessions"),
     layerId: v.union(v.id("paintLayers"), v.id("uploadedImages"), v.id("aiGeneratedImages")),
+    guestKey: v.optional(v.string()),
   },
   returns: v.array(v.object({
     _id: v.id("strokes"),
@@ -171,6 +206,22 @@ export const getLayerStrokes = query({
     colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))),
   })),
   handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) return [];
+    if (!session.isPublic) {
+      const identity = await ctx.auth.getUserIdentity();
+      if (identity) {
+        const user = await ctx.db
+          .query("users")
+          .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+          .first();
+        if (!user || session.createdBy !== user._id) {
+          if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
+        }
+      } else {
+        if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
+      }
+    }
     return await ctx.db
       .query("strokes")
       .withIndex("by_layer", (q) => 
@@ -187,6 +238,7 @@ export const getStrokesAfter = query({
   args: {
     sessionId: v.id("paintingSessions"),
     afterStrokeOrder: v.number(),
+    guestKey: v.optional(v.string()),
   },
   returns: v.array(v.object({
     _id: v.id("strokes"),
@@ -208,6 +260,22 @@ export const getStrokesAfter = query({
     colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))),
   })),
   handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) return [];
+    if (!session.isPublic) {
+      const identity = await ctx.auth.getUserIdentity();
+      if (identity) {
+        const user = await ctx.db
+          .query("users")
+          .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+          .first();
+        if (!user || session.createdBy !== user._id) {
+          if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
+        }
+      } else {
+        if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
+      }
+    }
     return await ctx.db
       .query("strokes")
       .withIndex("by_session", (q) => 
@@ -501,6 +569,7 @@ export const clearSession = mutation({
 export const getUndoRedoAvailability = query({
   args: {
     sessionId: v.id("paintingSessions"),
+    guestKey: v.optional(v.string()),
   },
   returns: v.object({
     canUndo: v.boolean(),
@@ -520,6 +589,30 @@ export const getUndoRedoAvailability = query({
         deletedCount: 0,
         cacheWarmed: false,
       };
+    }
+
+    // Authorization for private sessions (view availability only if owner or guest owner)
+    if (!session.isPublic) {
+      const identity = await ctx.auth.getUserIdentity();
+      let authorized = false;
+      if (identity) {
+        const user = await ctx.db
+          .query("users")
+          .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+          .first();
+        authorized = !!user && session.createdBy === user._id;
+      }
+      if (!authorized) {
+        if (!(session.guestOwnerKey && args.guestKey && session.guestOwnerKey === args.guestKey)) {
+          return {
+            canUndo: false,
+            canRedo: false,
+            strokeCount: 0,
+            deletedCount: 0,
+            cacheWarmed: false,
+          };
+        }
+      }
     }
 
     const recentIds = session.recentStrokeIds || [];

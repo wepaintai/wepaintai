@@ -88,7 +88,7 @@ export function LibraryModal({ isOpen, onClose, onCreateNew }: LibraryModalProps
         name: 'New Canvas',
         canvasWidth: 800,
         canvasHeight: 600,
-        isPublic: true
+        isPublic: false
       })
       console.log('[LibraryModal] Created session:', newSessionId)
       

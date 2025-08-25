@@ -70,6 +70,7 @@ export const updateLiveStroke = mutation({
 export const getLiveStrokes = query({
   args: {
     sessionId: v.id("paintingSessions"),
+    guestKey: v.optional(v.string()),
   },
   returns: v.array(v.object({
     _id: v.id("liveStrokes"),
@@ -90,6 +91,22 @@ export const getLiveStrokes = query({
     lastUpdated: v.number(),
   })),
   handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) return [];
+    if (!session.isPublic) {
+      const identity = await ctx.auth.getUserIdentity();
+      if (identity) {
+        const user = await ctx.db
+          .query("users")
+          .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+          .first();
+        if (!user || session.createdBy !== user._id) {
+          if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
+        }
+      } else {
+        if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
+      }
+    }
     const thirtySecondsAgo = Date.now() - 30 * 1000; // 30 seconds
     
     return await ctx.db

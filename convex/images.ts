@@ -170,8 +170,25 @@ export const addAIGeneratedImage = mutation({
 
 // Get all images for a session (both uploaded and AI-generated)
 export const getSessionImages = query({
-  args: { sessionId: v.id("paintingSessions") },
+  args: { sessionId: v.id("paintingSessions"), guestKey: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    // Authorization: allow if public or owner
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) return [];
+    if (!session.isPublic) {
+      const identity = await ctx.auth.getUserIdentity();
+      if (identity) {
+        const user = await ctx.db
+          .query("users")
+          .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+          .first();
+        if (!user || session.createdBy !== user._id) {
+          if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [] as any[];
+        }
+      } else {
+        if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [] as any[];
+      }
+    }
     // Get uploaded images
     const uploadedImages = await ctx.db
       .query("uploadedImages")
@@ -435,8 +452,24 @@ export const generateUploadUrl = mutation(async (ctx) => {
 
 // Get AI-generated images for a session
 export const getAIGeneratedImages = query({
-  args: { sessionId: v.id("paintingSessions") },
+  args: { sessionId: v.id("paintingSessions"), guestKey: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) return [];
+    if (!session.isPublic) {
+      const identity = await ctx.auth.getUserIdentity();
+      if (identity) {
+        const user = await ctx.db
+          .query("users")
+          .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+          .first();
+        if (!user || session.createdBy !== user._id) {
+          if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
+        }
+      } else {
+        if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
+      }
+    }
     const aiImages = await ctx.db
       .query("aiGeneratedImages")
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))

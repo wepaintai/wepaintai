@@ -24,6 +24,7 @@ import { useMutation, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import { useThumbnailGenerator } from '../hooks/useThumbnailGenerator'
 import { ClipboardProvider } from '../context/ClipboardContext'
+import { getCurrentGuestSession, setCurrentGuestSession, clearCurrentGuestSession } from '../utils/guestKey'
 
 // Wrapper component for background removal modal
 function BackgroundRemovalModalWrapper({ 
@@ -233,7 +234,7 @@ export function PaintingView() {
   
   // Removed localLastStrokeInfo - now using lastStrokeInfo from usePaintingSession
 
-  const { createNewSession, presence, currentUser, isLoading, clearSession, undoLastStroke, redoLastStroke, strokes: rawStrokes, undoRedoAvailability, lastStrokeInfo } = usePaintingSession(sessionId)
+  const { session, createNewSession, presence, currentUser, isLoading, clearSession, undoLastStroke, redoLastStroke, strokes: rawStrokes, undoRedoAvailability, lastStrokeInfo } = usePaintingSession(sessionId)
   
   // Filter out strokes that are pending undo for optimistic UI
   // Strokes are already pre-sorted in usePaintingSession for performance
@@ -262,10 +263,10 @@ export function PaintingView() {
     interval: 30000, // Generate thumbnail every 30 seconds
     enabled: !!sessionId
   })
-  const paintLayerSettings = useQuery(api.paintLayer.getPaintLayerSettings, sessionId ? { sessionId } : 'skip')
+  const paintLayerSettings = useQuery(api.paintLayer.getPaintLayerSettings, sessionId ? { sessionId, guestKey: (typeof window !== 'undefined' ? (JSON.parse(localStorage.getItem('wepaint_guest_keys_v1') || '{}') || {})[sessionId as any] : undefined) } : 'skip')
   
   // Multiple paint layers support
-  const paintLayers = useQuery(api.paintLayers.getPaintLayers, sessionId ? { sessionId } : 'skip')
+  const paintLayers = useQuery(api.paintLayers.getPaintLayers, sessionId ? { sessionId, guestKey: (typeof window !== 'undefined' ? (JSON.parse(localStorage.getItem('wepaint_guest_keys_v1') || '{}') || {})[sessionId as any] : undefined) } : 'skip')
   const createPaintLayer = useMutation(api.paintLayers.createPaintLayer)
   const updatePaintLayer = useMutation(api.paintLayers.updatePaintLayer)
   const deletePaintLayer = useMutation(api.paintLayers.deletePaintLayer)
@@ -294,7 +295,7 @@ export function PaintingView() {
   }, [strokes, sessionId, currentUser])
   
   // Get AI generated images separately
-  const aiImages = useQuery(api.images.getAIGeneratedImages, sessionId ? { sessionId } : 'skip')
+  const aiImages = useQuery(api.images.getAIGeneratedImages, sessionId ? { sessionId, guestKey: (typeof window !== 'undefined' ? (JSON.parse(localStorage.getItem('wepaint_guest_keys_v1') || '{}') || {})[sessionId as any] : undefined) } : 'skip')
   const updateAIImageTransformMutation = useMutation(api.images.updateAIImageTransform)
   const deleteAIImageMutation = useMutation(api.images.deleteAIImage)
   const updateAIImageLayerOrderMutation = useMutation(api.images.updateAIImageLayerOrder)
@@ -303,6 +304,9 @@ export function PaintingView() {
   useEffect(() => {
     // console.log('[PaintingView] AI images from direct query:', aiImages)
   }, [aiImages])
+
+  // Unauthorized overlay if session is private and user is not owner
+  const isUnauthorized = sessionId && session === null && !isLoading
   
   // P2P connection status
   const { 
@@ -362,17 +366,26 @@ export function PaintingView() {
         const existingSessionId = urlParams.get('session') as Id<"paintingSessions"> | null
         
         if (existingSessionId) {
-          // Join existing session
+          // Use session from URL
           setSessionId(existingSessionId)
-        } else if (createNewSession) {
-          // Create new session only if createNewSession is available
-          // console.log('[PaintingView] Creating new session...')
+          // Record as current for guests; URL masking handled by effect below
+          setCurrentGuestSession(existingSessionId)
+          return
+        }
+
+        // No URL param: try local current guest session
+        const stored = getCurrentGuestSession() as Id<"paintingSessions"> | null
+        if (stored) {
+          setSessionId(stored)
+          return
+        }
+
+        // Create new session if needed
+        if (createNewSession) {
           const newSessionId = await createNewSession('Collaborative Painting', 800, 600)
-          // console.log('[PaintingView] New session created:', newSessionId)
           if (newSessionId) {
             setSessionId(newSessionId)
-            // Update URL with new session ID
-            window.history.replaceState({}, '', `?session=${newSessionId}`)
+            setCurrentGuestSession(newSessionId)
           }
         }
       } catch (error) {
@@ -386,6 +399,27 @@ export function PaintingView() {
       initSession()
     }
   }, [createNewSession, sessionId])
+
+  // Keep URL masked for guests and explicit for signed-in users
+  useEffect(() => {
+    if (!sessionId) return
+    try {
+      const url = new URL(window.location.href)
+      if (currentUser.id) {
+        // Signed-in: show session param
+        if (url.searchParams.get('session') !== sessionId) {
+          url.searchParams.set('session', sessionId)
+          window.history.replaceState({}, '', url.toString())
+        }
+      } else {
+        // Guest: mask session from URL
+        if (url.searchParams.has('session')) {
+          url.searchParams.delete('session')
+          window.history.replaceState({}, '', url.origin + url.pathname)
+        }
+      }
+    } catch {}
+  }, [sessionId, currentUser.id])
 
   const handleStrokeEnd = () => {
     // Save canvas state for undo/redo
@@ -990,6 +1024,7 @@ export function PaintingView() {
         />
       )}
       <ToolPanel
+        sessionId={sessionId}
         color={color}
         size={size}
         opacity={opacity}
@@ -1028,6 +1063,24 @@ export function PaintingView() {
         canUndo={(lastStrokeInfo !== null || (undoRedoAvailability?.canUndo ?? false)) && !isMutating}
         canRedo={(undoRedoAvailability?.canRedo ?? false) && !isMutating}
       />
+      {isUnauthorized && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80">
+          <div className="bg-black/90 border border-white/20 rounded-lg p-6 text-center max-w-sm">
+            <div className="text-white text-lg font-semibold mb-2">This session is private</div>
+            <div className="text-white/70 text-sm mb-4">Only the owner can view it unless it’s shared publicly.</div>
+            <button
+              className="px-3 py-2 bg-white/10 hover:bg-white/20 border border-white/20 rounded text-white text-sm"
+              onClick={() => {
+                const url = new URL(window.location.href)
+                url.searchParams.delete('session')
+                window.location.href = url.toString()
+              }}
+            >
+              Return to new canvas
+            </button>
+          </div>
+        </div>
+      )}
       {showImageUpload && (
         <ImageUploadModal
           sessionId={sessionId}

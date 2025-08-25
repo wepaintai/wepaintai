@@ -2,6 +2,7 @@ import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { useCallback } from "react";
+import { getGuestKey } from "../utils/guestKey";
 
 export interface SessionImage {
   _id: Id<"uploadedImages">;
@@ -28,7 +29,7 @@ export function useSessionImages(sessionId: Id<"paintingSessions"> | null) {
   // Query images for the session
   const images = useQuery(
     api.images.getSessionImages,
-    sessionId ? { sessionId } : "skip"
+    sessionId ? { sessionId, guestKey: getGuestKey(sessionId) || undefined } : "skip"
   );
 
   // Mutations

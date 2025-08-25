@@ -4,6 +4,7 @@ import { Id } from "../../convex/_generated/dataModel";
 import { useCallback, useEffect, useState, useRef, useMemo } from "react";
 import { p2pLogger } from "../lib/p2p-logger";
 import { convexLow } from "../lib/convex";
+import { generateGuestKey, getGuestKey, setGuestKey } from "../utils/guestKey";
 
 export interface PaintPoint {
   x: number;
@@ -78,30 +79,43 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     color: getUserColor(null),
   });
 
+  // Guest key state (in-memory) to ensure we always pass it on initial queries
+  const [guestKeyState, setGuestKeyState] = useState<string | null>(null);
+  useEffect(() => {
+    if (sessionId && !guestKeyState) {
+      const existing = getGuestKey(sessionId as any);
+      if (existing) setGuestKeyState(existing);
+    }
+  }, [sessionId, guestKeyState]);
+
   // Queries
+  const localGuestKey = guestKeyState || getGuestKey(sessionId as any);
+  const isGuest = !authenticatedUser;
+  const canAccessAsGuest = Boolean(localGuestKey);
+  const shouldQuery = (sId: typeof sessionId) => !!sId && (authenticatedUser || canAccessAsGuest);
   const session = useQuery(
     api.paintingSessions.getSession,
-    sessionId ? { sessionId } : "skip"
+    shouldQuery(sessionId) ? { sessionId: sessionId!, guestKey: localGuestKey || undefined } : "skip"
   );
   
   const strokes = useQuery(
     api.strokes.getSessionStrokes,
-    sessionId ? { sessionId } : "skip"
+    shouldQuery(sessionId) ? { sessionId: sessionId!, guestKey: localGuestKey || undefined } : "skip"
   );
   
   const presence = useQuery(
     api.presence.getSessionPresence,
-    sessionId ? { sessionId } : "skip"
+    shouldQuery(sessionId) ? { sessionId: sessionId!, guestKey: localGuestKey || undefined } : "skip"
   );
   
   const liveStrokes = useQuery(
     api.liveStrokes.getLiveStrokes,
-    sessionId ? { sessionId } : "skip"
+    shouldQuery(sessionId) ? { sessionId: sessionId!, guestKey: localGuestKey || undefined } : "skip"
   );
   
   const undoRedoAvailability = useQuery(
     api.strokes.getUndoRedoAvailability,
-    sessionId ? { sessionId } : "skip"
+    shouldQuery(sessionId) ? { sessionId: sessionId!, guestKey: localGuestKey || undefined } : "skip"
   );
 
   // Mutations
@@ -117,6 +131,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
   const clearSessionLiveStrokes = useMutation(api.liveStrokes.clearSessionLiveStrokes);
   const upsertViewerState = useMutation(api.viewerAcks.upsertViewerState);
   const removeViewerState = useMutation(api.viewerAcks.removeViewerState);
+  const claimSessionOwnership = useMutation(api.paintingSessions.claimSessionOwnership);
   
   // For viewer state, use user ID if authenticated, otherwise use name as viewer ID
   const viewerId = currentUser.id || currentUser.name;
@@ -143,6 +158,17 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
       });
     }
   }, [authenticatedUser]);
+
+  // If the session has no owner and no guestOwnerKey, and we are authenticated, claim it
+  useEffect(() => {
+    if (!sessionId) return;
+    if (!authenticatedUser) return;
+    if (!session) return;
+    if (session.createdBy !== undefined) return;
+    // Avoid claiming sessions that have a guest owner key
+    if ((session as any).guestOwnerKey) return;
+    claimSessionOwnership({ sessionId });
+  }, [sessionId, authenticatedUser, session, claimSessionOwnership]);
 
   // Remove duplicate warming queries as they're ineffective and already defined above
 
@@ -175,13 +201,21 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     canvasWidth: number = 800,
     canvasHeight: number = 600
   ) => {
-    return await createSession({
-      name,
-      canvasWidth,
-      canvasHeight,
-      isPublic: true,
-    });
-  }, [createSession]);
+    const payload: any = { name, canvasWidth, canvasHeight };
+    // Private by default for authenticated users, public for guests
+    if (authenticatedUser) {
+      payload.isPublic = false;
+    } else {
+      // Generate a guest key and send to server
+      const guestKey = generateGuestKey();
+      setGuestKeyState(guestKey);
+      payload.guestKey = guestKey;
+      const newId = await createSession(payload);
+      if (newId) setGuestKey(newId, guestKey);
+      return newId;
+    }
+    return await createSession(payload);
+  }, [createSession, authenticatedUser]);
 
   // Add a stroke to the session
   const addStrokeToSession = useCallback(async (
@@ -208,10 +242,11 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
       opacity,
       isEraser,
       colorMode,
+      guestKey: localGuestKey || undefined,
     });
     
     return strokeId;
-  }, [sessionId, addStroke, currentUser]);
+  }, [sessionId, addStroke, currentUser, localGuestKey]);
 
   // Presence throttling and heartbeat
   const presenceIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -503,6 +538,8 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     clearLiveStrokeForUser,
     
     // State
-    isLoading: sessionId !== null && (session === undefined || authenticatedUser === undefined),
+    isLoading: sessionId !== null && (
+      session === undefined || authenticatedUser === undefined || (isGuest && !canAccessAsGuest)
+    ),
   };
 }

@@ -3,6 +3,7 @@ import { X, Sparkles, Loader2, Palette, Camera, Smile, Grid3X3, Coins, History, 
 import { useAction, useQuery, useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import type { Id } from '../../convex/_generated/dataModel'
+import { getGuestKey } from '../utils/guestKey'
 
 interface AIGenerationModalProps {
   isOpen: boolean
@@ -31,7 +32,7 @@ export function AIGenerationModal({
   
   const generateImage = useAction(api.aiGeneration.generateImage)
   const tokenBalance = useQuery(api.tokens.getTokenBalance)
-  const previousPrompts = useQuery(api.paintingSessions.getAIPrompts, { sessionId })
+  const previousPrompts = useQuery(api.paintingSessions.getAIPrompts, { sessionId, guestKey: getGuestKey(sessionId) || undefined })
   const userPrompts = useQuery(api.userPrompts.getUserPrompts, { limit: 20 })
   const addAIPrompt = useMutation(api.paintingSessions.addAIPrompt)
   const addUserPrompt = useMutation(api.userPrompts.addUserPrompt)

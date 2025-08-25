@@ -5,6 +5,7 @@ const schema = defineSchema({
   paintingSessions: defineTable({
     name: v.optional(v.string()),
     createdBy: v.optional(v.id("users")),
+    guestOwnerKey: v.optional(v.string()),
     isPublic: v.boolean(),
     canvasWidth: v.number(),
     canvasHeight: v.number(),
@@ -39,8 +40,9 @@ const schema = defineSchema({
     strokeOrder: v.number(), // For ordering strokes
     isEraser: v.optional(v.boolean()), // True if this stroke is an eraser stroke
     colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))), // Color mode for special effects
-  }).index("by_session", ["sessionId", "strokeOrder"])
-    .index("by_layer", ["sessionId", "layerId", "strokeOrder"]),
+  }).index("by_session", ["sessionId", "strokeOrder"]) 
+    .index("by_layer", ["sessionId", "layerId", "strokeOrder"]) 
+    .index("by_user", ["userId"]),
 
   userPresence: defineTable({
     sessionId: v.id("paintingSessions"),
@@ -129,7 +131,8 @@ const schema = defineSchema({
     rotation: v.number(),
     opacity: v.number(),
     layerOrder: v.number(),
-  }).index("by_session", ["sessionId", "layerOrder"]),
+  }).index("by_session", ["sessionId", "layerOrder"]) 
+    .index("by_user", ["userId"]),
 
   // AI generation requests and results
   aiGenerations: defineTable({
@@ -213,7 +216,8 @@ const schema = defineSchema({
     rotation: v.optional(v.number()),
     createdBy: v.optional(v.id("users")),
     createdAt: v.number(),
-  }).index("by_session", ["sessionId", "layerOrder"]),
+  }).index("by_session", ["sessionId", "layerOrder"]) 
+    .index("by_user", ["createdBy"]),
 
   // Token transactions
   tokenTransactions: defineTable({

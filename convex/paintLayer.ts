@@ -3,10 +3,24 @@ import { mutation, query } from "./_generated/server";
 
 // Get paint layer settings for a session
 export const getPaintLayerSettings = query({
-  args: { sessionId: v.id("paintingSessions") },
+  args: { sessionId: v.id("paintingSessions"), guestKey: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
     if (!session) return null;
+    if (!session.isPublic) {
+      const identity = await ctx.auth.getUserIdentity();
+      if (identity) {
+        const user = await ctx.db
+          .query("users")
+          .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+          .first();
+        if (!user || session.createdBy !== user._id) {
+          if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return null;
+        }
+      } else {
+        if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return null;
+      }
+    }
     
     // Return default settings if not stored
     return {

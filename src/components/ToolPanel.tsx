@@ -35,6 +35,8 @@ import { useAuth, useUser } from '@clerk/tanstack-start'
 import { useLibrary } from '../hooks/useLibrary'
 import { useClipboardContext } from '../context/ClipboardContext'
 import { DraggableWindow } from './DraggableWindow'
+import { ShareModal } from './ShareModal'
+import { Id } from '../../convex/_generated/dataModel'
 
 // Types
 export interface Layer {
@@ -48,6 +50,7 @@ export interface Layer {
 }
 
 interface ToolPanelProps {
+  sessionId?: Id<'paintingSessions'> | null
   color: string
   size: number
   opacity: number
@@ -562,6 +565,7 @@ LayerItem.displayName = 'LayerItem'
 
 // Main ToolPanel component
 export function ToolPanel({
+  sessionId,
   color,
   size,
   opacity,
@@ -925,6 +929,8 @@ export function ToolPanel({
   const visibleTabs = React.useMemo(() => tabs.filter(t => !isDetached(t.id)), [detachedTabs])
 
   // Helpers to render per-tab content so we can reuse inside floating windows
+  const [showShareModal, setShowShareModal] = React.useState(false)
+
   const renderToolsTab = React.useCallback(() => (
     <>
       {/* Tool Selection */}
@@ -1203,6 +1209,7 @@ export function ToolPanel({
               const url = new URL(window.location.href);
               url.searchParams.delete('session');
               window.history.pushState({}, '', url.toString());
+              try { localStorage.removeItem('wepaint_current_session_v1') } catch {}
               // Reload to trigger new session creation
               window.location.reload();
             }}
@@ -1210,6 +1217,18 @@ export function ToolPanel({
             <PlusCircle className="w-4 h-4" />
             New Canvas
           </button>
+          {sessionId && (
+            <button
+              className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors flex items-center gap-2"
+              onClick={() => {
+                setShowMenu(false)
+                setShowShareModal(true)
+              }}
+            >
+              <Scan className="w-4 h-4" />
+              Share
+            </button>
+          )}
           {effectiveIsSignedIn ? (
             <button
               className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors flex items-center gap-2"
@@ -1356,6 +1375,9 @@ export function ToolPanel({
           window.location.reload();
         }}
       />
+      {showShareModal && sessionId && (
+        <ShareModal isOpen={showShareModal} onClose={() => setShowShareModal(false)} sessionId={sessionId} />
+      )}
       {brushSettings && onBrushSettingsChange && (
         <BrushSettingsModal
           isOpen={showBrushSettings}
