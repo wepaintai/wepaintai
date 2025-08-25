@@ -110,8 +110,12 @@ const tools: Tool[] = [
 
 // Slider component for better reusability
 const Slider = React.memo(({ value, min, max, onChange, icon: Icon, label, color }: SliderProps) => {
-  // Normalize value for display
-  const normalizedValue = ((value - min) / (max - min)) * 100
+  // Track live drag to keep UI perfectly in sync with pointer
+  const [isDragging, setIsDragging] = React.useState(false)
+  const [tempValue, setTempValue] = React.useState<number | null>(null)
+
+  const displayedValue = isDragging && tempValue != null ? tempValue : value
+  const normalizedValue = ((displayedValue - min) / (max - min)) * 100
   
   return (
     <div className="flex items-center gap-2 mb-3" role="group" aria-labelledby={`${label.toLowerCase()}-slider-label`}>
@@ -122,14 +126,14 @@ const Slider = React.memo(({ value, min, max, onChange, icon: Icon, label, color
           role="presentation"
         >
           <div
-            className="h-full transition-all duration-100"
+            className={`h-full ${isDragging ? 'transition-none' : 'transition-all duration-100'}`}
             style={{ width: `${normalizedValue}%`, backgroundColor: color }}
           />
         </div>
         <div
-          className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full pointer-events-none"
+          className="absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full pointer-events-none shadow-[0_0_0_1px_rgba(255,255,255,0.5)]"
           style={{ 
-            left: `calc(${normalizedValue}% - 6px)`, 
+            left: `calc(${normalizedValue}% - 8px)`, 
             backgroundColor: color 
           }}
           role="presentation"
@@ -138,12 +142,25 @@ const Slider = React.memo(({ value, min, max, onChange, icon: Icon, label, color
           type="range"
           min={min}
           max={max}
-          value={value}
-          onChange={(e) => onChange(Number(e.target.value))}
+          value={displayedValue}
+          onInput={(e: React.FormEvent<HTMLInputElement>) => {
+            const v = Number((e.target as HTMLInputElement).value)
+            setTempValue(v)
+            onChange(v)
+          }}
+          onChange={(e) => {
+            // Fallback for environments only emitting change
+            const v = Number(e.target.value)
+            setTempValue(v)
+            onChange(v)
+          }}
+          onPointerDown={() => setIsDragging(true)}
+          onPointerUp={() => { setIsDragging(false); setTempValue(null) }}
+          onBlur={() => { setIsDragging(false); setTempValue(null) }}
           className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
           aria-valuemin={min}
           aria-valuemax={max}
-          aria-valuenow={value}
+          aria-valuenow={displayedValue}
           aria-labelledby={`${label.toLowerCase()}-slider-label`}
         />
         <span id={`${label.toLowerCase()}-slider-label`} className="sr-only">{label} slider</span>
@@ -277,7 +294,7 @@ const ColorMixer = React.memo(({
         {/* Color swatch / picker */}
         <div className="relative">
           <div
-            className="w-full h-6 border border-white/20 rounded transition-all duration-100 hover:border-blue-400 overflow-hidden"
+            className="w-full h-6 border border-white/40 rounded transition-all duration-100 hover:border-blue-400 overflow-hidden"
             style={{ 
               backgroundColor: colorMode === 'rainbow' 
                 ? 'transparent' 
@@ -292,6 +309,8 @@ const ColorMixer = React.memo(({
               {colorMode === 'rainbow' ? 'Rainbow color mode' : `Current color: ${color}`}
             </span>
           </div>
+          {/* Overlay dropper icon on the swatch */}
+          <Pipette className="pointer-events-none absolute right-1 top-1 w-3.5 h-3.5 text-white/80 drop-shadow" aria-hidden="true" />
           {colorMode === 'solid' && (
             <input
               type="color"
@@ -309,17 +328,25 @@ const ColorMixer = React.memo(({
           <button
             type="button"
             onClick={() => setShowModeMenu((v) => !v)}
-            className="w-full h-6 px-2 text-[11px] rounded border border-white/20 bg-white/5 text-white/80 hover:bg-white/10 flex items-center justify-between"
+            className="w-full h-6 px-2 text-[11px] rounded border border-white/20 bg-white/5 text-white/80 hover:bg-white/10 flex items-center justify-center"
             aria-haspopup="menu"
             aria-expanded={showModeMenu}
             aria-label="Color mode"
             title="Click to switch color mode"
           >
             <span className="inline-flex items-center gap-1">
-              <Pipette className="w-3.5 h-3.5 text-white/60" />
+              <span
+                className="inline-block w-3.5 h-3.5 rounded-sm border border-white/30"
+                style={{
+                  backgroundImage: colorMode === 'rainbow'
+                    ? 'linear-gradient(to right, #ff0000, #ff7f00, #ffff00, #00ff00, #0000ff, #4b0082, #9400d3)'
+                    : undefined,
+                  backgroundColor: colorMode === 'rainbow' ? 'transparent' : color
+                }}
+                aria-hidden="true"
+              />
               {colorMode === 'rainbow' ? 'Rainbow' : 'Solid'}
             </span>
-            <ChevronUp className={`w-3 h-3 text-white/50 transition-transform ${showModeMenu ? 'rotate-180' : ''}`} />
           </button>
           {showModeMenu && onColorModeChange && (
             <div
@@ -328,16 +355,26 @@ const ColorMixer = React.memo(({
             >
               <button
                 onClick={() => { onColorModeChange('solid'); setShowModeMenu(false) }}
-                className={`w-full text-left px-2 py-1 text-xs transition-colors ${colorMode === 'solid' ? 'text-white bg-white/10' : 'text-white/70 hover:text-white hover:bg-white/10'}`}
+                className={`w-full text-left px-2 py-1 text-xs transition-colors flex items-center gap-1 ${colorMode === 'solid' ? 'text-white bg-white/10' : 'text-white/70 hover:text-white hover:bg-white/10'}`}
                 role="menuitem"
               >
+                <span
+                  className="inline-block w-3.5 h-3.5 rounded-sm border border-white/30"
+                  style={{ backgroundColor: color }}
+                  aria-hidden="true"
+                />
                 Solid
               </button>
               <button
                 onClick={() => { onColorModeChange('rainbow'); setShowModeMenu(false) }}
-                className={`w-full text-left px-2 py-1 text-xs transition-colors ${colorMode === 'rainbow' ? 'text-white bg-white/10' : 'text-white/70 hover:text-white hover:bg-white/10'}`}
+                className={`w-full text-left px-2 py-1 text-xs transition-colors flex items-center gap-1 ${colorMode === 'rainbow' ? 'text-white bg-white/10' : 'text-white/70 hover:text-white hover:bg-white/10'}`}
                 role="menuitem"
               >
+                <span
+                  className="inline-block w-3.5 h-3.5 rounded-sm border border-white/30"
+                  style={{ backgroundImage: 'linear-gradient(to right, #ff0000, #ff7f00, #ffff00, #00ff00, #0000ff, #4b0082, #9400d3)' }}
+                  aria-hidden="true"
+                />
                 Rainbow
               </button>
             </div>
@@ -929,7 +966,6 @@ export function ToolPanel({
       ) : (
         <>
           <div className="flex items-center justify-between mb-1">
-            <div className="text-xs font-medium text-white/80">Layers ({layers.length})</div>
             {onCreatePaintLayer && (
               <button
                 onClick={onCreatePaintLayer}
@@ -1002,7 +1038,6 @@ export function ToolPanel({
             <Merge className="w-4 h-4" />
             Merge Two
           </button>
-          <p className="text-xs text-white/60 text-center">Transform your canvas with AI</p>
         </>
       )}
     </div>
@@ -1263,7 +1298,7 @@ export function ToolPanel({
           }}
           onDock={() => setDetachedTabs(prev => { const n = { ...prev }; delete (n as any)['ai']; return n })}
           onMouseOverToolbox={setIsMouseOverToolbox}
-          width={240}
+          width={220}
         >
           {renderAITab()}
         </DraggableWindow>
