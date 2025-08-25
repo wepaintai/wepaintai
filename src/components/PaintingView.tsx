@@ -449,11 +449,6 @@ export function PaintingView() {
   }
 
   const handleUndo = async () => {
-    // Fast path: use pre-computed lastStrokeInfo from usePaintingSession
-    if (!lastStrokeInfo && (!rawStrokes || rawStrokes.length === 0)) {
-      return
-    }
-    
     // Skip the undoRedoAvailability check if we know we have strokes
     // This avoids waiting for the query on first undo
     const canUndoLocally = lastStrokeInfo !== null || (rawStrokes && rawStrokes.length > 0)

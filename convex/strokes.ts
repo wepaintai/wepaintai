@@ -301,6 +301,57 @@ export const removeLastStroke = mutation({
       throw new Error("Session not found");
     }
 
+    // If the last action was a bulk clear and there are no strokes, treat Undo as restore-all
+    if (session.lastAction === 'clear' && session.lastClearBatchId) {
+      const anyStroke = await ctx.db
+        .query("strokes")
+        .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+        .first();
+      if (!anyStroke) {
+        const deleted = await ctx.db
+          .query("deletedStrokes")
+          .withIndex("by_session_deleted", (q) => q.eq("sessionId", args.sessionId))
+          .collect();
+        const batch = deleted.filter((d: any) => d.clearBatchId === session.lastClearBatchId);
+        if (batch.length > 0) {
+          const sorted = batch.sort((a, b) => a.strokeOrder - b.strokeOrder);
+          let maxOrder = 0;
+          const recentOrders: number[] = [];
+          const recentIds: any[] = [];
+          for (const s of sorted) {
+            const restoredId = await ctx.db.insert("strokes", {
+              sessionId: s.sessionId,
+              layerId: s.layerId,
+              userId: s.userId,
+              userColor: s.userColor,
+              points: s.points,
+              brushColor: s.brushColor,
+              brushSize: s.brushSize,
+              opacity: s.opacity,
+              strokeOrder: s.strokeOrder,
+              isEraser: s.isEraser,
+              colorMode: s.colorMode,
+            });
+            maxOrder = Math.max(maxOrder, s.strokeOrder);
+            recentOrders.push(s.strokeOrder);
+            recentIds.push(restoredId);
+            await ctx.db.delete(s._id);
+          }
+          const newDeletedCount = Math.max(0, (session.deletedStrokeCount || 0) - batch.length);
+          await ctx.db.patch(args.sessionId, {
+            strokeCounter: maxOrder,
+            recentStrokeOrders: recentOrders.sort((a, b) => a - b).slice(-10),
+            recentStrokeIds: recentIds.slice(-10) as any,
+            deletedStrokeCount: newDeletedCount,
+            lastDeletedStrokeOrder: undefined,
+            lastAction: undefined,
+            lastClearBatchId: undefined,
+          });
+          return true;
+        }
+      }
+    }
+
     let lastStroke = null;
     
     // First try to use the cached stroke IDs for instant access
@@ -534,29 +585,49 @@ export const clearSession = mutation({
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
       .collect();
 
-    // Delete all strokes
-    for (const stroke of strokes) {
-      await ctx.db.delete(stroke._id);
+    if (strokes.length === 0) {
+      // Nothing to move, but mark last action so Undo can no-op gracefully
+      await ctx.db.patch(args.sessionId, {
+        lastAction: 'clear',
+        lastClearBatchId: undefined,
+        recentStrokeOrders: [],
+        recentStrokeIds: [],
+        lastDeletedStrokeOrder: undefined,
+      });
+      return null;
     }
 
-    // Get all deleted strokes for this session
-    const deletedStrokes = await ctx.db
-      .query("deletedStrokes")
-      .withIndex("by_session_deleted", (q) => q.eq("sessionId", args.sessionId))
-      .collect();
-
-    // Delete all deleted strokes
-    for (const deletedStroke of deletedStrokes) {
-      await ctx.db.delete(deletedStroke._id);
+    // Tag this clear with batch id and move strokes to deletedStrokes
+    const batchId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    for (const s of strokes) {
+      await ctx.db.insert("deletedStrokes", {
+        sessionId: s.sessionId,
+        layerId: s.layerId,
+        userId: s.userId,
+        userColor: s.userColor,
+        points: s.points,
+        brushColor: s.brushColor,
+        brushSize: s.brushSize,
+        opacity: s.opacity,
+        strokeOrder: s.strokeOrder,
+        isEraser: s.isEraser,
+        colorMode: s.colorMode,
+        deletedAt: Date.now(),
+        clearBatchId: batchId,
+      });
+      await ctx.db.delete(s._id);
     }
 
-    // Reset the stroke counter and caches
+    const newDeletedCount = (session.deletedStrokeCount || 0) + strokes.length;
+    const lastOrder = Math.max(...strokes.map((s) => s.strokeOrder));
     await ctx.db.patch(args.sessionId, {
       strokeCounter: 0,
       recentStrokeOrders: [],
       recentStrokeIds: [],
-      deletedStrokeCount: 0,
-      lastDeletedStrokeOrder: undefined,
+      deletedStrokeCount: newDeletedCount,
+      lastDeletedStrokeOrder: lastOrder,
+      lastAction: 'clear',
+      lastClearBatchId: batchId,
     });
 
     return null;
@@ -646,9 +717,9 @@ export const getUndoRedoAvailability = query({
       }
     }
     
-    // If we have recent orders cached, we know we can undo
-    const canUndo = recentOrders.length > 0 || session.strokeCounter > 0;
-    const canRedo = deletedCount > 0;
+    // If we have recent orders cached, we know we can undo; also allow undo after a clear
+    const canUndo = (session.lastAction === 'clear') || recentOrders.length > 0 || session.strokeCounter > 0;
+    const canRedo = (session.lastAction === 'clear') ? false : (deletedCount > 0);
     const lastStrokeId = recentIds.length > 0 ? recentIds[recentIds.length - 1] : undefined;
     
     return {

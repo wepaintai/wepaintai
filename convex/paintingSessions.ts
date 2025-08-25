@@ -123,6 +123,8 @@ export const getSession = query({
       recentStrokeIds: v.optional(v.array(v.id("strokes"))),
       deletedStrokeCount: v.optional(v.number()),
       lastDeletedStrokeOrder: v.optional(v.number()),
+      lastAction: v.optional(v.string()),
+      lastClearBatchId: v.optional(v.string()),
       aiPrompts: v.optional(v.array(v.string())),
     }),
     v.null()
@@ -175,6 +177,8 @@ export const listRecentSessions = query({
     recentStrokeIds: v.optional(v.array(v.id("strokes"))),
     deletedStrokeCount: v.optional(v.number()),
     lastDeletedStrokeOrder: v.optional(v.number()),
+    lastAction: v.optional(v.string()),
+    lastClearBatchId: v.optional(v.string()),
     aiPrompts: v.optional(v.array(v.string())),
   })),
   handler: async (ctx) => {
@@ -210,6 +214,8 @@ export const getUserSessions = query({
     recentStrokeIds: v.optional(v.array(v.id("strokes"))),
     deletedStrokeCount: v.optional(v.number()),
     lastDeletedStrokeOrder: v.optional(v.number()),
+    lastAction: v.optional(v.string()),
+    lastClearBatchId: v.optional(v.string()),
     aiPrompts: v.optional(v.array(v.string())),
   })),
   handler: async (ctx) => {
@@ -261,7 +267,7 @@ export const getUserSessions = query({
     userLayers.forEach((pl) => sessionIdSet.add(pl.sessionId));
 
     // Fetch session docs for all collected IDs
-    const sessions: Array<{
+  const sessions: Array<{
       _id: Id<"paintingSessions">;
       _creationTime: number;
       name?: string | undefined;
@@ -279,6 +285,8 @@ export const getUserSessions = query({
       recentStrokeIds?: Id<"strokes">[] | undefined;
       deletedStrokeCount?: number | undefined;
       lastDeletedStrokeOrder?: number | undefined;
+      lastAction?: string | undefined;
+      lastClearBatchId?: string | undefined;
       aiPrompts?: string[] | undefined;
     }> = [];
 

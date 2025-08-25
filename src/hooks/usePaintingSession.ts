@@ -258,6 +258,31 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     isDrawing: boolean;
     currentTool: string;
   } | null>(null);
+  const presenceInFlightRef = useRef<boolean>(false);
+
+  // Send the latest queued presence update if not already in flight
+  const flushPresence = useCallback(async () => {
+    if (!sessionId) return;
+    if (presenceInFlightRef.current) return;
+    const payload = pendingPresenceRef.current;
+    if (!payload) return;
+    presenceInFlightRef.current = true;
+    try {
+      await convexLow.mutation(api.presence.updatePresence, {
+        sessionId,
+        userId: currentUser.id || undefined,
+        userColor: currentUser.color,
+        userName: currentUser.name,
+        ...payload,
+      });
+      lastPresenceSentAtRef.current = Date.now();
+      pendingPresenceRef.current = null;
+    } catch (e) {
+      // ignore
+    } finally {
+      presenceInFlightRef.current = false;
+    }
+  }, [sessionId, currentUser.id, currentUser.color, currentUser.name]);
 
   // Send coarse presence heartbeat every 20s using low-priority client
   useEffect(() => {
@@ -268,28 +293,9 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
       presenceIntervalRef.current = null;
     }
 
-    presenceIntervalRef.current = setInterval(async () => {
-      try {
-        const payload =
-          pendingPresenceRef.current || {
-            cursorX: 0,
-            cursorY: 0,
-            isDrawing: false,
-            currentTool: "brush",
-          };
-
-        await convexLow.mutation(api.presence.updatePresence, {
-          sessionId,
-          userId: currentUser.id || undefined,
-          userColor: currentUser.color,
-          userName: currentUser.name,
-          ...payload,
-        });
-        lastPresenceSentAtRef.current = Date.now();
-        pendingPresenceRef.current = null;
-      } catch (e) {
-        // ignore heartbeat errors
-      }
+    presenceIntervalRef.current = setInterval(() => {
+      // Heartbeat: try to flush any queued presence, but avoid overlap
+      flushPresence();
     }, 20000); // 20s
 
     return () => {
@@ -298,7 +304,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
         presenceIntervalRef.current = null;
       }
     };
-  }, [sessionId, currentUser.id, currentUser.color, currentUser.name]);
+  }, [sessionId, currentUser.id, currentUser.color, currentUser.name, flushPresence]);
 
   // Update user presence (enqueue latest + leading-edge send if stale)
   const updateUserPresence = useCallback(
@@ -314,25 +320,10 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
 
       const now = Date.now();
       if (now - lastPresenceSentAtRef.current > 20000) {
-        try {
-          await convexLow.mutation(api.presence.updatePresence, {
-            sessionId,
-            userId: currentUser.id || undefined,
-            userColor: currentUser.color,
-            userName: currentUser.name,
-            cursorX,
-            cursorY,
-            isDrawing,
-            currentTool,
-          });
-          lastPresenceSentAtRef.current = now;
-          pendingPresenceRef.current = null;
-        } catch (e) {
-          // ignore
-        }
+        await flushPresence();
       }
     },
-    [sessionId, currentUser.id, currentUser.color, currentUser.name]
+    [sessionId, currentUser.id, currentUser.color, currentUser.name, flushPresence]
   );
 
   // Clear all strokes from the session

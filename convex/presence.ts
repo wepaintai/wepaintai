@@ -28,6 +28,18 @@ export const updatePresence = mutation({
       .first();
 
     if (existingPresence) {
+      // If an identical update arrived within a short window, skip writing to reduce conflicts
+      const recentlyUpdated = now - (existingPresence.lastSeen || 0) < 200;
+      const noChange =
+        existingPresence.cursorX === args.cursorX &&
+        existingPresence.cursorY === args.cursorY &&
+        existingPresence.isDrawing === args.isDrawing &&
+        existingPresence.currentTool === args.currentTool &&
+        existingPresence.userColor === args.userColor &&
+        existingPresence.userName === args.userName;
+      if (recentlyUpdated && noChange) {
+        return null;
+      }
       // Replace the entire document to avoid conflicts
       await ctx.db.replace(existingPresence._id, {
         sessionId: args.sessionId,

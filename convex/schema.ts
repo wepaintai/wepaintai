@@ -20,6 +20,9 @@ const schema = defineSchema({
     recentStrokeIds: v.optional(v.array(v.id("strokes"))), // Last 10 stroke IDs for instant undo
     deletedStrokeCount: v.optional(v.number()), // Count of deleted strokes for quick redo check
     lastDeletedStrokeOrder: v.optional(v.number()), // Order of the last deleted stroke for quick redo
+    // Last action metadata (e.g. for undoing a Clear)
+    lastAction: v.optional(v.string()), // e.g., 'clear'
+    lastClearBatchId: v.optional(v.string()),
     // AI generation prompts history
     aiPrompts: v.optional(v.array(v.string())), // Array of unique prompts used in this session
   }),
@@ -195,6 +198,8 @@ const schema = defineSchema({
     isEraser: v.optional(v.boolean()),
     colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))), // Color mode for special effects
     deletedAt: v.number(),
+    // Optional: groups strokes deleted as part of a clear action
+    clearBatchId: v.optional(v.string()),
   }).index("by_session_deleted", ["sessionId", "deletedAt"])
     .index("by_session_layer_deleted", ["sessionId", "layerId", "deletedAt"])
     .index("by_session_stroke", ["sessionId", "strokeOrder"]),
