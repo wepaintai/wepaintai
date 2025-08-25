@@ -118,9 +118,9 @@ const Slider = React.memo(({ value, min, max, onChange, icon: Icon, label, color
   const normalizedValue = ((displayedValue - min) / (max - min)) * 100
   
   return (
-    <div className="flex items-center gap-2 mb-3" role="group" aria-labelledby={`${label.toLowerCase()}-slider-label`}>
+    <div className="flex items-center gap-2 mb-3 last:mb-1 min-h-[2rem]" role="group" aria-labelledby={`${label.toLowerCase()}-slider-label`}>
       <Icon className="w-4 h-4 text-white/60 flex-shrink-0" aria-hidden="true" />
-      <div className="relative flex-1 h-6 flex items-center">
+      <div className="relative flex-1 h-8 flex items-center">
         <div 
           className="h-1 w-full bg-white/20 rounded-full overflow-hidden"
           role="presentation"
@@ -294,7 +294,7 @@ const ColorMixer = React.memo(({
         {/* Color swatch / picker */}
         <div className="relative">
           <div
-            className="w-full h-6 border border-white/40 rounded transition-all duration-100 hover:border-blue-400 overflow-hidden"
+            className="w-full h-8 border border-white/40 rounded transition-all duration-100 hover:border-blue-400 overflow-hidden"
             style={{ 
               backgroundColor: colorMode === 'rainbow' 
                 ? 'transparent' 
@@ -328,7 +328,7 @@ const ColorMixer = React.memo(({
           <button
             type="button"
             onClick={() => setShowModeMenu((v) => !v)}
-            className="w-full h-6 px-2 text-[11px] rounded border border-white/20 bg-white/5 text-white/80 hover:bg-white/10 flex items-center justify-center"
+            className="w-full h-8 px-2 text-[11px] rounded border border-white/20 bg-white/5 text-white/80 hover:bg-white/10 flex items-center justify-center"
             aria-haspopup="menu"
             aria-expanded={showModeMenu}
             aria-label="Color mode"
@@ -895,11 +895,11 @@ export function ToolPanel({
   const renderToolsTab = React.useCallback(() => (
     <>
       {/* Tool Selection */}
-      <div className="grid grid-cols-4 mb-[10px]">
-        {tools.map((tool, index) => {
+      <div className="grid grid-cols-4 gap-2 mb-3">
+        {tools.map((tool) => {
           const isAIDisabled = tool.id === 'ai' && !effectiveIsSignedIn
           return (
-            <div key={tool.id} className={`${index < tools.length - 1 ? 'border-r border-white/20' : ''}`}>
+            <div key={tool.id} className="flex justify-center">
               <ToolButton
                 tool={tool}
                 isSelected={selectedTool === tool.id}
@@ -920,7 +920,7 @@ export function ToolPanel({
       />
 
       {/* Sliders */}
-      <div className="border-b border-white/20 mb-3 pb-3">
+      <div className="border-b border-white/20 mb-2 pb-1">
         <Slider
           value={size}
           min={1}
@@ -942,17 +942,17 @@ export function ToolPanel({
       </div>
 
       {/* Action Buttons */}
-      <div className="grid grid-cols-4">
-        <div className="border-r border-white/20">
+      <div className="grid grid-cols-4 gap-2">
+        <div className="flex justify-center">
           <ActionButton icon={Undo2} label="Undo" onClick={onUndo} disabled={!canUndo} />
         </div>
-        <div className="border-r border-white/20">
+        <div className="flex justify-center">
           <ActionButton icon={Redo2} label="Redo" onClick={onRedo} disabled={!canRedo} />
         </div>
-        <div className="border-r border-white/20">
+        <div className="flex justify-center">
           <ActionButton icon={X} label="Clear Canvas" onClick={onClear} />
         </div>
-        <div>
+        <div className="flex justify-center">
           <ActionButton icon={Save} label="Export" onClick={onExport} />
         </div>
       </div>
