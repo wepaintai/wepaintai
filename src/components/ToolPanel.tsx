@@ -114,28 +114,61 @@ const Slider = React.memo(({ value, min, max, onChange, icon: Icon, label, color
   const [isDragging, setIsDragging] = React.useState(false)
   const [tempValue, setTempValue] = React.useState<number | null>(null)
 
+  // Layout refs/sizing for precise thumb alignment
+  const containerRef = React.useRef<HTMLDivElement>(null)
+  const [containerWidth, setContainerWidth] = React.useState(0)
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return
+    const el = containerRef.current
+    if (!el) return
+    const update = () => setContainerWidth(el.clientWidth)
+    update()
+    let ro: ResizeObserver | null = null
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => update())
+      ro.observe(el)
+    } else {
+      window.addEventListener('resize', update)
+    }
+    return () => {
+      if (ro) ro.disconnect()
+      else window.removeEventListener('resize', update)
+    }
+  }, [])
+
   const displayedValue = isDragging && tempValue != null ? tempValue : value
-  const normalizedValue = ((displayedValue - min) / (max - min)) * 100
+  const fraction = Math.min(1, Math.max(0, (displayedValue - min) / (max - min)))
+  const thumbSize = 16
+  const trackPadding = 8 // keep thumb inside gutters to align with column margins
+  const usableWidth = Math.max(0, containerWidth - 2 * trackPadding)
+  const thumbLeftPx = trackPadding + fraction * usableWidth - thumbSize / 2
+  const clampedThumbLeftPx = Math.min(
+    Math.max(thumbLeftPx, trackPadding - thumbSize / 2),
+    trackPadding + usableWidth - thumbSize / 2
+  )
+  const fillWidthPx = Math.max(0, fraction * usableWidth)
   
   return (
     <div className="flex items-center gap-2 mb-3 last:mb-1 min-h-[2rem]" role="group" aria-labelledby={`${label.toLowerCase()}-slider-label`}>
       <Icon className="w-4 h-4 text-white/60 flex-shrink-0" aria-hidden="true" />
-      <div className="relative flex-1 h-8 flex items-center">
-        <div 
-          className="h-1 w-full bg-white/20 rounded-full overflow-hidden"
+      <div ref={containerRef} className="relative flex-1 h-8 flex items-center">
+        {/* Track */}
+        <div
+          className="absolute rounded-full"
+          style={{ left: trackPadding, right: trackPadding, height: 4, background: 'rgba(255,255,255,0.2)' }}
           role="presentation"
-        >
-          <div
-            className={`h-full ${isDragging ? 'transition-none' : 'transition-all duration-100'}`}
-            style={{ width: `${normalizedValue}%`, backgroundColor: color }}
-          />
-        </div>
+        />
+        {/* Fill */}
+        <div
+          className={`absolute h-1 rounded-full ${isDragging ? 'transition-none' : 'transition-all duration-100'}`}
+          style={{ left: trackPadding, width: fillWidthPx, backgroundColor: color }}
+          role="presentation"
+        />
+        {/* Thumb */}
         <div
           className="absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full pointer-events-none shadow-[0_0_0_1px_rgba(255,255,255,0.5)]"
-          style={{ 
-            left: `calc(${normalizedValue}% - 8px)`, 
-            backgroundColor: color 
-          }}
+          style={{ left: clampedThumbLeftPx, backgroundColor: color }}
           role="presentation"
         />
         <input
