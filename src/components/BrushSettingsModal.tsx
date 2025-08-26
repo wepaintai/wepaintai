@@ -17,9 +17,9 @@ interface BrushSettingsModalProps {
 }
 
 const DEFAULT_SETTINGS: BrushSettings = {
-  smoothing: 0.75,
+  smoothing: 0.5,
   thinning: 0.5,
-  streamline: 0.95,
+  streamline: 0.5,
   startTaper: 0,
   endTaper: 0,
 }

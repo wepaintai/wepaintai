@@ -221,9 +221,9 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     activeLayerId,
     onImageUploaded,
     // perfect-freehand options
-    smoothing = 0.75,
+    smoothing = 0.5,
     thinning = 0.5,
-    streamline = 0.65,
+    streamline = 0.5,
     easing = (t: number) => t,
     startTaper = 0,
     startCap = true,

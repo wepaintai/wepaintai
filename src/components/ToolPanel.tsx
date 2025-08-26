@@ -828,25 +828,46 @@ export function ToolPanel({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [handleToolSelect, effectiveIsSignedIn])
 
-  // Handle menu toggle
+  // Handle menu open/close. If already open, close. Otherwise open and position.
   const handleMenuToggle = React.useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
-    const rect = e.currentTarget.getBoundingClientRect()
-    setMenuPosition({ x: rect.right - rect.left, y: rect.bottom - rect.top })
-    setShowMenu(!showMenu)
+    if (showMenu) {
+      setShowMenu(false)
+      return
+    }
+    const triggerRect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const panelRect = panelRef.current?.getBoundingClientRect()
+    const x = panelRect ? triggerRect.left - panelRect.left : 0
+    const y = panelRect ? triggerRect.bottom - panelRect.top : 0
+    setMenuPosition({ x, y })
+    setShowMenu(true)
   }, [showMenu])
 
-  // Close menu on outside click
+  // Close menu on outside pointer down (capture) and suppress canvas paint for that click
   React.useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+    const handleOutsidePointerDown = (e: PointerEvent) => {
+      const target = e.target as Node
+      const clickedMenu = !!menuRef.current && menuRef.current.contains(target)
+      const clickedTrigger = target instanceof Element && !!target.closest('[data-menu-trigger="true"]')
+      const clickedInsidePanel = !!panelRef.current && panelRef.current.contains(target)
+      if (!clickedMenu && !clickedTrigger) {
         setShowMenu(false)
+        // If click is outside the toolbox panel entirely and was on the canvas, prevent drawing
+        if (!clickedInsidePanel) {
+          const isCanvasTarget = target instanceof HTMLCanvasElement || (target instanceof Element && !!target.closest('canvas'))
+          if (isCanvasTarget) {
+            e.preventDefault()
+            e.stopPropagation()
+          }
+        }
       }
     }
 
     if (showMenu) {
-      document.addEventListener('mousedown', handleClickOutside)
-      return () => document.removeEventListener('mousedown', handleClickOutside)
+      document.addEventListener('pointerdown', handleOutsidePointerDown, { capture: true })
+      return () => {
+        document.removeEventListener('pointerdown', handleOutsidePointerDown, { capture: true } as any)
+      }
     }
   }, [showMenu])
 
@@ -1111,13 +1132,24 @@ export function ToolPanel({
           role="button"
         >
           <div className="flex items-center gap-1">
-            <span className="text-xs font-medium text-white/80">wepaint.ai</span>
+            <button
+              onClick={handleMenuToggle}
+              onMouseDown={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
+              type="button"
+              className="text-xs font-medium text-white/80 hover:text-white transition-colors p-0 bg-transparent border-0"
+              aria-label="Open menu"
+              data-menu-trigger="true"
+            >
+              wepaint.ai
+            </button>
             <button
               onClick={handleMenuToggle}
               onMouseDown={(e) => e.stopPropagation()}
               onTouchStart={(e) => e.stopPropagation()}
               className="p-0.5 hover:bg-white/20 rounded transition-colors"
               aria-label="More options"
+              data-menu-trigger="true"
             >
               <MoreVertical className="w-3.5 h-3.5 text-white/60" />
             </button>
@@ -1127,6 +1159,7 @@ export function ToolPanel({
             onClick={(e) => {
               e.stopPropagation()
               setIsCollapsed(!isCollapsed)
+              setShowMenu(false)
             }}
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
