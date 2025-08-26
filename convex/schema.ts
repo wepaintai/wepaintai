@@ -147,6 +147,7 @@ const schema = defineSchema({
     errorType: v.optional(v.string()), // Added missing field
     resultImageUrl: v.optional(v.string()),
     replicateId: v.optional(v.string()),
+    provider: v.optional(v.union(v.literal("replicate"), v.literal("gemini"))),
     createdAt: v.number(),
     // Fields from existing data
     canvasSnapshotId: v.optional(v.id("_storage")),

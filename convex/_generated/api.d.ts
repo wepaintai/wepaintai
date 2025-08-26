@@ -13,6 +13,7 @@ import type * as auth from "../auth.js";
 import type * as backgroundRemoval from "../backgroundRemoval.js";
 import type * as crons from "../crons.js";
 import type * as debug from "../debug.js";
+import type * as geminiGeneration from "../geminiGeneration.js";
 import type * as http from "../http.js";
 import type * as imageMerger from "../imageMerger.js";
 import type * as images from "../images.js";
@@ -55,6 +56,7 @@ declare const fullApi: ApiFromModules<{
   backgroundRemoval: typeof backgroundRemoval;
   crons: typeof crons;
   debug: typeof debug;
+  geminiGeneration: typeof geminiGeneration;
   http: typeof http;
   imageMerger: typeof imageMerger;
   images: typeof images;

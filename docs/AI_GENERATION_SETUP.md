@@ -88,3 +88,20 @@ This will deploy the new AI generation functions and schema updates.
 - Each generation uses Replicate credits
 - Check pricing at [replicate.com/pricing](https://replicate.com/pricing)
 - Monitor usage in your Replicate dashboard
+
+## Gemini 2.5 Flash Image (Preview)
+
+You can optionally use Gemini 2.5 Flash Image as an image generation provider. This runs entirely server-side in Convex.
+
+- Requirements:
+  - A Gemini API key from Google AI Studio.
+- Configuration:
+  - In Convex environment variables, add `GEMINI_API_KEY` with your key.
+  - No client-side exposure; keys must not be added to Vite `.env.local`.
+- Usage:
+  - In the AI Generation modal, select the "Gemini 2.5" provider.
+  - The app sends the canvas image and your prompt to Gemini and returns a generated PNG stored via Convex storage.
+
+Notes:
+- Gemini model used: `gemini-2.5-flash-image-preview`.
+- Pricing is billed by Google; see Gemini API pricing docs for details.
