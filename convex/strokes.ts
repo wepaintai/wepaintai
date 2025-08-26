@@ -20,13 +20,31 @@ export const addStroke = mutation({
     opacity: v.number(),
     isEraser: v.optional(v.boolean()),
     colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))),
+    guestKey: v.optional(v.string()),
   },
   returns: v.id("strokes"),
   handler: async (ctx, args) => {
-    // Get the session to increment stroke counter
+    // Get the session to increment stroke counter and enforce access
     const session = await ctx.db.get(args.sessionId);
     if (!session) {
       throw new Error("Session not found");
+    }
+
+    // Authorization: allow if public or owner or guest owner
+    if (!session.isPublic) {
+      const identity = await ctx.auth.getUserIdentity();
+      if (identity) {
+        const user = await ctx.db
+          .query("users")
+          .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+          .first();
+        if (!user || session.createdBy !== user._id) {
+          // Fall through to guest key check
+          if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) throw new Error("Unauthorized");
+        }
+      } else {
+        if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) throw new Error("Unauthorized");
+      }
     }
 
     // Increment stroke counter for ordering
@@ -94,6 +112,7 @@ export const addStroke = mutation({
 export const getSessionStrokes = query({
   args: {
     sessionId: v.id("paintingSessions"),
+    guestKey: v.optional(v.string()),
   },
   returns: v.array(v.object({
     _id: v.id("strokes"),
@@ -119,6 +138,21 @@ export const getSessionStrokes = query({
     const session = await ctx.db.get(args.sessionId);
     if (!session) {
       return [];
+    }
+    // Authorization: allow if public or owner or guest owner
+    if (!session.isPublic) {
+      const identity = await ctx.auth.getUserIdentity();
+      if (identity) {
+        const user = await ctx.db
+          .query("users")
+          .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+          .first();
+        if (!user || session.createdBy !== user._id) {
+          if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
+        }
+      } else {
+        if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
+      }
     }
     
     // Use the index with order to get strokes already sorted
@@ -150,6 +184,7 @@ export const getLayerStrokes = query({
   args: {
     sessionId: v.id("paintingSessions"),
     layerId: v.union(v.id("paintLayers"), v.id("uploadedImages"), v.id("aiGeneratedImages")),
+    guestKey: v.optional(v.string()),
   },
   returns: v.array(v.object({
     _id: v.id("strokes"),
@@ -171,6 +206,22 @@ export const getLayerStrokes = query({
     colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))),
   })),
   handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) return [];
+    if (!session.isPublic) {
+      const identity = await ctx.auth.getUserIdentity();
+      if (identity) {
+        const user = await ctx.db
+          .query("users")
+          .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+          .first();
+        if (!user || session.createdBy !== user._id) {
+          if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
+        }
+      } else {
+        if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
+      }
+    }
     return await ctx.db
       .query("strokes")
       .withIndex("by_layer", (q) => 
@@ -187,6 +238,7 @@ export const getStrokesAfter = query({
   args: {
     sessionId: v.id("paintingSessions"),
     afterStrokeOrder: v.number(),
+    guestKey: v.optional(v.string()),
   },
   returns: v.array(v.object({
     _id: v.id("strokes"),
@@ -208,6 +260,22 @@ export const getStrokesAfter = query({
     colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))),
   })),
   handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) return [];
+    if (!session.isPublic) {
+      const identity = await ctx.auth.getUserIdentity();
+      if (identity) {
+        const user = await ctx.db
+          .query("users")
+          .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+          .first();
+        if (!user || session.createdBy !== user._id) {
+          if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
+        }
+      } else {
+        if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
+      }
+    }
     return await ctx.db
       .query("strokes")
       .withIndex("by_session", (q) => 
@@ -231,6 +299,57 @@ export const removeLastStroke = mutation({
     const session = await ctx.db.get(args.sessionId);
     if (!session) {
       throw new Error("Session not found");
+    }
+
+    // If the last action was a bulk clear and there are no strokes, treat Undo as restore-all
+    if (session.lastAction === 'clear' && session.lastClearBatchId) {
+      const anyStroke = await ctx.db
+        .query("strokes")
+        .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+        .first();
+      if (!anyStroke) {
+        const deleted = await ctx.db
+          .query("deletedStrokes")
+          .withIndex("by_session_deleted", (q) => q.eq("sessionId", args.sessionId))
+          .collect();
+        const batch = deleted.filter((d: any) => d.clearBatchId === session.lastClearBatchId);
+        if (batch.length > 0) {
+          const sorted = batch.sort((a, b) => a.strokeOrder - b.strokeOrder);
+          let maxOrder = 0;
+          const recentOrders: number[] = [];
+          const recentIds: any[] = [];
+          for (const s of sorted) {
+            const restoredId = await ctx.db.insert("strokes", {
+              sessionId: s.sessionId,
+              layerId: s.layerId,
+              userId: s.userId,
+              userColor: s.userColor,
+              points: s.points,
+              brushColor: s.brushColor,
+              brushSize: s.brushSize,
+              opacity: s.opacity,
+              strokeOrder: s.strokeOrder,
+              isEraser: s.isEraser,
+              colorMode: s.colorMode,
+            });
+            maxOrder = Math.max(maxOrder, s.strokeOrder);
+            recentOrders.push(s.strokeOrder);
+            recentIds.push(restoredId);
+            await ctx.db.delete(s._id);
+          }
+          const newDeletedCount = Math.max(0, (session.deletedStrokeCount || 0) - batch.length);
+          await ctx.db.patch(args.sessionId, {
+            strokeCounter: maxOrder,
+            recentStrokeOrders: recentOrders.sort((a, b) => a - b).slice(-10),
+            recentStrokeIds: recentIds.slice(-10) as any,
+            deletedStrokeCount: newDeletedCount,
+            lastDeletedStrokeOrder: undefined,
+            lastAction: undefined,
+            lastClearBatchId: undefined,
+          });
+          return true;
+        }
+      }
     }
 
     let lastStroke = null;
@@ -466,29 +585,49 @@ export const clearSession = mutation({
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
       .collect();
 
-    // Delete all strokes
-    for (const stroke of strokes) {
-      await ctx.db.delete(stroke._id);
+    if (strokes.length === 0) {
+      // Nothing to move, but mark last action so Undo can no-op gracefully
+      await ctx.db.patch(args.sessionId, {
+        lastAction: 'clear',
+        lastClearBatchId: undefined,
+        recentStrokeOrders: [],
+        recentStrokeIds: [],
+        lastDeletedStrokeOrder: undefined,
+      });
+      return null;
     }
 
-    // Get all deleted strokes for this session
-    const deletedStrokes = await ctx.db
-      .query("deletedStrokes")
-      .withIndex("by_session_deleted", (q) => q.eq("sessionId", args.sessionId))
-      .collect();
-
-    // Delete all deleted strokes
-    for (const deletedStroke of deletedStrokes) {
-      await ctx.db.delete(deletedStroke._id);
+    // Tag this clear with batch id and move strokes to deletedStrokes
+    const batchId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    for (const s of strokes) {
+      await ctx.db.insert("deletedStrokes", {
+        sessionId: s.sessionId,
+        layerId: s.layerId,
+        userId: s.userId,
+        userColor: s.userColor,
+        points: s.points,
+        brushColor: s.brushColor,
+        brushSize: s.brushSize,
+        opacity: s.opacity,
+        strokeOrder: s.strokeOrder,
+        isEraser: s.isEraser,
+        colorMode: s.colorMode,
+        deletedAt: Date.now(),
+        clearBatchId: batchId,
+      });
+      await ctx.db.delete(s._id);
     }
 
-    // Reset the stroke counter and caches
+    const newDeletedCount = (session.deletedStrokeCount || 0) + strokes.length;
+    const lastOrder = Math.max(...strokes.map((s) => s.strokeOrder));
     await ctx.db.patch(args.sessionId, {
       strokeCounter: 0,
       recentStrokeOrders: [],
       recentStrokeIds: [],
-      deletedStrokeCount: 0,
-      lastDeletedStrokeOrder: undefined,
+      deletedStrokeCount: newDeletedCount,
+      lastDeletedStrokeOrder: lastOrder,
+      lastAction: 'clear',
+      lastClearBatchId: batchId,
     });
 
     return null;
@@ -501,6 +640,7 @@ export const clearSession = mutation({
 export const getUndoRedoAvailability = query({
   args: {
     sessionId: v.id("paintingSessions"),
+    guestKey: v.optional(v.string()),
   },
   returns: v.object({
     canUndo: v.boolean(),
@@ -520,6 +660,30 @@ export const getUndoRedoAvailability = query({
         deletedCount: 0,
         cacheWarmed: false,
       };
+    }
+
+    // Authorization for private sessions (view availability only if owner or guest owner)
+    if (!session.isPublic) {
+      const identity = await ctx.auth.getUserIdentity();
+      let authorized = false;
+      if (identity) {
+        const user = await ctx.db
+          .query("users")
+          .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+          .first();
+        authorized = !!user && session.createdBy === user._id;
+      }
+      if (!authorized) {
+        if (!(session.guestOwnerKey && args.guestKey && session.guestOwnerKey === args.guestKey)) {
+          return {
+            canUndo: false,
+            canRedo: false,
+            strokeCount: 0,
+            deletedCount: 0,
+            cacheWarmed: false,
+          };
+        }
+      }
     }
 
     const recentIds = session.recentStrokeIds || [];
@@ -553,9 +717,9 @@ export const getUndoRedoAvailability = query({
       }
     }
     
-    // If we have recent orders cached, we know we can undo
-    const canUndo = recentOrders.length > 0 || session.strokeCounter > 0;
-    const canRedo = deletedCount > 0;
+    // If we have recent orders cached, we know we can undo; also allow undo after a clear
+    const canUndo = (session.lastAction === 'clear') || recentOrders.length > 0 || session.strokeCounter > 0;
+    const canRedo = (session.lastAction === 'clear') ? false : (deletedCount > 0);
     const lastStrokeId = recentIds.length > 0 ? recentIds[recentIds.length - 1] : undefined;
     
     return {

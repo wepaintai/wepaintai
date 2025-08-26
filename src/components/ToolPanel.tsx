@@ -35,6 +35,8 @@ import { useAuth, useUser } from '@clerk/tanstack-start'
 import { useLibrary } from '../hooks/useLibrary'
 import { useClipboardContext } from '../context/ClipboardContext'
 import { DraggableWindow } from './DraggableWindow'
+import { ShareModal } from './ShareModal'
+import { Id } from '../../convex/_generated/dataModel'
 
 // Types
 export interface Layer {
@@ -48,6 +50,7 @@ export interface Layer {
 }
 
 interface ToolPanelProps {
+  sessionId?: Id<'paintingSessions'> | null
   color: string
   size: number
   opacity: number
@@ -562,6 +565,7 @@ LayerItem.displayName = 'LayerItem'
 
 // Main ToolPanel component
 export function ToolPanel({
+  sessionId,
   color,
   size,
   opacity,
@@ -824,25 +828,46 @@ export function ToolPanel({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [handleToolSelect, effectiveIsSignedIn])
 
-  // Handle menu toggle
+  // Handle menu open/close. If already open, close. Otherwise open and position.
   const handleMenuToggle = React.useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
-    const rect = e.currentTarget.getBoundingClientRect()
-    setMenuPosition({ x: rect.right - rect.left, y: rect.bottom - rect.top })
-    setShowMenu(!showMenu)
+    if (showMenu) {
+      setShowMenu(false)
+      return
+    }
+    const triggerRect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const panelRect = panelRef.current?.getBoundingClientRect()
+    const x = panelRect ? triggerRect.left - panelRect.left : 0
+    const y = panelRect ? triggerRect.bottom - panelRect.top : 0
+    setMenuPosition({ x, y })
+    setShowMenu(true)
   }, [showMenu])
 
-  // Close menu on outside click
+  // Close menu on outside pointer down (capture) and suppress canvas paint for that click
   React.useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+    const handleOutsidePointerDown = (e: PointerEvent) => {
+      const target = e.target as Node
+      const clickedMenu = !!menuRef.current && menuRef.current.contains(target)
+      const clickedTrigger = target instanceof Element && !!target.closest('[data-menu-trigger="true"]')
+      const clickedInsidePanel = !!panelRef.current && panelRef.current.contains(target)
+      if (!clickedMenu && !clickedTrigger) {
         setShowMenu(false)
+        // If click is outside the toolbox panel entirely and was on the canvas, prevent drawing
+        if (!clickedInsidePanel) {
+          const isCanvasTarget = target instanceof HTMLCanvasElement || (target instanceof Element && !!target.closest('canvas'))
+          if (isCanvasTarget) {
+            e.preventDefault()
+            e.stopPropagation()
+          }
+        }
       }
     }
 
     if (showMenu) {
-      document.addEventListener('mousedown', handleClickOutside)
-      return () => document.removeEventListener('mousedown', handleClickOutside)
+      document.addEventListener('pointerdown', handleOutsidePointerDown, { capture: true })
+      return () => {
+        document.removeEventListener('pointerdown', handleOutsidePointerDown, { capture: true } as any)
+      }
     }
   }, [showMenu])
 
@@ -925,6 +950,8 @@ export function ToolPanel({
   const visibleTabs = React.useMemo(() => tabs.filter(t => !isDetached(t.id)), [detachedTabs])
 
   // Helpers to render per-tab content so we can reuse inside floating windows
+  const [showShareModal, setShowShareModal] = React.useState(false)
+
   const renderToolsTab = React.useCallback(() => (
     <>
       {/* Tool Selection */}
@@ -1105,13 +1132,24 @@ export function ToolPanel({
           role="button"
         >
           <div className="flex items-center gap-1">
-            <span className="text-xs font-medium text-white/80">wepaint.ai</span>
+            <button
+              onClick={handleMenuToggle}
+              onMouseDown={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
+              type="button"
+              className="text-xs font-medium text-white/80 hover:text-white transition-colors p-0 bg-transparent border-0"
+              aria-label="Open menu"
+              data-menu-trigger="true"
+            >
+              wepaint.ai
+            </button>
             <button
               onClick={handleMenuToggle}
               onMouseDown={(e) => e.stopPropagation()}
               onTouchStart={(e) => e.stopPropagation()}
               className="p-0.5 hover:bg-white/20 rounded transition-colors"
               aria-label="More options"
+              data-menu-trigger="true"
             >
               <MoreVertical className="w-3.5 h-3.5 text-white/60" />
             </button>
@@ -1121,6 +1159,7 @@ export function ToolPanel({
             onClick={(e) => {
               e.stopPropagation()
               setIsCollapsed(!isCollapsed)
+              setShowMenu(false)
             }}
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
@@ -1203,6 +1242,7 @@ export function ToolPanel({
               const url = new URL(window.location.href);
               url.searchParams.delete('session');
               window.history.pushState({}, '', url.toString());
+              try { localStorage.removeItem('wepaint_current_session_v1') } catch {}
               // Reload to trigger new session creation
               window.location.reload();
             }}
@@ -1210,6 +1250,18 @@ export function ToolPanel({
             <PlusCircle className="w-4 h-4" />
             New Canvas
           </button>
+          {sessionId && (
+            <button
+              className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors flex items-center gap-2"
+              onClick={() => {
+                setShowMenu(false)
+                setShowShareModal(true)
+              }}
+            >
+              <Scan className="w-4 h-4" />
+              Share
+            </button>
+          )}
           {effectiveIsSignedIn ? (
             <button
               className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors flex items-center gap-2"
@@ -1356,6 +1408,9 @@ export function ToolPanel({
           window.location.reload();
         }}
       />
+      {showShareModal && sessionId && (
+        <ShareModal isOpen={showShareModal} onClose={() => setShowShareModal(false)} sessionId={sessionId} />
+      )}
       {brushSettings && onBrushSettingsChange && (
         <BrushSettingsModal
           isOpen={showBrushSettings}

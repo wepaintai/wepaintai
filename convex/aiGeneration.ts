@@ -12,6 +12,7 @@ export const createGenerationRequest = mutation({
     error: v.optional(v.string()),
     resultImageUrl: v.optional(v.string()),
     replicateId: v.optional(v.string()),
+    provider: v.optional(v.union(v.literal("replicate"), v.literal("gemini"))),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -24,6 +25,7 @@ export const createGenerationRequest = mutation({
       error: args.error,
       resultImageUrl: args.resultImageUrl,
       replicateId: args.replicateId,
+      provider: args.provider,
       createdAt: Date.now(),
     });
   },
@@ -107,6 +109,7 @@ export const generateImage = action({
         sessionId: args.sessionId,
         prompt: args.prompt,
         status: "pending",
+        provider: "replicate",
       });
 
       // Convert base64 to data URL if needed

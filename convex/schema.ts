@@ -5,6 +5,7 @@ const schema = defineSchema({
   paintingSessions: defineTable({
     name: v.optional(v.string()),
     createdBy: v.optional(v.id("users")),
+    guestOwnerKey: v.optional(v.string()),
     isPublic: v.boolean(),
     canvasWidth: v.number(),
     canvasHeight: v.number(),
@@ -19,6 +20,9 @@ const schema = defineSchema({
     recentStrokeIds: v.optional(v.array(v.id("strokes"))), // Last 10 stroke IDs for instant undo
     deletedStrokeCount: v.optional(v.number()), // Count of deleted strokes for quick redo check
     lastDeletedStrokeOrder: v.optional(v.number()), // Order of the last deleted stroke for quick redo
+    // Last action metadata (e.g. for undoing a Clear)
+    lastAction: v.optional(v.string()), // e.g., 'clear'
+    lastClearBatchId: v.optional(v.string()),
     // AI generation prompts history
     aiPrompts: v.optional(v.array(v.string())), // Array of unique prompts used in this session
   }),
@@ -39,8 +43,9 @@ const schema = defineSchema({
     strokeOrder: v.number(), // For ordering strokes
     isEraser: v.optional(v.boolean()), // True if this stroke is an eraser stroke
     colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))), // Color mode for special effects
-  }).index("by_session", ["sessionId", "strokeOrder"])
-    .index("by_layer", ["sessionId", "layerId", "strokeOrder"]),
+  }).index("by_session", ["sessionId", "strokeOrder"]) 
+    .index("by_layer", ["sessionId", "layerId", "strokeOrder"]) 
+    .index("by_user", ["userId"]),
 
   userPresence: defineTable({
     sessionId: v.id("paintingSessions"),
@@ -129,7 +134,8 @@ const schema = defineSchema({
     rotation: v.number(),
     opacity: v.number(),
     layerOrder: v.number(),
-  }).index("by_session", ["sessionId", "layerOrder"]),
+  }).index("by_session", ["sessionId", "layerOrder"]) 
+    .index("by_user", ["userId"]),
 
   // AI generation requests and results
   aiGenerations: defineTable({
@@ -141,6 +147,7 @@ const schema = defineSchema({
     errorType: v.optional(v.string()), // Added missing field
     resultImageUrl: v.optional(v.string()),
     replicateId: v.optional(v.string()),
+    provider: v.optional(v.union(v.literal("replicate"), v.literal("gemini"))),
     createdAt: v.number(),
     // Fields from existing data
     canvasSnapshotId: v.optional(v.id("_storage")),
@@ -192,6 +199,8 @@ const schema = defineSchema({
     isEraser: v.optional(v.boolean()),
     colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))), // Color mode for special effects
     deletedAt: v.number(),
+    // Optional: groups strokes deleted as part of a clear action
+    clearBatchId: v.optional(v.string()),
   }).index("by_session_deleted", ["sessionId", "deletedAt"])
     .index("by_session_layer_deleted", ["sessionId", "layerId", "deletedAt"])
     .index("by_session_stroke", ["sessionId", "strokeOrder"]),
@@ -213,7 +222,8 @@ const schema = defineSchema({
     rotation: v.optional(v.number()),
     createdBy: v.optional(v.id("users")),
     createdAt: v.number(),
-  }).index("by_session", ["sessionId", "layerOrder"]),
+  }).index("by_session", ["sessionId", "layerOrder"]) 
+    .index("by_user", ["createdBy"]),
 
   // Token transactions
   tokenTransactions: defineTable({

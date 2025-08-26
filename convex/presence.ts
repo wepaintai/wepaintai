@@ -28,6 +28,18 @@ export const updatePresence = mutation({
       .first();
 
     if (existingPresence) {
+      // If an identical update arrived within a short window, skip writing to reduce conflicts
+      const recentlyUpdated = now - (existingPresence.lastSeen || 0) < 200;
+      const noChange =
+        existingPresence.cursorX === args.cursorX &&
+        existingPresence.cursorY === args.cursorY &&
+        existingPresence.isDrawing === args.isDrawing &&
+        existingPresence.currentTool === args.currentTool &&
+        existingPresence.userColor === args.userColor &&
+        existingPresence.userName === args.userName;
+      if (recentlyUpdated && noChange) {
+        return null;
+      }
       // Replace the entire document to avoid conflicts
       await ctx.db.replace(existingPresence._id, {
         sessionId: args.sessionId,
@@ -65,6 +77,7 @@ export const updatePresence = mutation({
 export const getSessionPresence = query({
   args: {
     sessionId: v.id("paintingSessions"),
+    guestKey: v.optional(v.string()),
   },
   returns: v.array(v.object({
     _id: v.id("userPresence"),
@@ -80,6 +93,22 @@ export const getSessionPresence = query({
     lastSeen: v.number(),
   })),
   handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) return [];
+    if (!session.isPublic) {
+      const identity = await ctx.auth.getUserIdentity();
+      if (identity) {
+        const user = await ctx.db
+          .query("users")
+          .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+          .first();
+        if (!user || session.createdBy !== user._id) {
+          if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
+        }
+      } else {
+        if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
+      }
+    }
     const fiveMinutesAgo = Date.now() - 5 * 60 * 1000; // 5 minutes
     
     return await ctx.db

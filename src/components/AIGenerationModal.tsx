@@ -3,6 +3,7 @@ import { X, Sparkles, Loader2, Palette, Camera, Smile, Grid3X3, Coins, History, 
 import { useAction, useQuery, useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import type { Id } from '../../convex/_generated/dataModel'
+import { getGuestKey } from '../utils/guestKey'
 
 interface AIGenerationModalProps {
   isOpen: boolean
@@ -28,10 +29,12 @@ export function AIGenerationModal({
   const [isGenerating, setIsGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [withFlames, setWithFlames] = useState(false)
+  const [provider, setProvider] = useState<'replicate' | 'gemini'>('gemini')
   
   const generateImage = useAction(api.aiGeneration.generateImage)
+  const generateImageGemini = useAction(api.geminiGeneration.generateImage)
   const tokenBalance = useQuery(api.tokens.getTokenBalance)
-  const previousPrompts = useQuery(api.paintingSessions.getAIPrompts, { sessionId })
+  const previousPrompts = useQuery(api.paintingSessions.getAIPrompts, { sessionId, guestKey: getGuestKey(sessionId) || undefined })
   const userPrompts = useQuery(api.userPrompts.getUserPrompts, { limit: 20 })
   const addAIPrompt = useMutation(api.paintingSessions.addAIPrompt)
   const addUserPrompt = useMutation(api.userPrompts.addUserPrompt)
@@ -54,14 +57,22 @@ export function AIGenerationModal({
         imageDataLength: canvasDataUrl.length
       })
       
-      const result = await generateImage({
-        sessionId,
-        prompt: finalPrompt,
-        imageData: canvasDataUrl,
-        weight: weight,
-        canvasWidth: canvasWidth,
-        canvasHeight: canvasHeight,
-      })
+      const result = provider === 'replicate'
+        ? await generateImage({
+            sessionId,
+            prompt: finalPrompt,
+            imageData: canvasDataUrl,
+            weight: weight,
+            canvasWidth: canvasWidth,
+            canvasHeight: canvasHeight,
+          })
+        : await generateImageGemini({
+            sessionId,
+            prompt: finalPrompt,
+            imageData: canvasDataUrl,
+            canvasWidth: canvasWidth,
+            canvasHeight: canvasHeight,
+          })
 
       console.log('AI Generation result:', result)
       console.log('Result type:', typeof result)
@@ -114,6 +125,38 @@ export function AIGenerationModal({
 
         {/* Scrollable content */}
         <div className="flex-1 overflow-y-auto px-6 pb-4">
+          {/* Provider selector */}
+          <div className="mb-3">
+            <label className="block text-sm font-medium text-white mb-1">
+              Provider:
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => setProvider('replicate')}
+                disabled={isGenerating}
+                className={`px-3 py-2 rounded-md border transition-colors text-sm ${
+                  provider === 'replicate'
+                    ? 'bg-white/20 border-white/40 text-white'
+                    : 'bg-white/10 border-white/20 text-white/70 hover:bg-white/20'
+                }`}
+                title="Flux Kontext Pro via Replicate"
+              >
+                Flux Kontext Pro
+              </button>
+              <button
+                onClick={() => setProvider('gemini')}
+                disabled={isGenerating}
+                className={`px-3 py-2 rounded-md border transition-colors text-sm ${
+                  provider === 'gemini'
+                    ? 'bg-white/20 border-white/40 text-white'
+                    : 'bg-white/10 border-white/20 text-white/70 hover:bg-white/20'
+                }`}
+                title="Gemini 2.5 Flash Image (preview)"
+              >
+                Gemini 2.5
+              </button>
+            </div>
+          </div>
           {/* Preview */}
           <div className="mb-3 mt-3">
             <p className="text-sm text-white/70 mb-1">Current canvas:</p>

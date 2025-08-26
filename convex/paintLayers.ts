@@ -3,8 +3,24 @@ import { v } from "convex/values";
 
 // Query to get all paint layers for a session
 export const getPaintLayers = query({
-  args: { sessionId: v.id("paintingSessions") },
+  args: { sessionId: v.id("paintingSessions"), guestKey: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) return [];
+    if (!session.isPublic) {
+      const identity = await ctx.auth.getUserIdentity();
+      if (identity) {
+        const user = await ctx.db
+          .query("users")
+          .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+          .first();
+        if (!user || session.createdBy !== user._id) {
+          if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
+        }
+      } else {
+        if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
+      }
+    }
     const layers = await ctx.db
       .query("paintLayers")
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
