@@ -169,7 +169,7 @@ function AIGenerationModalWrapper({
 }
 
 export function PaintingView() {
-  const { isSignedIn } = useUser()
+  const { isSignedIn, isLoaded } = useUser()
   const authDisabled = import.meta.env.VITE_AUTH_DISABLED === 'true'
   const effectiveIsSignedIn = authDisabled || isSignedIn
   const canvasRef = useRef<CanvasRef | null>(null)
@@ -364,6 +364,7 @@ export function PaintingView() {
   }, [paintLayers, activePaintLayerId])
 
   // Create a new session or join existing one on mount
+  // Wait until Clerk auth state is loaded (unless auth is disabled)
   useEffect(() => {
     const initSession = async () => {
       try {
@@ -407,11 +408,12 @@ export function PaintingView() {
       }
     }
     
-    // Only run if we don't have a session yet
-    if (sessionId === null) {
+    // Only run if we don't have a session yet and auth is ready
+    const authReady = authDisabled || isLoaded
+    if (sessionId === null && authReady) {
       initSession()
     }
-  }, [createNewSession, sessionId, effectiveIsSignedIn])
+  }, [createNewSession, sessionId, effectiveIsSignedIn, isLoaded, authDisabled])
 
   // Keep URL masked for guest-owned sessions; show for others and signed-in users
   useEffect(() => {

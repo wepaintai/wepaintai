@@ -211,6 +211,11 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
       const guestKey = generateGuestKey();
       setGuestKeyState(guestKey);
       payload.guestKey = guestKey;
+      // When frontend auth is disabled for local dev, make sessions public
+      // so mutations don't require guestKey authorization.
+      if (import.meta.env.VITE_AUTH_DISABLED === 'true') {
+        payload.isPublic = true;
+      }
       const newId = await createSession(payload);
       if (newId) setGuestKey(newId, guestKey);
       return newId;
