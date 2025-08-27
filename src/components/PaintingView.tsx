@@ -1,4 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react'
+import { useUser } from '@clerk/tanstack-start'
 import { KonvaCanvas, CanvasRef } from './KonvaCanvas'
 import { ToolPanel, Layer } from './ToolPanel'
 import { type BrushSettings } from './BrushSettingsModal'
@@ -168,6 +169,9 @@ function AIGenerationModalWrapper({
 }
 
 export function PaintingView() {
+  const { isSignedIn } = useUser()
+  const authDisabled = import.meta.env.VITE_AUTH_DISABLED === 'true'
+  const effectiveIsSignedIn = authDisabled || isSignedIn
   const canvasRef = useRef<CanvasRef | null>(null)
   const [color, setColor] = useState('#000000')
   const [size, setSize] = useState(20) // perfect-freehand: size
@@ -231,6 +235,8 @@ export function PaintingView() {
   
   // Optimistic UI state for undo operations
   const [pendingUndoStrokeIds, setPendingUndoStrokeIds] = useState<Set<string>>(new Set())
+  // Track whether we have locally drawn since load (helps enable Undo immediately on fresh sessions)
+  const [hasLocalStrokes, setHasLocalStrokes] = useState(false)
   
   // Removed localLastStrokeInfo - now using lastStrokeInfo from usePaintingSession
 
@@ -368,16 +374,20 @@ export function PaintingView() {
         if (existingSessionId) {
           // Use session from URL
           setSessionId(existingSessionId)
-          // Record as current for guests; URL masking handled by effect below
-          setCurrentGuestSession(existingSessionId)
+          // Record as current only for guests; URL masking handled by effect below
+          if (!effectiveIsSignedIn) {
+            setCurrentGuestSession(existingSessionId)
+          }
           return
         }
 
-        // No URL param: try local current guest session
-        const stored = getCurrentGuestSession() as Id<"paintingSessions"> | null
-        if (stored) {
-          setSessionId(stored)
-          return
+        // No URL param: guests may resume their last session; signed-in (or auth-disabled) users should start fresh
+        if (!effectiveIsSignedIn) {
+          const stored = getCurrentGuestSession() as Id<"paintingSessions"> | null
+          if (stored) {
+            setSessionId(stored)
+            return
+          }
         }
 
         // Create new session if needed
@@ -385,7 +395,10 @@ export function PaintingView() {
           const newSessionId = await createNewSession('Collaborative Painting', 800, 600)
           if (newSessionId) {
             setSessionId(newSessionId)
-            setCurrentGuestSession(newSessionId)
+            // Only persist guest session locally for anonymous users
+            if (!effectiveIsSignedIn) {
+              setCurrentGuestSession(newSessionId)
+            }
           }
         }
       } catch (error) {
@@ -398,7 +411,7 @@ export function PaintingView() {
     if (sessionId === null) {
       initSession()
     }
-  }, [createNewSession, sessionId])
+  }, [createNewSession, sessionId, effectiveIsSignedIn])
 
   // Keep URL masked for guest-owned sessions; show for others and signed-in users
   useEffect(() => {
@@ -431,6 +444,14 @@ export function PaintingView() {
     } catch {}
   }, [sessionId, currentUser.id])
 
+  // Reset transient undo state when switching sessions
+  useEffect(() => {
+    setHasLocalStrokes(false)
+    setPendingUndoStrokeIds(new Set())
+    setHistory([])
+    setHistoryIndex(-1)
+  }, [sessionId])
+
   const handleStrokeEnd = () => {
     // Save canvas state for undo/redo
     const imageData = canvasRef.current?.getImageData()
@@ -440,6 +461,8 @@ export function PaintingView() {
       setHistory(newHistory)
       setHistoryIndex(newHistory.length - 1)
     }
+    // Mark that we have at least one local stroke in this session
+    setHasLocalStrokes(true)
     
     // Generate thumbnail after stroke ends
     setTimeout(() => {
@@ -451,7 +474,7 @@ export function PaintingView() {
   const handleUndo = async () => {
     // Skip the undoRedoAvailability check if we know we have strokes
     // This avoids waiting for the query on first undo
-    const canUndoLocally = lastStrokeInfo !== null || (rawStrokes && rawStrokes.length > 0)
+    const canUndoLocally = hasLocalStrokes || lastStrokeInfo !== null || (rawStrokes && rawStrokes.length > 0)
     
     // Check if we can undo before attempting
     if (!canUndoLocally && (!undoRedoAvailability?.canUndo || isMutating)) return
@@ -478,6 +501,10 @@ export function PaintingView() {
     try {
       await undoLastStroke()
       // Success - the stroke will be removed from rawStrokes automatically
+      // If we were relying solely on local flag before server queries caught up, clear it now
+      if (hasLocalStrokes && (!rawStrokes || rawStrokes.length <= 1)) {
+        setHasLocalStrokes(false)
+      }
     } catch (error) {
       console.error('Failed to undo stroke:', error)
       // On error, remove from pending set to show the stroke again
@@ -527,6 +554,7 @@ export function PaintingView() {
     canvasRef.current?.clear()
     setHistory([])
     setHistoryIndex(-1)
+    setHasLocalStrokes(false)
     
     // Clear the session in the backend
     try {
@@ -1065,7 +1093,7 @@ export function PaintingView() {
         onColorModeChange={setColorMode}
         brushSettings={brushSettings}
         onBrushSettingsChange={setBrushSettings}
-        canUndo={(lastStrokeInfo !== null || (undoRedoAvailability?.canUndo ?? false)) && !isMutating}
+        canUndo={((hasLocalStrokes || lastStrokeInfo !== null || (undoRedoAvailability?.canUndo ?? false))) && !isMutating}
         canRedo={(undoRedoAvailability?.canRedo ?? false) && !isMutating}
       />
       {isUnauthorized && (
