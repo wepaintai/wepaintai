@@ -476,8 +476,27 @@ const LayerItem = React.memo(({
       >
         <GripVertical className="w-3 h-3 text-white/40 cursor-move" />
         <button
-          onClick={(e) => {
+          type="button"
+          onPointerDown={(e) => {
+            e.preventDefault()
             e.stopPropagation()
+            console.log('[LayerItem] onPointerDown visibility toggle', {
+              layerId: layer.id,
+              layerName: layer.name,
+              currentVisible: layer.visible,
+              nextVisible: !layer.visible,
+            })
+            onVisibilityChange(!layer.visible)
+          }}
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            console.log('[LayerItem] onClick visibility toggle', {
+              layerId: layer.id,
+              layerName: layer.name,
+              currentVisible: layer.visible,
+              nextVisible: !layer.visible,
+            })
             onVisibilityChange(!layer.visible)
           }}
           className="p-0.5 hover:bg-white/20 rounded transition-colors"

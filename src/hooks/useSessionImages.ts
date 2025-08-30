@@ -83,7 +83,13 @@ export function useSessionImages(sessionId: Id<"paintingSessions"> | null) {
       opacity?: number;
     }
   ) => {
+    try {
+      console.log('[useSessionImages] updateImageTransform called', { imageId, transform })
+    } catch {}
     await updateTransform({ imageId, ...transform });
+    try {
+      console.log('[useSessionImages] updateImageTransform completed', { imageId, transform })
+    } catch {}
   }, [updateTransform]);
 
   // Change layer order
