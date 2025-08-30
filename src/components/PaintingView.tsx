@@ -839,33 +839,42 @@ export function PaintingView() {
 
   // Handle layer operations
   const handleLayerVisibilityChange = useCallback(async (layerId: string, visible: boolean) => {
-    // Check if it's a paint layer
-    const paintLayer = paintLayers?.find(layer => layer._id === layerId)
-    if (paintLayer) {
-      await updatePaintLayer({ layerId: layerId as any, visible })
-      // Force canvas redraw
-      canvasRef.current?.forceRedraw?.()
-      return
+    console.log('[PaintingView] handleLayerVisibilityChange called', { layerId, visible })
+    try {
+      // Check if it's a paint layer
+      const paintLayer = paintLayers?.find(layer => layer._id === layerId)
+      if (paintLayer) {
+        console.log('[PaintingView] Toggling paint layer visibility', { layerId, name: paintLayer.name, to: visible })
+        await updatePaintLayer({ layerId: layerId as any, visible })
+        console.log('[PaintingView] Paint layer visibility updated OK', { layerId, to: visible })
+        // Force canvas redraw
+        canvasRef.current?.forceRedraw?.()
+        return
+      }
+
+      // Check if it's an uploaded image
+      const uploadedImage = images.find(img => img._id === layerId)
+      if (uploadedImage) {
+        console.log('[PaintingView] Toggling uploaded image visibility', { layerId, filename: uploadedImage.filename, to: visible })
+        await updateImageTransform(layerId as Id<'uploadedImages'>, { opacity: visible ? 1 : 0 })
+        console.log('[PaintingView] Uploaded image opacity updated OK', { layerId, to: visible ? 1 : 0 })
+        return
+      }
+
+      // Check if it's an AI image
+      const aiImage = aiImages?.find(img => img._id === layerId)
+      if (aiImage) {
+        console.log('[PaintingView] Toggling AI image visibility', { layerId, to: visible })
+        await updateAIImageTransformMutation({ imageId: layerId as Id<'aiGeneratedImages'>, opacity: visible ? 1 : 0 })
+        console.log('[PaintingView] AI image opacity updated OK', { layerId, to: visible ? 1 : 0 })
+        return
+      }
+
+      console.warn('[PaintingView] Layer not found for visibility toggle', { layerId, visible })
+    } catch (err) {
+      console.error('[PaintingView] Error toggling layer visibility', { layerId, visible, err })
     }
-    
-    // Check if it's an uploaded image
-    const uploadedImage = images.find(img => img._id === layerId)
-    if (uploadedImage) {
-      await updateImageTransform(layerId as Id<"uploadedImages">, {
-        opacity: visible ? 1 : 0
-      })
-      return
-    }
-    
-    // Check if it's an AI image
-    const aiImage = aiImages?.find(img => img._id === layerId)
-    if (aiImage) {
-      await updateAIImageTransformMutation({
-        imageId: layerId as Id<"aiGeneratedImages">,
-        opacity: visible ? 1 : 0
-      })
-    }
-  }, [images, aiImages, updateImageTransform, updateAIImageTransformMutation])
+  }, [images, aiImages, paintLayers, updateImageTransform, updateAIImageTransformMutation, updatePaintLayer])
 
   const handleLayerDelete = useCallback(async (layerId: string) => {
     // console.log('[PaintingView] handleLayerDelete called with layerId:', layerId)

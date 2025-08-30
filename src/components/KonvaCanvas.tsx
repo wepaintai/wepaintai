@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback, forwardRef, useImperativeHandle, memo } from 'react'
-import { Stage, Layer, Path, Image as KonvaImage, Circle, Text, Group, Arc, Transformer } from 'react-konva'
+import { Stage, Layer, Path, Image as KonvaImage, Circle, Text, Group, Arc, Transformer, Line } from 'react-konva'
 import Konva from 'konva'
 import { getStroke } from 'perfect-freehand'
 import { usePaintingSession, type PaintPoint, type Stroke, type UserPresence, type LiveStroke } from '../hooks/usePaintingSession'
@@ -554,6 +554,15 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       return
     }
     
+    // Block painting/erasing if active layer is hidden
+    if (selectedTool === 'brush' || selectedTool === 'eraser') {
+      const activeLayer = layers.find(l => l.id === activeLayerId)
+      if (activeLayer && activeLayer.visible === false) {
+        // Do not start a stroke when target layer is hidden
+        return
+      }
+    }
+
     // Brush now allowed on all layer types; target layer is resolved on stroke end
     
     // Check if erasing on a valid layer
@@ -595,6 +604,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   const handlePointerMove = useCallback((e: Konva.KonvaEventObject<PointerEvent>) => {
     const stagePoint = getPointerPosition(e)
     const activeLayer = layers.find(l => l.id === activeLayerId)
+    const activeLayerHidden = !!activeLayer && activeLayer.visible === false
     const point = ((selectedTool === 'brush' || selectedTool === 'eraser') && activeLayer?.type === 'paint')
       ? toActivePaintLayerLocal(stagePoint)
       : stagePoint
@@ -664,6 +674,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
 
     // Handle drawing (only if brush or eraser tool is selected)
     if (selectedTool !== 'brush' && selectedTool !== 'eraser') return
+    // Block drawing if active layer is hidden
+    if (activeLayerHidden) return
     
     const newPoints = [...currentStroke, point]
     setCurrentStroke(newPoints)
@@ -693,6 +705,13 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
 
     const stagePoint = getPointerPosition(e)
     const activeLayer = layers.find(l => l.id === activeLayerId)
+    // If active layer is hidden, block stroke commit
+    if (activeLayer && activeLayer.visible === false) {
+      setCurrentStroke([])
+      setCurrentStrokeId(null)
+      onStrokeEnd?.()
+      return
+    }
     const drawPoint = ((selectedTool === 'brush' || selectedTool === 'eraser') && activeLayer?.type === 'paint')
       ? toActivePaintLayerLocal(stagePoint)
       : stagePoint
@@ -2082,8 +2101,24 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
             })}
             
             {/* Cursor size indicator */}
-            {cursorPosition && isMouseOverCanvas && (selectedTool === 'brush' || selectedTool === 'eraser') && (
-              colorMode === 'rainbow' && selectedTool === 'brush' ? (
+            {(() => {
+              const activeLayer = layers.find(l => l.id === activeLayerId)
+              const isDisabled = !!activeLayer && activeLayer.visible === false && (selectedTool === 'brush' || selectedTool === 'eraser')
+              if (!cursorPosition || !isMouseOverCanvas || (selectedTool !== 'brush' && selectedTool !== 'eraser')) return null
+              if (isDisabled) {
+                // Show a red X to indicate disabled tool on hidden layer
+                const len = Math.max(12, size) // ensure visible even for tiny brush sizes
+                const half = len / 2
+                return (
+                  <Group x={cursorPosition.x} y={cursorPosition.y} listening={false} opacity={0.9}>
+                    {/* faint circle backdrop for visibility */}
+                    <Circle radius={len * 0.6} stroke="#ff4d4d" strokeWidth={1} fill="rgba(255,0,0,0.08)" />
+                    <Line points={[-half, -half, half, half]} stroke="#ff0000" strokeWidth={2} lineCap="round" />
+                    <Line points={[-half, half, half, -half]} stroke="#ff0000" strokeWidth={2} lineCap="round" />
+                  </Group>
+                )
+              }
+              return colorMode === 'rainbow' && selectedTool === 'brush' ? (
                 // Rainbow cursor for rainbow mode
                 <Group x={cursorPosition.x} y={cursorPosition.y} listening={false}>
                   {/* Create rainbow ring using arc segments */}
@@ -2125,7 +2160,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                   opacity={0.8}
                 />
               )
-            )}
+            })()}
           </Layer>
         {/* Shared transformer for transform tool (render on top for hit-testing) */}
         {selectedTool === 'transform' && (
