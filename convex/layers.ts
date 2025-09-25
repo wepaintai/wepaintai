@@ -24,6 +24,11 @@ export const reorderLayer = mutation({
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
       .collect();
     
+    const textBlocks = await ctx.db
+      .query("textBlocks")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+    
     // Get all paint layers
     const paintLayers = await ctx.db
       .query("paintLayers")
@@ -36,9 +41,13 @@ export const reorderLayer = mutation({
     // Create a unified layer list
     type UnifiedLayer = {
       id: string;
-      type: 'paint' | 'uploaded' | 'ai';
+      type: 'paint' | 'uploaded' | 'ai' | 'text';
       order: number;
-      dbId?: Id<"uploadedImages"> | Id<"aiGeneratedImages"> | Id<"paintLayers">;
+      dbId?:
+        | Id<"uploadedImages">
+        | Id<"aiGeneratedImages">
+        | Id<"paintLayers">
+        | Id<"textBlocks">;
     };
     
     const allLayers: UnifiedLayer[] = [];
@@ -70,6 +79,12 @@ export const reorderLayer = mutation({
         type: 'ai' as const, 
         order: img.layerOrder,
         dbId: img._id 
+      })),
+      ...textBlocks.map(block => ({
+        id: block._id,
+        type: 'text' as const,
+        order: block.layerOrder,
+        dbId: block._id,
       }))
     );
     
@@ -131,6 +146,8 @@ export const reorderLayer = mutation({
         } else if (layer.type === 'uploaded' && layer.dbId) {
           await ctx.db.patch(layer.dbId, { layerOrder: newOrder });
         } else if (layer.type === 'ai' && layer.dbId) {
+          await ctx.db.patch(layer.dbId, { layerOrder: newOrder });
+        } else if (layer.type === 'text' && layer.dbId) {
           await ctx.db.patch(layer.dbId, { layerOrder: newOrder });
         }
       })

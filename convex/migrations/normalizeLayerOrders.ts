@@ -22,6 +22,11 @@ export const normalizeAllSessions = internalMutation({
           .query("aiGeneratedImages")
           .withIndex("by_session", (q) => q.eq("sessionId", session._id))
           .collect();
+
+        const textBlocks = await ctx.db
+          .query("textBlocks")
+          .withIndex("by_session", (q) => q.eq("sessionId", session._id))
+          .collect();
         
         // Get or set paint layer order
         const paintLayerOrder = (session as any).paintLayerOrder ?? 1;
@@ -30,7 +35,8 @@ export const normalizeAllSessions = internalMutation({
         const allLayers = [
           { id: 'paint', type: 'paint' as const, layerOrder: paintLayerOrder },
           ...uploadedImages.map(img => ({ ...img, type: 'uploaded' as const })),
-          ...aiImages.map(img => ({ ...img, type: 'ai' as const }))
+          ...aiImages.map(img => ({ ...img, type: 'ai' as const })),
+          ...textBlocks.map(block => ({ ...block, type: 'text' as const }))
         ].sort((a, b) => a.layerOrder - b.layerOrder);
         
         // Reassign sequential orders starting from 0
@@ -48,8 +54,10 @@ export const normalizeAllSessions = internalMutation({
               } as any);
             } else if (layer.type === 'uploaded') {
               await ctx.db.patch(layer._id as Id<"uploadedImages">, { layerOrder: i });
-            } else {
+            } else if (layer.type === 'ai') {
               await ctx.db.patch(layer._id as Id<"aiGeneratedImages">, { layerOrder: i });
+            } else {
+              await ctx.db.patch(layer._id as Id<"textBlocks">, { layerOrder: i });
             }
           }
         }

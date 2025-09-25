@@ -26,7 +26,8 @@ import {
   Library,
   Sliders,
   Merge,
-  Scan
+  Scan,
+  Type
 } from 'lucide-react'
 import { AuthModal } from './AuthModal'
 import { LibraryModal } from './LibraryModal'
@@ -41,7 +42,7 @@ import { Id } from '../../convex/_generated/dataModel'
 // Types
 export interface Layer {
   id: string
-  type: 'stroke' | 'image' | 'ai-image' | 'paint'
+  type: 'stroke' | 'image' | 'ai-image' | 'paint' | 'text'
   name: string
   visible: boolean
   opacity: number
@@ -105,6 +106,7 @@ interface SliderProps {
 const tools: Tool[] = [
   { id: 'brush', icon: Paintbrush, label: 'Brush', ariaLabel: 'Select brush tool', keyboardShortcut: 'B' },
   { id: 'eraser', icon: Eraser, label: 'Eraser', ariaLabel: 'Eraser tool', keyboardShortcut: 'E' },
+  { id: 'text', icon: Type, label: 'Text', ariaLabel: 'Add text block', keyboardShortcut: 'T' },
   { id: 'transform', icon: Scan, label: 'Transform', ariaLabel: 'Move/Rotate/Scale layer', keyboardShortcut: 'H' },
   { id: 'upload', icon: ImagePlus, label: 'Upload', ariaLabel: 'Upload image', keyboardShortcut: 'U' },
   // { id: 'ai', icon: Sparkles, label: 'AI', ariaLabel: 'AI Generation', keyboardShortcut: 'G' },

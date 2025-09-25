@@ -30,6 +30,7 @@ import type * as polarWebhook from "../polarWebhook.js";
 import type * as presence from "../presence.js";
 import type * as strokes from "../strokes.js";
 import type * as test from "../test.js";
+import type * as textBlocks from "../textBlocks.js";
 import type * as tokens from "../tokens.js";
 import type * as userPrompts from "../userPrompts.js";
 import type * as users from "../users.js";
@@ -73,6 +74,7 @@ declare const fullApi: ApiFromModules<{
   presence: typeof presence;
   strokes: typeof strokes;
   test: typeof test;
+  textBlocks: typeof textBlocks;
   tokens: typeof tokens;
   userPrompts: typeof userPrompts;
   users: typeof users;

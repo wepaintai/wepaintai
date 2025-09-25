@@ -28,6 +28,11 @@ export const uploadImage = mutation({
       .query("aiGeneratedImages")
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
       .collect();
+
+    const textBlocks = await ctx.db
+      .query("textBlocks")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
     
     // Get painting session to check paint layer order
     const uploadSession = await ctx.db.get(args.sessionId);
@@ -49,6 +54,10 @@ export const uploadImage = mutation({
     
     aiImages.forEach(img => {
       maxLayerOrder = Math.max(maxLayerOrder, img.layerOrder);
+    });
+
+    textBlocks.forEach(block => {
+      maxLayerOrder = Math.max(maxLayerOrder, block.layerOrder);
     });
     
     // Set new image to top layer
@@ -312,57 +321,81 @@ export const updateImageLayerOrder = mutation({
     const image = await ctx.db.get(args.imageId);
     if (!image) throw new Error("Image not found");
 
-    // Get all images (uploaded and AI) for the session to maintain unique ordering
-    const uploadedImages = await ctx.db
-      .query("uploadedImages")
-      .withIndex("by_session", (q) => q.eq("sessionId", image.sessionId))
-      .collect();
-    
-    const aiImages = await ctx.db
-      .query("aiGeneratedImages")
-      .withIndex("by_session", (q) => q.eq("sessionId", image.sessionId))
-      .collect();
+    const session = await ctx.db.get(image.sessionId);
+    if (!session) throw new Error("Session not found");
 
-    // Combine all images and sort by current order
-    const allImages = [
-      ...uploadedImages.map(img => ({ ...img, type: 'uploaded' as const })),
-      ...aiImages.map(img => ({ ...img, type: 'ai' as const }))
-    ].sort((a, b) => a.layerOrder - b.layerOrder);
+    const [uploadedImages, aiImages, textBlocks] = await Promise.all([
+      ctx.db
+        .query("uploadedImages")
+        .withIndex("by_session", (q) => q.eq("sessionId", image.sessionId))
+        .collect(),
+      ctx.db
+        .query("aiGeneratedImages")
+        .withIndex("by_session", (q) => q.eq("sessionId", image.sessionId))
+        .collect(),
+      ctx.db
+        .query("textBlocks")
+        .withIndex("by_session", (q) => q.eq("sessionId", image.sessionId))
+        .collect(),
+    ]);
 
-    // Find current position
-    const currentIndex = allImages.findIndex(img => 
-      img.type === 'uploaded' && img._id === args.imageId
+    type LayerEntry =
+      | { type: 'paint'; id: Id<'paintingSessions'>; order: number }
+      | { type: 'uploaded'; id: Id<'uploadedImages'>; order: number }
+      | { type: 'ai'; id: Id<'aiGeneratedImages'>; order: number }
+      | { type: 'text'; id: Id<'textBlocks'>; order: number };
+
+    const allLayers: LayerEntry[] = [
+      { type: 'paint', id: session._id, order: session.paintLayerOrder ?? 0 },
+      ...uploadedImages.map((img) => ({ type: 'uploaded' as const, id: img._id, order: img.layerOrder })),
+      ...aiImages.map((img) => ({ type: 'ai' as const, id: img._id, order: img.layerOrder })),
+      ...textBlocks.map((block) => ({ type: 'text' as const, id: block._id, order: block.layerOrder })),
+    ].sort((a, b) => a.order - b.order);
+
+    const currentIndex = allLayers.findIndex(
+      (layer) => layer.type === 'uploaded' && layer.id === args.imageId
     );
-    
+
     if (currentIndex === -1) throw new Error("Image not found in layer order");
-    
-    // Calculate target index based on newLayerOrder
-    let targetIndex = 0;
-    for (let i = 0; i < allImages.length; i++) {
-      if (allImages[i].layerOrder >= args.newLayerOrder && i !== currentIndex) {
-        targetIndex = i;
-        break;
-      }
-      targetIndex = i + 1;
+
+    const movingLayer = allLayers[currentIndex];
+    const currentOrder = movingLayer.order;
+    const maxOrder = allLayers.length - 1;
+    const targetOrder = Math.max(0, Math.min(args.newLayerOrder, maxOrder));
+
+    if (currentOrder === targetOrder) return;
+
+    const updates: Array<{ layer: LayerEntry; newOrder: number }> = [];
+
+    if (currentOrder < targetOrder) {
+      allLayers.forEach((layer) => {
+        if (layer === movingLayer) {
+          updates.push({ layer, newOrder: targetOrder });
+        } else if (layer.order > currentOrder && layer.order <= targetOrder) {
+          updates.push({ layer, newOrder: layer.order - 1 });
+        }
+      });
+    } else {
+      allLayers.forEach((layer) => {
+        if (layer === movingLayer) {
+          updates.push({ layer, newOrder: targetOrder });
+        } else if (layer.order >= targetOrder && layer.order < currentOrder) {
+          updates.push({ layer, newOrder: layer.order + 1 });
+        }
+      });
     }
-    
-    // If moving down, adjust target index
-    if (targetIndex > currentIndex) {
-      targetIndex--;
-    }
-    
-    // Reorder array
-    const reorderedImages = [...allImages];
-    const [movedImage] = reorderedImages.splice(currentIndex, 1);
-    reorderedImages.splice(targetIndex, 0, movedImage);
-    
-    // Update all images with new sequential order values
+
     await Promise.all(
-      reorderedImages.map((img, index) => {
-        if (img.type === 'uploaded') {
-          return ctx.db.patch(img._id as Id<"uploadedImages">, { layerOrder: index });
-        } else {
-          return ctx.db.patch(img._id as Id<"aiGeneratedImages">, { layerOrder: index });
+      updates.map(async ({ layer, newOrder }) => {
+        if (layer.order === newOrder) return;
+        if (layer.type === 'paint') {
+          await ctx.db.patch(layer.id, { paintLayerOrder: newOrder } as any);
+        } else if (layer.type === 'uploaded') {
+          await ctx.db.patch(layer.id, { layerOrder: newOrder });
+        } else if (layer.type === 'ai') {
+          await ctx.db.patch(layer.id, { layerOrder: newOrder });
+        } else if (layer.type === 'text') {
+          await ctx.db.patch(layer.id, { layerOrder: newOrder });
         }
       })
     );
@@ -414,6 +447,11 @@ export const deleteImage = mutation({
       .query("aiGeneratedImages")
       .withIndex("by_session", (q) => q.eq("sessionId", image.sessionId))
       .collect();
+
+    const textBlocks = await ctx.db
+      .query("textBlocks")
+      .withIndex("by_session", (q) => q.eq("sessionId", image.sessionId))
+      .collect();
     
     // Get paint layer order
     const session = await ctx.db.get(image.sessionId);
@@ -423,7 +461,8 @@ export const deleteImage = mutation({
     const allLayers = [
       { id: 'paint', type: 'paint' as const, layerOrder: paintLayerOrder },
       ...remainingUploadedImages.map(img => ({ ...img, type: 'uploaded' as const })),
-      ...aiImages.map(img => ({ ...img, type: 'ai' as const }))
+      ...aiImages.map(img => ({ ...img, type: 'ai' as const })),
+      ...textBlocks.map(block => ({ ...block, type: 'text' as const }))
     ].sort((a, b) => a.layerOrder - b.layerOrder);
     
     // Reassign sequential orders
@@ -436,8 +475,10 @@ export const deleteImage = mutation({
             });
           } else if (layer.type === 'uploaded') {
             await ctx.db.patch(layer._id as Id<"uploadedImages">, { layerOrder: index });
-          } else {
+          } else if (layer.type === 'ai') {
             await ctx.db.patch(layer._id as Id<"aiGeneratedImages">, { layerOrder: index });
+          } else {
+            await ctx.db.patch(layer._id as Id<"textBlocks">, { layerOrder: index });
           }
         }
       })
@@ -489,57 +530,81 @@ export const updateAIImageLayerOrder = mutation({
     const image = await ctx.db.get(args.imageId);
     if (!image) throw new Error("AI image not found");
 
-    // Get all images (uploaded and AI) for the session to maintain unique ordering
-    const uploadedImages = await ctx.db
-      .query("uploadedImages")
-      .withIndex("by_session", (q) => q.eq("sessionId", image.sessionId))
-      .collect();
-    
-    const aiImages = await ctx.db
-      .query("aiGeneratedImages")
-      .withIndex("by_session", (q) => q.eq("sessionId", image.sessionId))
-      .collect();
+    const session = await ctx.db.get(image.sessionId);
+    if (!session) throw new Error("Session not found");
 
-    // Combine all images and sort by current order
-    const allImages = [
-      ...uploadedImages.map(img => ({ ...img, type: 'uploaded' as const })),
-      ...aiImages.map(img => ({ ...img, type: 'ai' as const }))
-    ].sort((a, b) => a.layerOrder - b.layerOrder);
+    const [uploadedImages, aiImages, textBlocks] = await Promise.all([
+      ctx.db
+        .query("uploadedImages")
+        .withIndex("by_session", (q) => q.eq("sessionId", image.sessionId))
+        .collect(),
+      ctx.db
+        .query("aiGeneratedImages")
+        .withIndex("by_session", (q) => q.eq("sessionId", image.sessionId))
+        .collect(),
+      ctx.db
+        .query("textBlocks")
+        .withIndex("by_session", (q) => q.eq("sessionId", image.sessionId))
+        .collect(),
+    ]);
 
-    // Find current position
-    const currentIndex = allImages.findIndex(img => 
-      img.type === 'ai' && img._id === args.imageId
+    type LayerEntry =
+      | { type: 'paint'; id: Id<'paintingSessions'>; order: number }
+      | { type: 'uploaded'; id: Id<'uploadedImages'>; order: number }
+      | { type: 'ai'; id: Id<'aiGeneratedImages'>; order: number }
+      | { type: 'text'; id: Id<'textBlocks'>; order: number };
+
+    const allLayers: LayerEntry[] = [
+      { type: 'paint', id: session._id, order: session.paintLayerOrder ?? 0 },
+      ...uploadedImages.map((img) => ({ type: 'uploaded' as const, id: img._id, order: img.layerOrder })),
+      ...aiImages.map((img) => ({ type: 'ai' as const, id: img._id, order: img.layerOrder })),
+      ...textBlocks.map((block) => ({ type: 'text' as const, id: block._id, order: block.layerOrder })),
+    ].sort((a, b) => a.order - b.order);
+
+    const currentIndex = allLayers.findIndex(
+      (layer) => layer.type === 'ai' && layer.id === args.imageId
     );
-    
+
     if (currentIndex === -1) throw new Error("AI image not found in layer order");
-    
-    // Calculate target index based on newLayerOrder
-    let targetIndex = 0;
-    for (let i = 0; i < allImages.length; i++) {
-      if (allImages[i].layerOrder >= args.newLayerOrder && i !== currentIndex) {
-        targetIndex = i;
-        break;
-      }
-      targetIndex = i + 1;
+
+    const movingLayer = allLayers[currentIndex];
+    const currentOrder = movingLayer.order;
+    const maxOrder = allLayers.length - 1;
+    const targetOrder = Math.max(0, Math.min(args.newLayerOrder, maxOrder));
+
+    if (currentOrder === targetOrder) return;
+
+    const updates: Array<{ layer: LayerEntry; newOrder: number }> = [];
+
+    if (currentOrder < targetOrder) {
+      allLayers.forEach((layer) => {
+        if (layer === movingLayer) {
+          updates.push({ layer, newOrder: targetOrder });
+        } else if (layer.order > currentOrder && layer.order <= targetOrder) {
+          updates.push({ layer, newOrder: layer.order - 1 });
+        }
+      });
+    } else {
+      allLayers.forEach((layer) => {
+        if (layer === movingLayer) {
+          updates.push({ layer, newOrder: targetOrder });
+        } else if (layer.order >= targetOrder && layer.order < currentOrder) {
+          updates.push({ layer, newOrder: layer.order + 1 });
+        }
+      });
     }
-    
-    // If moving down, adjust target index
-    if (targetIndex > currentIndex) {
-      targetIndex--;
-    }
-    
-    // Reorder array
-    const reorderedImages = [...allImages];
-    const [movedImage] = reorderedImages.splice(currentIndex, 1);
-    reorderedImages.splice(targetIndex, 0, movedImage);
-    
-    // Update all images with new sequential order values
+
     await Promise.all(
-      reorderedImages.map((img, index) => {
-        if (img.type === 'uploaded') {
-          return ctx.db.patch(img._id as Id<"uploadedImages">, { layerOrder: index });
+      updates.map(async ({ layer, newOrder }) => {
+        if (layer.order === newOrder) return;
+        if (layer.type === 'paint') {
+          await ctx.db.patch(layer.id, { paintLayerOrder: newOrder } as any);
+        } else if (layer.type === 'uploaded') {
+          await ctx.db.patch(layer.id, { layerOrder: newOrder });
+        } else if (layer.type === 'ai') {
+          await ctx.db.patch(layer.id, { layerOrder: newOrder });
         } else {
-          return ctx.db.patch(img._id as Id<"aiGeneratedImages">, { layerOrder: index });
+          await ctx.db.patch(layer.id, { layerOrder: newOrder });
         }
       })
     );
@@ -596,6 +661,11 @@ export const deleteAIImage = mutation({
       .query("aiGeneratedImages")
       .withIndex("by_session", (q) => q.eq("sessionId", image.sessionId))
       .collect();
+
+    const textBlocks = await ctx.db
+      .query("textBlocks")
+      .withIndex("by_session", (q) => q.eq("sessionId", image.sessionId))
+      .collect();
     
     // Get paint layer order
     const session = await ctx.db.get(image.sessionId);
@@ -605,7 +675,8 @@ export const deleteAIImage = mutation({
     const allLayers = [
       { id: 'paint', type: 'paint' as const, layerOrder: paintLayerOrder },
       ...uploadedImages.map(img => ({ ...img, type: 'uploaded' as const })),
-      ...remainingAIImages.map(img => ({ ...img, type: 'ai' as const }))
+      ...remainingAIImages.map(img => ({ ...img, type: 'ai' as const })),
+      ...textBlocks.map(block => ({ ...block, type: 'text' as const }))
     ].sort((a, b) => a.layerOrder - b.layerOrder);
     
     // Reassign sequential orders
@@ -618,8 +689,10 @@ export const deleteAIImage = mutation({
             });
           } else if (layer.type === 'uploaded') {
             await ctx.db.patch(layer._id as Id<"uploadedImages">, { layerOrder: index });
-          } else {
+          } else if (layer.type === 'ai') {
             await ctx.db.patch(layer._id as Id<"aiGeneratedImages">, { layerOrder: index });
+          } else {
+            await ctx.db.patch(layer._id as Id<"textBlocks">, { layerOrder: index });
           }
         }
       })

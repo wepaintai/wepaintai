@@ -17,6 +17,7 @@ import { TokenDisplay } from './TokenDisplay'
 import { usePaintingSession } from '../hooks/usePaintingSession'
 import { useP2PPainting } from '../hooks/useP2PPainting'
 import { useSessionImages } from '../hooks/useSessionImages'
+import { useTextBlocks } from '../hooks/useTextBlocks'
 import { shouldShowAdminFeatures } from '../utils/environment'
 import { isIOS } from '../utils/device'
 import { Id } from '../../convex/_generated/dataModel'
@@ -256,6 +257,8 @@ export function PaintingView() {
   
   // Get images to find AI-generated ones
   const { images, updateImageTransform, deleteImage, changeLayerOrder } = useSessionImages(sessionId)
+  const textBlockApi = useTextBlocks(sessionId)
+  const { textBlocks, updateTextBlock, deleteTextBlock } = textBlockApi
   const aiGeneratedImages = images.filter(img => (img as any).type === 'ai-generated')
   
   // Paint layer mutations
@@ -730,6 +733,10 @@ export function PaintingView() {
             event.preventDefault()
             setSelectedTool('transform')
             break
+          case 't':
+            event.preventDefault()
+            setSelectedTool('text')
+            break
           case 'u':
             event.preventDefault()
             setSelectedTool('upload')
@@ -743,6 +750,13 @@ export function PaintingView() {
           case 'i':
             event.preventDefault()
             setSelectedTool('inpaint')
+            break
+          case 'delete':
+          case 'backspace':
+            if (activeLayerId) {
+              event.preventDefault()
+              handleLayerDelete(activeLayerId)
+            }
             break
         }
       }
@@ -812,6 +826,25 @@ export function PaintingView() {
         })
       })
     }
+
+    // Add text blocks
+    if (textBlocks) {
+      textBlocks.forEach((block, index) => {
+        const preview = (block.content || '').trim()
+        const firstLine = preview.split('\n')[0] || ''
+        const truncated = firstLine.length > 24 ? `${firstLine.slice(0, 24)}…` : firstLine
+        const displayName = truncated || `Text ${index + 1}`
+
+        allLayers.push({
+          id: block._id,
+          type: 'text',
+          name: displayName,
+          visible: block.opacity > 0,
+          opacity: block.opacity,
+          order: block.layerOrder,
+        })
+      })
+    }
     
     // Debug: Log all layers with their orders
     // console.log('[Layers] All layers computed:', allLayers.map(l => ({
@@ -822,7 +855,7 @@ export function PaintingView() {
     // })))
     
     return allLayers
-  }, [strokes, images, aiImages, paintingLayerVisible, paintingLayerOrder, paintLayers])
+  }, [strokes, images, aiImages, paintingLayerVisible, paintingLayerOrder, paintLayers, textBlocks])
 
   // Update activeLayerId when layers change (especially important for new sessions)
   useEffect(() => {
@@ -870,11 +903,21 @@ export function PaintingView() {
         return
       }
 
+      // Check if it's a text block
+      const textBlock = textBlocks.find(block => block._id === layerId)
+      if (textBlock) {
+        console.log('[PaintingView] Toggling text block visibility', { layerId, to: visible })
+        const nextOpacity = visible ? (textBlock.opacity > 0 ? textBlock.opacity : 1) : 0
+        await updateTextBlock({ blockId: layerId as Id<'textBlocks'>, opacity: nextOpacity })
+        console.log('[PaintingView] Text block opacity updated', { layerId, to: nextOpacity })
+        return
+      }
+
       console.warn('[PaintingView] Layer not found for visibility toggle', { layerId, visible })
     } catch (err) {
       console.error('[PaintingView] Error toggling layer visibility', { layerId, visible, err })
     }
-  }, [images, aiImages, paintLayers, updateImageTransform, updateAIImageTransformMutation, updatePaintLayer])
+  }, [images, aiImages, textBlocks, paintLayers, updateImageTransform, updateAIImageTransformMutation, updatePaintLayer, updateTextBlock])
 
   const handleLayerDelete = useCallback(async (layerId: string) => {
     // console.log('[PaintingView] handleLayerDelete called with layerId:', layerId)
@@ -927,10 +970,21 @@ export function PaintingView() {
       } catch (error) {
         console.error('[PaintingView] Error deleting AI image:', error)
       }
-    } else {
-      console.warn('[PaintingView] Layer not found for deletion:', layerId)
+      return
     }
-  }, [images, aiImages, paintLayers, clearSession, deleteImage, deletePaintLayer, deleteAIImageMutation])
+
+    const textBlock = textBlocks.find(block => block._id === layerId)
+    if (textBlock) {
+      try {
+        await deleteTextBlock(textBlock._id)
+      } catch (error) {
+        console.error('[PaintingView] Error deleting text block:', error)
+      }
+      return
+    }
+
+    console.warn('[PaintingView] Layer not found for deletion:', layerId)
+  }, [images, aiImages, textBlocks, paintLayers, clearSession, deleteImage, deletePaintLayer, deleteAIImageMutation, deleteTextBlock])
 
   const handleLayerReorder = useCallback(async (layerId: string, newOrder: number) => {
     if (!sessionId) return
@@ -974,8 +1028,22 @@ export function PaintingView() {
         imageId: layerId as Id<"aiGeneratedImages">,
         opacity
       })
+      return
     }
-  }, [images, aiImages, updateImageTransform, updateAIImageTransformMutation])
+
+    const textBlock = textBlocks.find(block => block._id === layerId)
+    if (textBlock) {
+      await updateTextBlock({ blockId: textBlock._id, opacity })
+    }
+  }, [images, aiImages, textBlocks, updateImageTransform, updateAIImageTransformMutation, updateTextBlock])
+
+  const handleActiveLayerChange = useCallback((layerId: string) => {
+    setActiveLayerId(layerId)
+    const selectedLayer = layers.find(l => l.id === layerId)
+    if (selectedLayer && selectedLayer.type === 'paint') {
+      setActivePaintLayerId(layerId)
+    }
+  }, [layers])
 
   // Handle creating new paint layer
   const handleCreatePaintLayer = useCallback(async () => {
@@ -1020,10 +1088,15 @@ export function PaintingView() {
           opacity={opacity}
           colorMode={colorMode}
           layers={layers}
+          textBlocks={textBlocks}
           selectedTool={selectedTool}
           activeLayerId={activeLayerId}
           activePaintLayerId={activePaintLayerId}
           onImageUploaded={handleImageUploaded}
+          onSelectLayer={handleActiveLayerChange}
+          onCreateTextBlock={textBlockApi.createTextBlock}
+          onUpdateTextBlock={updateTextBlock}
+          onDeleteTextBlock={deleteTextBlock}
           // perfect-freehand options
           smoothing={brushSettings.smoothing}
           thinning={brushSettings.thinning}
@@ -1087,14 +1160,7 @@ export function PaintingView() {
         onToolChange={handleToolChange}
         layers={layers}
         activeLayerId={activeLayerId}
-        onActiveLayerChange={(layerId) => {
-          setActiveLayerId(layerId)
-          // If a paint layer is selected, update the active paint layer
-          const layer = layers.find(l => l.id === layerId)
-          if (layer && layer.type === 'paint') {
-            setActivePaintLayerId(layerId)
-          }
-        }}
+        onActiveLayerChange={handleActiveLayerChange}
         onLayerVisibilityChange={handleLayerVisibilityChange}
         onLayerReorder={handleLayerReorder}
         onLayerDelete={handleLayerDelete}

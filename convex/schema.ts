@@ -181,6 +181,40 @@ const schema = defineSchema({
     createdAt: v.number(),
   }).index("by_session", ["sessionId", "layerOrder"]),
 
+  // Text blocks placed on the canvas
+  textBlocks: defineTable({
+    sessionId: v.id("paintingSessions"),
+    content: v.string(),
+    fontFamily: v.string(),
+    fontSize: v.number(),
+    fontStyle: v.optional(v.union(v.literal("normal"), v.literal("italic"))),
+    fontWeight: v.optional(v.string()),
+    textAlign: v.optional(
+      v.union(
+        v.literal("left"),
+        v.literal("center"),
+        v.literal("right"),
+        v.literal("justify")
+      )
+    ),
+    lineHeight: v.optional(v.number()),
+    fill: v.string(),
+    opacity: v.number(),
+    x: v.number(),
+    y: v.number(),
+    scaleX: v.number(),
+    scaleY: v.number(),
+    rotation: v.number(),
+    width: v.optional(v.number()),
+    height: v.optional(v.number()),
+    layerOrder: v.number(),
+    isEditing: v.optional(v.boolean()),
+    createdBy: v.optional(v.id("users")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_session", ["sessionId", "layerOrder"])
+    .index("by_session_updated", ["sessionId", "updatedAt"]),
+
   // Deleted strokes for undo/redo functionality
   deletedStrokes: defineTable({
     sessionId: v.id("paintingSessions"),

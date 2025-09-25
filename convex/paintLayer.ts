@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { Id } from "./_generated/dataModel";
 
 // Get paint layer settings for a session
 export const getPaintLayerSettings = query({
@@ -40,66 +41,77 @@ export const updatePaintLayerOrder = mutation({
     const session = await ctx.db.get(args.sessionId);
     if (!session) throw new Error("Session not found");
     
-    // Get all images to validate order range
-    const uploadedImages = await ctx.db
-      .query("uploadedImages")
-      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
-      .collect();
-    
-    const aiImages = await ctx.db
-      .query("aiGeneratedImages")
-      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
-      .collect();
-    
-    // Total layers including paint layer
-    const totalLayers = uploadedImages.length + aiImages.length + 1;
-    
-    // Clamp the new order to valid range
-    const clampedOrder = Math.max(0, Math.min(args.newLayerOrder, totalLayers - 1));
-    
-    // Get current paint layer order
-    const currentPaintOrder = session.paintLayerOrder ?? 0;
-    
-    // If order hasn't changed, return early
-    if (currentPaintOrder === clampedOrder) return;
-    
-    // Combine all images
-    const allImages = [
-      ...uploadedImages.map(img => ({ ...img, type: 'uploaded' as const })),
-      ...aiImages.map(img => ({ ...img, type: 'ai' as const }))
-    ];
-    
-    // Adjust image orders based on paint layer movement
-    await Promise.all(
-      allImages.map(async (img) => {
-        let newImageOrder = img.layerOrder;
-        
-        if (currentPaintOrder < clampedOrder) {
-          // Paint layer moving up
-          if (img.layerOrder > currentPaintOrder && img.layerOrder <= clampedOrder) {
-            newImageOrder = img.layerOrder - 1;
-          }
-        } else {
-          // Paint layer moving down
-          if (img.layerOrder >= clampedOrder && img.layerOrder < currentPaintOrder) {
-            newImageOrder = img.layerOrder + 1;
-          }
+    const [uploadedImages, aiImages, textBlocks] = await Promise.all([
+      ctx.db
+        .query("uploadedImages")
+        .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+        .collect(),
+      ctx.db
+        .query("aiGeneratedImages")
+        .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+        .collect(),
+      ctx.db
+        .query("textBlocks")
+        .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+        .collect(),
+    ]);
+
+    type LayerEntry =
+      | { type: 'paint'; id: Id<'paintingSessions'>; order: number }
+      | { type: 'uploaded'; id: Id<'uploadedImages'>; order: number }
+      | { type: 'ai'; id: Id<'aiGeneratedImages'>; order: number }
+      | { type: 'text'; id: Id<'textBlocks'>; order: number };
+
+    const allLayers: LayerEntry[] = [
+      { type: 'paint', id: session._id, order: session.paintLayerOrder ?? 0 },
+      ...uploadedImages.map((img) => ({ type: 'uploaded' as const, id: img._id, order: img.layerOrder })),
+      ...aiImages.map((img) => ({ type: 'ai' as const, id: img._id, order: img.layerOrder })),
+      ...textBlocks.map((block) => ({ type: 'text' as const, id: block._id, order: block.layerOrder })),
+    ].sort((a, b) => a.order - b.order);
+
+    const paintLayer = allLayers.find((layer) => layer.type === 'paint');
+    if (!paintLayer) throw new Error("Paint layer not found");
+
+    const currentOrder = paintLayer.order;
+    const maxOrder = allLayers.length - 1;
+    const targetOrder = Math.max(0, Math.min(args.newLayerOrder, maxOrder));
+
+    if (currentOrder === targetOrder) return;
+
+    const updates: Array<{ layer: LayerEntry; newOrder: number }> = [];
+
+    if (currentOrder < targetOrder) {
+      allLayers.forEach((layer) => {
+        if (layer.type === 'paint') {
+          updates.push({ layer, newOrder: targetOrder });
+        } else if (layer.order > currentOrder && layer.order <= targetOrder) {
+          updates.push({ layer, newOrder: layer.order - 1 });
         }
-        
-        if (newImageOrder !== img.layerOrder) {
-          if (img.type === 'uploaded') {
-            await ctx.db.patch(img._id, { layerOrder: newImageOrder });
-          } else {
-            await ctx.db.patch(img._id, { layerOrder: newImageOrder });
-          }
+      });
+    } else {
+      allLayers.forEach((layer) => {
+        if (layer.type === 'paint') {
+          updates.push({ layer, newOrder: targetOrder });
+        } else if (layer.order >= targetOrder && layer.order < currentOrder) {
+          updates.push({ layer, newOrder: layer.order + 1 });
+        }
+      });
+    }
+
+    await Promise.all(
+      updates.map(async ({ layer, newOrder }) => {
+        if (layer.order === newOrder) return;
+        if (layer.type === 'paint') {
+          await ctx.db.patch(layer.id, { paintLayerOrder: newOrder } as any);
+        } else if (layer.type === 'uploaded') {
+          await ctx.db.patch(layer.id, { layerOrder: newOrder });
+        } else if (layer.type === 'ai') {
+          await ctx.db.patch(layer.id, { layerOrder: newOrder });
+        } else {
+          await ctx.db.patch(layer.id, { layerOrder: newOrder });
         }
       })
     );
-    
-    // Update paint layer order on session
-    await ctx.db.patch(args.sessionId, {
-      paintLayerOrder: clampedOrder,
-    });
   },
 });
 
@@ -126,28 +138,30 @@ export const normalizeLayerOrders = mutation({
     const session = await ctx.db.get(args.sessionId);
     if (!session) throw new Error("Session not found");
     
-    // Get all images
-    const uploadedImages = await ctx.db
-      .query("uploadedImages")
-      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
-      .collect();
-    
-    const aiImages = await ctx.db
-      .query("aiGeneratedImages")
-      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
-      .collect();
-    
-    // Get paint layer order
+    const [uploadedImages, aiImages, textBlocks] = await Promise.all([
+      ctx.db
+        .query("uploadedImages")
+        .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+        .collect(),
+      ctx.db
+        .query("aiGeneratedImages")
+        .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+        .collect(),
+      ctx.db
+        .query("textBlocks")
+        .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+        .collect(),
+    ]);
+
     const paintLayerOrder = session.paintLayerOrder ?? 0;
-    
-    // Combine all layers including paint
+
     const allLayers = [
       { id: 'paint', type: 'paint' as const, layerOrder: paintLayerOrder },
-      ...uploadedImages.map(img => ({ ...img, type: 'uploaded' as const })),
-      ...aiImages.map(img => ({ ...img, type: 'ai' as const }))
+      ...uploadedImages.map((img) => ({ ...img, type: 'uploaded' as const })),
+      ...aiImages.map((img) => ({ ...img, type: 'ai' as const })),
+      ...textBlocks.map((block) => ({ ...block, type: 'text' as const }))
     ].sort((a, b) => a.layerOrder - b.layerOrder);
-    
-    // Reassign sequential orders
+
     await Promise.all(
       allLayers.map(async (layer, index) => {
         if (layer.type === 'paint') {
@@ -156,8 +170,10 @@ export const normalizeLayerOrders = mutation({
           });
         } else if (layer.type === 'uploaded') {
           await ctx.db.patch(layer._id, { layerOrder: index });
-        } else {
+        } else if (layer.type === 'ai') {
           await ctx.db.patch(layer._id, { layerOrder: index });
+        } else {
+          await ctx.db.patch(layer._id as Id<'textBlocks'>, { layerOrder: index });
         }
       })
     );

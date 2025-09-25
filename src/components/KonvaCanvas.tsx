@@ -12,6 +12,7 @@ import { api } from '../../convex/_generated/api'
 import { shouldShowAdminFeatures } from '../utils/environment'
 import { uploadImageFile, validateImageFile, ACCEPTED_TYPES } from '../utils/imageUpload'
 import { useClipboardContext } from '../context/ClipboardContext'
+import type { TextBlock, CreateTextBlockArgs, UpdateTextBlockArgs } from '../hooks/useTextBlocks'
 
 const average = (a: number, b: number): number => (a + b) / 2
 
@@ -20,6 +21,11 @@ const getRainbowColor = (progress: number): string => {
   const hue = progress * 360
   return `hsl(${hue}, 100%, 50%)`
 }
+
+const DEFAULT_TEXT_FONT_FAMILY = 'Inter'
+const DEFAULT_TEXT_FONT_SIZE = 32
+const DEFAULT_TEXT_LINE_HEIGHT = 1.2
+const DEFAULT_TEXT_FILL = '#111111'
 
 // Memoized stroke component to prevent unnecessary re-renders
 interface StrokePathProps {
@@ -184,10 +190,15 @@ interface KonvaCanvasProps {
   colorMode?: 'solid' | 'rainbow'
   onStrokeEnd?: () => void
   layers: LayerType[]
+  textBlocks: TextBlock[]
   selectedTool?: string
   activeLayerId?: string
   activePaintLayerId?: string | null
   onImageUploaded?: (imageId: Id<"uploadedImages">) => void
+  onSelectLayer?: (layerId: string) => void
+  onCreateTextBlock?: (args: CreateTextBlockArgs) => Promise<Id<"textBlocks"> | null>
+  onUpdateTextBlock?: (args: UpdateTextBlockArgs) => Promise<void>
+  onDeleteTextBlock?: (blockId: Id<"textBlocks">) => Promise<void>
   // perfect-freehand options
   smoothing?: number
   thinning?: number
@@ -216,10 +227,15 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     colorMode = 'solid',
     onStrokeEnd,
     layers,
+    textBlocks = [],
     activePaintLayerId,
     selectedTool = 'brush',
     activeLayerId,
     onImageUploaded,
+    onSelectLayer,
+    onCreateTextBlock,
+    onUpdateTextBlock,
+    onDeleteTextBlock,
     // perfect-freehand options
     smoothing = 0.5,
     thinning = 0.5,
@@ -241,6 +257,9 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   const paintGroupRefs = useRef<Map<string, Konva.Group>>(new Map())
   const imageNodeRefs = useRef<Map<string, Konva.Image>>(new Map())
   const aiImageNodeRefs = useRef<Map<string, Konva.Image>>(new Map())
+  const textNodeRefs = useRef<Map<string, Konva.Text>>(new Map())
+  const textGroupRefs = useRef<Map<string, Konva.Group>>(new Map())
+  const pendingEditorRef = useRef<{ id: string; position: Point } | null>(null)
     
   const [isDrawing, setIsDrawing] = useState(false)
   const [currentStroke, setCurrentStroke] = useState<Point[]>([])
@@ -263,6 +282,122 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   // Drag and drop state
   const [isDragOver, setIsDragOver] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
+  const [activeTextBlockId, setActiveTextBlockId] = useState<string | null>(null)
+  const [editingText, setEditingText] = useState<{ id: string; value: string } | null>(null)
+  const [textEditorPosition, setTextEditorPosition] = useState<{ x: number; y: number; width: number; rotation: number }>({ x: 0, y: 0, width: 0, rotation: 0 })
+  const [isTextEditorVisible, setIsTextEditorVisible] = useState(false)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    const activeLayer = layers.find(l => l.id === activeLayerId)
+    if (activeLayer && activeLayer.type === 'text') {
+      setActiveTextBlockId(activeLayer.id)
+    } else {
+      setActiveTextBlockId(null)
+      if (!isTextEditorVisible) {
+        setEditingText(null)
+      }
+    }
+  }, [activeLayerId, layers, isTextEditorVisible])
+
+  const getTextBlockById = useCallback((blockId: string) => textBlocks.find(block => block._id === blockId), [textBlocks])
+
+  const extractTextBlockId = useCallback((target: Konva.Node | null): string | null => {
+    if (!target) return null
+    const name = target.name?.()
+    if (typeof name === 'string' && name.length > 0) {
+      if (name.startsWith('text-node-')) return name.replace('text-node-', '')
+      if (name.startsWith('text-group-')) return name.replace('text-group-', '')
+    }
+    const parent = target.getParent?.()
+    if (parent && parent !== target) {
+      return extractTextBlockId(parent)
+    }
+    return null
+  }, [])
+
+  const showTextEditor = useCallback((blockId: string, fallbackStage?: Point) => {
+    const stage = stageRef.current
+    const container = containerRef.current
+    if (!stage || !container) return
+
+    const block = getTextBlockById(blockId)
+    const textNode = textNodeRefs.current.get(blockId)
+    const stageBox = stage.container().getBoundingClientRect()
+    const containerBox = container.getBoundingClientRect()
+
+    let x: number | null = null
+    let y: number | null = null
+    let width: number | null = null
+    let rotation = 0
+
+    if (textNode) {
+      const absolutePosition = textNode.getAbsolutePosition()
+      const absoluteScale = textNode.getAbsoluteScale(stage)
+      x = stageBox.left + absolutePosition.x - containerBox.left
+      y = stageBox.top + absolutePosition.y - containerBox.top
+      width = Math.max(120, textNode.width() * absoluteScale.x)
+      rotation = textNode.getAbsoluteRotation()
+    } else if (fallbackStage) {
+      x = stageBox.left + fallbackStage.x - containerBox.left
+      y = stageBox.top + fallbackStage.y - containerBox.top
+      width = Math.max(160, (block?.fontSize ?? DEFAULT_TEXT_FONT_SIZE) * 4)
+      rotation = 0
+    }
+
+    if (x == null || y == null || width == null) return
+
+    setEditingText({ id: blockId, value: block?.content ?? '' })
+    setTextEditorPosition({ x, y, width, rotation })
+    setIsTextEditorVisible(true)
+
+    requestAnimationFrame(() => {
+      if (textareaRef.current) {
+        textareaRef.current.focus()
+        textareaRef.current.select()
+      }
+    })
+  }, [getTextBlockById])
+
+  const hideTextEditor = useCallback(() => {
+    setIsTextEditorVisible(false)
+    setEditingText(null)
+  }, [])
+
+  const commitTextEdit = useCallback(async () => {
+    if (!editingText || !onUpdateTextBlock) {
+      hideTextEditor()
+      return
+    }
+    const trimmedContent = editingText.value.replace(/\r\n/g, '\n')
+    const block = getTextBlockById(editingText.id)
+    try {
+      const updatePayload: UpdateTextBlockArgs = {
+        blockId: editingText.id as Id<'textBlocks'>,
+        content: trimmedContent,
+      }
+      if (block && block.opacity === 0) {
+        updatePayload.opacity = 1
+      }
+      await onUpdateTextBlock(updatePayload)
+    } finally {
+      hideTextEditor()
+    }
+  }, [editingText, onUpdateTextBlock, hideTextEditor, getTextBlockById])
+
+  const cancelTextEdit = useCallback(() => {
+    hideTextEditor()
+  }, [hideTextEditor])
+
+  const handleTextEditorKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      cancelTextEdit()
+    } else if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault()
+      void commitTextEdit()
+    }
+  }, [cancelTextEdit, commitTextEdit])
 
   // Use the painting session hook
   const {
@@ -549,6 +684,47 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     //   layers: layers.map(l => ({ id: l.id, type: l.type }))
     // })
     
+    if (selectedTool === 'text') {
+      if (isTextEditorVisible) {
+        return
+      }
+
+      const target = e.target
+      const blockId = extractTextBlockId(target)
+      const stagePoint = getPointerPosition(e)
+
+      if (blockId) {
+        onSelectLayer?.(blockId)
+        setActiveTextBlockId(blockId)
+        pendingEditorRef.current = null
+        showTextEditor(blockId, stagePoint)
+        updateUserPresence(stagePoint.x, stagePoint.y, false, 'text')
+      } else if (onCreateTextBlock) {
+        updateUserPresence(stagePoint.x, stagePoint.y, false, 'text')
+        const createArgs: CreateTextBlockArgs = {
+          x: stagePoint.x,
+          y: stagePoint.y,
+          content: '',
+          fill: color,
+          fontSize: Math.max(14, size * 2),
+        }
+        void (async () => {
+          try {
+            const newId = await onCreateTextBlock(createArgs)
+            if (newId) {
+              onSelectLayer?.(newId)
+              setActiveTextBlockId(newId)
+              pendingEditorRef.current = { id: String(newId), position: stagePoint }
+            }
+          } catch (error) {
+            console.error('[KonvaCanvas] Failed to create text block', error)
+            pendingEditorRef.current = null
+          }
+        })()
+      }
+      return
+    }
+
     // Don't start drawing if transform tool is selected
     if (selectedTool === 'transform') {
       return
@@ -598,7 +774,23 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       const normalizedY = point.y / dimensions.height
       sendStrokePoint(strokeId, normalizedX, normalizedY, point.pressure || 0.5)
     }
-  }, [getPointerPosition, updateUserPresence, isP2PConnected, dimensions, sendStrokePoint, selectedTool, activeLayerId, layers])
+  }, [
+    getPointerPosition,
+    updateUserPresence,
+    isP2PConnected,
+    dimensions,
+    sendStrokePoint,
+    selectedTool,
+    activeLayerId,
+    layers,
+    isTextEditorVisible,
+    extractTextBlockId,
+    showTextEditor,
+    onSelectLayer,
+    onCreateTextBlock,
+    color,
+    size
+  ])
 
   // Handle pointer move
   const handlePointerMove = useCallback((e: Konva.KonvaEventObject<PointerEvent>) => {
@@ -620,17 +812,21 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     if (!isDrawing) {
       // Still update presence even if not drawing, for cursor tracking
       if (isP2PConnected && dimensions.width > 0) {
-      const normalizedX = stagePoint.x / dimensions.width
-      const normalizedY = stagePoint.y / dimensions.height
-      sendCursorPosition(normalizedX, normalizedY, false)
-    }
-    updateUserPresence(stagePoint.x, stagePoint.y, false, 'brush')
+        const normalizedX = stagePoint.x / dimensions.width
+        const normalizedY = stagePoint.y / dimensions.height
+        sendCursorPosition(normalizedX, normalizedY, false)
+      }
+      updateUserPresence(stagePoint.x, stagePoint.y, false, selectedTool === 'eraser' ? 'eraser' : selectedTool)
       
       // Update cursor based on tool
       const stage = e.target.getStage()
       if (stage) {
         const container = stage.container()
         if (container) {
+          if (selectedTool === 'text') {
+            container.style.cursor = 'text'
+            return
+          }
           if (selectedTool === 'transform') {
             // Determine cursor by hovered transformer anchor or target
             const target: any = e.target
@@ -1224,6 +1420,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       node = imageNodeRefs.current.get(activeLayerId)
     } else if (activeLayer?.type === 'ai-image') {
       node = aiImageNodeRefs.current.get(activeLayerId)
+    } else if (activeLayer?.type === 'text') {
+      node = textGroupRefs.current.get(activeLayerId)
     }
     if (node) {
       transformer.nodes([node])
@@ -1232,7 +1430,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       transformer.nodes([])
       stage.batchDraw()
     }
-  }, [selectedTool, activeLayerId, layers, images, aiImages])
+  }, [selectedTool, activeLayerId, layers, images, aiImages, textBlocks])
 
   // Helper: map stage point to active paint layer local coordinates
   const toActivePaintLayerLocal = useCallback((pt: Point): Point => {
@@ -1272,6 +1470,37 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     
     return () => clearTimeout(timer)
   }, [layers])
+
+  const editingBlock = editingText ? getTextBlockById(editingText.id) : null
+  const resolvedEditingBlock = editingBlock ?? {
+    _id: editingText?.id ?? '',
+    content: editingText?.value ?? '',
+    fontFamily: DEFAULT_TEXT_FONT_FAMILY,
+    fontSize: DEFAULT_TEXT_FONT_SIZE,
+    fontStyle: 'normal' as const,
+    fontWeight: '400',
+    textAlign: 'left' as const,
+    lineHeight: DEFAULT_TEXT_LINE_HEIGHT,
+    fill: DEFAULT_TEXT_FILL,
+    opacity: 1,
+  }
+
+  useEffect(() => {
+    const pending = pendingEditorRef.current
+    if (!pending) return
+    const block = getTextBlockById(pending.id)
+    if (!block) return
+    showTextEditor(pending.id, pending.position)
+    pendingEditorRef.current = null
+  }, [textBlocks, getTextBlockById, showTextEditor])
+
+  useEffect(() => {
+    if (!editingText) return
+    const exists = textBlocks.some(tb => tb._id === editingText.id)
+    if (!exists) {
+      hideTextEditor()
+    }
+  }, [editingText, textBlocks, hideTextEditor])
 
   return (
     <div 
@@ -1318,7 +1547,15 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
             .map((layer, idx) => (
               <div key={layer.id} className="flex items-center gap-2">
                 <span className="text-gray-400">{idx}:</span>
-                <span className={layer.type === 'paint' ? 'text-blue-400' : layer.type === 'ai-image' ? 'text-purple-400' : 'text-green-400'}>
+                <span className={
+                  layer.type === 'paint'
+                    ? 'text-blue-400'
+                    : layer.type === 'ai-image'
+                      ? 'text-purple-400'
+                      : layer.type === 'text'
+                        ? 'text-amber-300'
+                        : 'text-green-400'
+                }>
                   {layer.name}
                 </span>
                 <span className="text-gray-500">(order: {layer.order})</span>
@@ -1822,6 +2059,104 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
               )
             }
 
+            if (layer.type === 'text') {
+              const block = textBlocks.find(tb => tb._id === layer.id)
+              if (!block) return null
+
+              const fontStyle = [block.fontStyle ?? 'normal', block.fontWeight ?? '400'].join(' ').trim()
+
+              return (
+                <Layer key={layer.id} opacity={layer.opacity} listening>
+                  <Group
+                    ref={(node) => {
+                      if (node) textGroupRefs.current.set(layer.id, node)
+                      else textGroupRefs.current.delete(layer.id)
+                    }}
+                    name={`text-group-${layer.id}`}
+                    x={block.x}
+                    y={block.y}
+                    rotation={block.rotation ?? 0}
+                    scaleX={block.scaleX ?? 1}
+                    scaleY={block.scaleY ?? 1}
+                    draggable={selectedTool === 'transform'}
+                    dragCursor={"url('/cursors/move.svg') 12 12, move"}
+                    onMouseDown={(event) => {
+                      event.cancelBubble = true
+                      onSelectLayer?.(layer.id)
+                      setActiveTextBlockId(layer.id)
+                      if (selectedTool === 'text') {
+                        pendingEditorRef.current = null
+                        const pointer = event.target.getStage()?.getPointerPosition()
+                        showTextEditor(layer.id, pointer ?? undefined)
+                      }
+                    }}
+                    onTouchStart={(event) => {
+                      event.cancelBubble = true
+                      onSelectLayer?.(layer.id)
+                      setActiveTextBlockId(layer.id)
+                      if (selectedTool === 'text') {
+                        pendingEditorRef.current = null
+                        const pointer = event.target.getStage()?.getPointerPosition()
+                        showTextEditor(layer.id, pointer ?? undefined)
+                      }
+                    }}
+                    onDblClick={(event) => {
+                      event.cancelBubble = true
+                      onSelectLayer?.(layer.id)
+                      setActiveTextBlockId(layer.id)
+                      pendingEditorRef.current = null
+                      const pointer = event.target.getStage()?.getPointerPosition()
+                      showTextEditor(layer.id, pointer ?? undefined)
+                    }}
+                    onDragStart={() => {
+                      onSelectLayer?.(layer.id)
+                      setActiveTextBlockId(layer.id)
+                    }}
+                    onDragEnd={(event) => {
+                      const node = event.target as Konva.Group
+                      if (onUpdateTextBlock) {
+                        void onUpdateTextBlock({
+                          blockId: block._id,
+                          x: node.x(),
+                          y: node.y(),
+                        })
+                      }
+                    }}
+                    onTransformEnd={(event) => {
+                      const node = event.target as Konva.Group
+                      if (onUpdateTextBlock) {
+                        void onUpdateTextBlock({
+                          blockId: block._id,
+                          x: node.x(),
+                          y: node.y(),
+                          scaleX: node.scaleX(),
+                          scaleY: node.scaleY(),
+                          rotation: node.rotation(),
+                        })
+                      }
+                    }}
+                  >
+                    <Text
+                      ref={(node) => {
+                        if (node) textNodeRefs.current.set(layer.id, node)
+                        else textNodeRefs.current.delete(layer.id)
+                      }}
+                      name={`text-node-${layer.id}`}
+                      text={block.content || ''}
+                      fill={block.fill}
+                      fontSize={block.fontSize}
+                      fontFamily={block.fontFamily}
+                      fontStyle={fontStyle}
+                      align={block.textAlign ?? 'left'}
+                      lineHeight={block.lineHeight ?? 1.2}
+                      opacity={editingText?.id === block._id && isTextEditorVisible ? 0 : block.opacity}
+                      listening={true}
+                    />
+                  </Group>
+                </Layer>
+              )
+            }
+
             // AI-generated image layer
             if (layer.type === 'ai-image') {
               const aiImage = aiImages?.find(img => img._id === layer.id)
@@ -2210,6 +2545,42 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
           </Layer>
         )}
         </Stage>
+        {isTextEditorVisible && editingText && (
+          <textarea
+            ref={textareaRef}
+            value={editingText.value}
+            onChange={(event) => setEditingText(prev => prev ? { ...prev, value: event.target.value } : prev)}
+            onBlur={() => { void commitTextEdit() }}
+            onKeyDown={handleTextEditorKeyDown}
+            spellCheck={false}
+            style={{
+              position: 'absolute',
+              top: textEditorPosition.y,
+              left: textEditorPosition.x,
+              width: `${Math.max(120, textEditorPosition.width)}px`,
+              transform: `rotate(${textEditorPosition.rotation}deg)` ,
+              transformOrigin: 'top left',
+              fontSize: `${resolvedEditingBlock.fontSize}px`,
+              fontFamily: resolvedEditingBlock.fontFamily,
+              fontWeight: resolvedEditingBlock.fontWeight ?? '400',
+              fontStyle: resolvedEditingBlock.fontStyle ?? 'normal',
+              lineHeight: resolvedEditingBlock.lineHeight ?? DEFAULT_TEXT_LINE_HEIGHT,
+              color: resolvedEditingBlock.fill,
+              background: 'rgba(0, 0, 0, 0.05)',
+              border: '1px solid rgba(0, 0, 0, 0.2)',
+              outline: 'none',
+              padding: '4px',
+              margin: 0,
+              resize: 'none',
+              whiteSpace: 'pre-wrap',
+              overflow: 'hidden',
+              minHeight: '24px',
+              zIndex: 50,
+            }}
+            className="shadow-sm rounded-sm"
+            rows={Math.max(1, Math.ceil((editingText.value.split('\n').length)))}
+          />
+        )}
       </div>
     )
 }
