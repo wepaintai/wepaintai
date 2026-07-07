@@ -11,6 +11,11 @@ Internet ──▶ Cloudflare Tunnel ──▶ app.YOUR_DOMAIN         → local
 LAN only:                           localhost:6791          (Convex dashboard)
 ```
 
+> **Repo location on the mini**: clone to `~/apps/wepaintai`, NOT under
+> `~/Documents` — macOS TCC blocks launchd agents from reading
+> Documents/Desktop/Downloads, and the app service will fail with exit 127.
+> Set `WEPAINTAI_DIR` in the plists' `EnvironmentVariables` accordingly.
+
 ## 1. Prerequisites
 
 - Docker Desktop or OrbStack running
