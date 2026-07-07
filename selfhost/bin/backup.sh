@@ -13,6 +13,7 @@ KEEP=14
 mkdir -p "$BACKUP_DIR"
 cd "$REPO_DIR"
 
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 if ! command -v node >/dev/null 2>&1; then
   NVM_NODE=$(ls -d "$HOME/.nvm/versions/node"/*/bin 2>/dev/null | sort -V | tail -1)
   [ -n "$NVM_NODE" ] && export PATH="$NVM_NODE:$PATH"
