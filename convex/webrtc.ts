@@ -1,5 +1,36 @@
-import { mutation, query, internalMutation } from "./_generated/server";
+import { mutation, query, internalMutation, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
+import { Id } from "./_generated/dataModel";
+
+/**
+ * Authorization: allow if public or owner or guest owner.
+ * Same pattern as strokes.addStroke / images.getSessionImages.
+ */
+async function assertSessionAccess(
+  ctx: MutationCtx | QueryCtx,
+  sessionId: Id<"paintingSessions">,
+  guestKey: string | undefined
+) {
+  const session = await ctx.db.get(sessionId);
+  if (!session) {
+    throw new Error("Session not found");
+  }
+  if (!session.isPublic) {
+    const identity = await ctx.auth.getUserIdentity();
+    if (identity) {
+      const user = await ctx.db
+        .query("users")
+        .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+        .first();
+      if (!user || session.createdBy !== user._id) {
+        if (!session.guestOwnerKey || session.guestOwnerKey !== guestKey) throw new Error("Unauthorized");
+      }
+    } else {
+      if (!session.guestOwnerKey || session.guestOwnerKey !== guestKey) throw new Error("Unauthorized");
+    }
+  }
+  return session;
+}
 
 /**
  * Join a P2P session and get list of current peers
@@ -8,22 +39,16 @@ export const joinP2PSession = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
     peerId: v.string(), // Client-generated peer ID
-    roomKey: v.string(), // Room authentication key
+    roomKey: v.optional(v.string()), // Deprecated: kept so older clients don't fail arg validation
+    guestKey: v.optional(v.string()),
   },
   returns: v.object({
     peers: v.array(v.string()),
     mode: v.union(v.literal("mesh"), v.literal("sfu")),
   }),
   handler: async (ctx, args) => {
-    // Verify session exists
-    const session = await ctx.db.get(args.sessionId);
-    if (!session) {
-      throw new Error("Session not found");
-    }
-    
-    // TODO: Verify room key matches session
-    // For now, we'll skip authentication
-    
+    await assertSessionAccess(ctx, args.sessionId, args.guestKey);
+
     // Get active peers from presence data
     const thirtySecondsAgo = Date.now() - 30 * 1000;
     const activePeers = await ctx.db
@@ -76,9 +101,12 @@ export const sendSignal = mutation({
     toPeerId: v.string(),
     type: v.union(v.literal("offer"), v.literal("answer"), v.literal("ice-candidate")),
     data: v.any(), // SDP or ICE candidate data
+    guestKey: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    await assertSessionAccess(ctx, args.sessionId, args.guestKey);
+
     // Store signal in database
     await ctx.db.insert("webrtcSignals", {
       sessionId: args.sessionId,
@@ -100,6 +128,7 @@ export const getSignals = query({
   args: {
     sessionId: v.id("paintingSessions"),
     peerId: v.string(),
+    guestKey: v.optional(v.string()),
   },
   returns: v.array(v.object({
     id: v.id("webrtcSignals"),
@@ -108,6 +137,8 @@ export const getSignals = query({
     data: v.any(),
   })),
   handler: async (ctx, args) => {
+    await assertSessionAccess(ctx, args.sessionId, args.guestKey);
+
     // Get signals for this peer
     const signals = await ctx.db
       .query("webrtcSignals")

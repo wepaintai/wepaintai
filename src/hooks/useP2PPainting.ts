@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useConvex } from "convex/react";
 import { Id } from "../../convex/_generated/dataModel";
 import { P2PManager } from '../lib/webrtc/P2PManager';
+import { getGuestKey } from '../utils/guestKey';
 import type { 
   PreviewPacket, 
   CursorPacket,
@@ -134,12 +135,10 @@ export function useP2PPainting({
       return;
     }
 
-    const roomKey = `session-${sessionId}`; // Simple room key for now
-
     const manager = new P2PManager({
       sessionId,
       peerId: userId,
-      roomKey,
+      guestKey: getGuestKey(sessionId) || undefined,
       convexClient: convex,
       onPacketReceived: handlePacketReceived,
       onPeerConnected: handlePeerConnected,
