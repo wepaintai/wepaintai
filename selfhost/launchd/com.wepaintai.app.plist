@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Runs the wepaintai node server as a user agent.
+  Install:
+    cp selfhost/launchd/com.wepaintai.app.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.wepaintai.app.plist
+  Logs: /tmp/wepaintai-app.log
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.wepaintai.app</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/travisirby/Documents/GitHub/wepaintai/selfhost/bin/start-app.sh</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/wepaintai-app.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/wepaintai-app.log</string>
+</dict>
+</plist>

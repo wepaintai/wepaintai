@@ -25,7 +25,7 @@ const schema = defineSchema({
     lastClearBatchId: v.optional(v.string()),
     // AI generation prompts history
     aiPrompts: v.optional(v.array(v.string())), // Array of unique prompts used in this session
-  }),
+  }).index("by_creator", ["createdBy"]),
 
   strokes: defineTable({
     sessionId: v.id("paintingSessions"),

@@ -1,0 +1,52 @@
+# Self-hosted Convex backend + dashboard for wepaintai.
+# Based on the official compose file from get-convex/convex-backend.
+#
+# Usage (from the selfhost/ directory):
+#   cp .env.example .env   # fill in values
+#   docker compose up -d
+#   docker compose exec backend ./generate_admin_key.sh
+services:
+  backend:
+    # Pin to a specific tag before relying on this in production:
+    # https://github.com/get-convex/convex-backend/pkgs/container/convex-backend
+    image: ghcr.io/get-convex/convex-backend:latest
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    ports:
+      - "3210:3210" # deployment API + WebSocket sync (VITE_CONVEX_URL points here)
+      - "3211:3211" # HTTP actions (Polar webhooks point here)
+    volumes:
+      - data:/convex/data
+    environment:
+      - INSTANCE_NAME=${INSTANCE_NAME:-wepaintai}
+      - INSTANCE_SECRET
+      # Public URLs the backend advertises to clients. Must match the
+      # Cloudflare Tunnel hostnames once the tunnel is up.
+      - CONVEX_CLOUD_ORIGIN=${CONVEX_CLOUD_ORIGIN:-http://127.0.0.1:3210}
+      - CONVEX_SITE_ORIGIN=${CONVEX_SITE_ORIGIN:-http://127.0.0.1:3211}
+      - DO_NOT_REQUIRE_SSL=${DO_NOT_REQUIRE_SSL:-true} # TLS terminates at Cloudflare
+      - DISABLE_BEACON=${DISABLE_BEACON:-false}
+      - DOCUMENT_RETENTION_DELAY=${DOCUMENT_RETENTION_DELAY:-172800}
+      - RUST_LOG=${RUST_LOG:-info}
+    healthcheck:
+      test: curl -f http://localhost:3210/version
+      interval: 5s
+      start_period: 10s
+    restart: unless-stopped
+
+  dashboard:
+    image: ghcr.io/get-convex/convex-dashboard:latest
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    ports:
+      # LAN-only by design: do NOT route this through the tunnel.
+      - "6791:6791"
+    environment:
+      - NEXT_PUBLIC_DEPLOYMENT_URL=${NEXT_PUBLIC_DEPLOYMENT_URL:-http://127.0.0.1:3210}
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  data:

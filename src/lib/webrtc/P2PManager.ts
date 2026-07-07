@@ -17,7 +17,7 @@ import { p2pLogger } from '../p2p-logger';
 export interface P2PManagerOptions {
   sessionId: Id<"paintingSessions">;
   peerId: string;
-  roomKey: string;
+  guestKey?: string; // Session guest-owner key for authorization on private sessions
   convexClient: ConvexReactClient;
   onPacketReceived?: (peerId: string, packet: P2PPacket) => void;
   onPeerConnected?: (peerId: string) => void;
@@ -32,7 +32,7 @@ export class P2PManager {
   private convexClient: ConvexReactClient;
   private sessionId: Id<"paintingSessions">;
   private peerId: string;
-  private roomKey: string;
+  private guestKey?: string;
   private pollingInterval: NodeJS.Timeout | null = null;
   private metrics: P2PMetrics = {
     latency: 0,
@@ -53,7 +53,7 @@ export class P2PManager {
     this.convexClient = options.convexClient;
     this.sessionId = options.sessionId;
     this.peerId = options.peerId;
-    this.roomKey = options.roomKey;
+    this.guestKey = options.guestKey;
     this.onPacketReceived = options.onPacketReceived;
     this.onPeerConnected = options.onPeerConnected;
     this.onPeerDisconnected = options.onPeerDisconnected;
@@ -75,7 +75,7 @@ export class P2PManager {
         {
           sessionId: this.sessionId,
           peerId: this.peerId,
-          roomKey: this.roomKey,
+          guestKey: this.guestKey,
         }
       );
 
@@ -220,6 +220,7 @@ export class P2PManager {
       toPeerId,
       type,
       data,
+      guestKey: this.guestKey,
     });
   }
 
@@ -232,6 +233,7 @@ export class P2PManager {
         const signals = await this.convexClient.query(api.webrtc.getSignals, {
           sessionId: this.sessionId,
           peerId: this.peerId,
+          guestKey: this.guestKey,
         });
 
         if (signals.length > 0) {

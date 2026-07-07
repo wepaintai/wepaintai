@@ -224,33 +224,37 @@ export const getUserSessions = query({
     // Collect sessionIds associated with this user through ownership or contributions
     const sessionIdSet = new Set<Id<"paintingSessions">>();
 
-    // 1) Owned sessions
+    // 1) Owned sessions (indexed — avoids scanning every session doc,
+    // which blows the 16MB read limit because thumbnails are stored inline)
     const ownedSessions = await ctx.db
       .query("paintingSessions")
-      .filter((q) => q.eq(q.field("createdBy"), user._id))
+      .withIndex("by_creator", (q) => q.eq("createdBy", user._id))
       .order("desc")
       .collect();
     ownedSessions.forEach((s) => sessionIdSet.add(s._id));
 
-    // 2) Sessions with strokes by this user (via index)
+    // 2-4) Sessions contributed to. Stroke docs carry full point arrays, so
+    // reads must stay bounded: only the most recent contributions are
+    // considered. Older contributed-to sessions won't appear unless owned.
     const userStrokes = await ctx.db
       .query("strokes")
       .withIndex("by_user", (q) => q.eq("userId", user._id))
-      .collect();
+      .order("desc")
+      .take(300);
     userStrokes.forEach((st) => sessionIdSet.add(st.sessionId));
 
-    // 3) Sessions with uploaded images by this user (via index)
     const userUploads = await ctx.db
       .query("uploadedImages")
       .withIndex("by_user", (q) => q.eq("userId", user._id))
-      .collect();
+      .order("desc")
+      .take(200);
     userUploads.forEach((img) => sessionIdSet.add(img.sessionId));
 
-    // 4) Sessions with paint layers created by this user (via index)
     const userLayers = await ctx.db
       .query("paintLayers")
       .withIndex("by_user", (q) => q.eq("createdBy", user._id))
-      .collect();
+      .order("desc")
+      .take(200);
     userLayers.forEach((pl) => sessionIdSet.add(pl.sessionId));
 
     // Fetch session docs for all collected IDs
