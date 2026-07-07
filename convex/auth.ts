@@ -48,15 +48,13 @@ export const createAuth = (ctx: GenericCtx<DataModel>) => {
   return betterAuth({
     baseURL: siteUrl,
     database: authComponent.adapter(ctx),
-    emailAndPassword: {
-      enabled: true,
-      requireEmailVerification: false,
+    // Google OAuth only — no password accounts.
+    socialProviders: {
+      google: {
+        clientId: process.env.GOOGLE_CLIENT_ID as string,
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET as string,
+      },
     },
-    // To add OAuth later, add e.g.:
-    // socialProviders: {
-    //   google: { clientId: ..., clientSecret: ... },
-    //   github: { clientId: ..., clientSecret: ... },
-    // },
     plugins: [convex({ authConfig })],
   });
 };

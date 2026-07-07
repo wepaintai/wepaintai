@@ -93,11 +93,14 @@ Set these in the Convex dashboard (Settings > Environment Variables):
   - For production: Set to `https://api.polar.sh`
 - `BETTER_AUTH_SECRET`: Secret for Better Auth (generate with `openssl rand -base64 32`)
 - `SITE_URL`: The app origin (e.g. `http://localhost:3000` for dev, `https://app.wepaint.ai` for prod)
+- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`: Google OAuth client credentials
+  (authorized redirect URI: `<SITE_URL>/api/auth/callback/google`)
 
 ### Authentication Setup (Better Auth)
 Authentication is self-hosted with [Better Auth](https://www.better-auth.com) via the
-[`@convex-dev/better-auth`](https://labs.convex.dev/better-auth) component. Email/password
-is enabled; social providers can be added later in `convex/auth.ts` (`socialProviders`).
+[`@convex-dev/better-auth`](https://labs.convex.dev/better-auth) component.
+**Google OAuth is the only sign-in method** — no password accounts. `/sign-up`
+redirects to `/login`; both are a single "Continue with Google" button.
 
 - **Backend**: the component is registered in `convex/convex.config.ts`; `convex/auth.ts`
   defines `authComponent`/`createAuth` and a signup trigger that creates the app `users`
