@@ -166,19 +166,19 @@ export const getSignals = query({
 export const deleteSignals = mutation({
   args: {
     signalIds: v.array(v.id("webrtcSignals")),
+    sessionId: v.id("paintingSessions"),
+    peerId: v.string(),
+    guestKey: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    await assertSessionAccess(ctx, args.sessionId, args.guestKey);
+
     for (const id of args.signalIds) {
-      try {
-        // Check if document exists before deleting
-        const doc = await ctx.db.get(id);
-        if (doc) {
-          await ctx.db.delete(id);
-        }
-      } catch (error) {
-        // Ignore errors for non-existent documents
-        console.log(`Signal ${id} already deleted or doesn't exist`);
+      const doc = await ctx.db.get(id);
+      // Only delete signals in this session that were addressed to the caller
+      if (doc && doc.sessionId === args.sessionId && doc.toPeerId === args.peerId) {
+        await ctx.db.delete(id);
       }
     }
     return null;
@@ -192,9 +192,12 @@ export const leaveP2PSession = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
     peerId: v.string(),
+    guestKey: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    await assertSessionAccess(ctx, args.sessionId, args.guestKey);
+
     // Clean up any pending signals for this peer
     const signalsTo = await ctx.db
       .query("webrtcSignals")
