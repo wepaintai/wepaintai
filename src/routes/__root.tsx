@@ -8,7 +8,6 @@ import { createServerFn } from '@tanstack/react-start'
 import type { ReactNode } from 'react'
 import { ConvexClientProvider } from '../lib/convex'
 import { PasswordProtection } from '../components/PasswordProtection'
-import { Analytics } from '@vercel/analytics/react'
 import appCss from '../styles/app.css?url'
 import { ClerkProvider } from '@clerk/tanstack-start'
 import { AuthSync } from '../components/AuthSync'
@@ -95,7 +94,6 @@ function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
       <body>
         {children}
         <Scripts />
-        <Analytics />
       </body>
     </html>
   )
