@@ -30,7 +30,7 @@
     "format:check": "prettier --check ."
   },
   "dependencies": {
-    "@clerk/clerk-react": "^5.33.0",
+    "@clerk/clerk-react": "^5.61.3",
     "@clerk/tanstack-start": "^0.11.5",
     "@polar-sh/sdk": "^0.48.1",
     "@tailwindcss/forms": "^0.5.11",
@@ -61,7 +61,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.1.0",
-    "@types/react": "^19.0.8",
+    "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "eslint": "^10.6.0",
     "eslint-config-prettier": "^10.1.8",
