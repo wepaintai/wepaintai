@@ -20,7 +20,7 @@ async function assertSessionAccess(
     if (identity) {
       const user = await ctx.db
         .query("users")
-        .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+        .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
         .first();
       if (!user || session.createdBy !== user._id) {
         if (!session.guestOwnerKey || session.guestOwnerKey !== guestKey) throw new Error("Unauthorized");

@@ -9,8 +9,7 @@ import type { ReactNode } from 'react'
 import { ConvexClientProvider } from '../lib/convex'
 import { PasswordProtection } from '../components/PasswordProtection'
 import appCss from '../styles/app.css?url'
-import { ClerkProvider } from '@clerk/tanstack-start'
-import { AuthSync } from '../components/AuthSync'
+import { getToken } from '../lib/auth-server'
 
 function NotFoundComponent() {
   return (
@@ -32,12 +31,10 @@ function NotFoundComponent() {
   )
 }
 
-// Server function to get auth state
+// Server function to get the Convex JWT for the current Better Auth session
 const getAuth = createServerFn({ method: 'GET' }).handler(async () => {
-  // For now, we'll handle auth state client-side
-  // Clerk handles authentication automatically
   return {
-    userId: null,
+    token: (await getToken()) ?? null,
   }
 })
 
@@ -71,17 +68,15 @@ export const Route = createRootRoute({
 })
 
 function RootComponent() {
+  const { token } = Route.useRouteContext()
   return (
-    <ClerkProvider publishableKey={import.meta.env.VITE_CLERK_PUBLISHABLE_KEY}>
-      <ConvexClientProvider>
-        <AuthSync />
-        <RootDocument>
-          <PasswordProtection>
-            <Outlet />
-          </PasswordProtection>
-        </RootDocument>
-      </ConvexClientProvider>
-    </ClerkProvider>
+    <ConvexClientProvider initialToken={token}>
+      <RootDocument>
+        <PasswordProtection>
+          <Outlet />
+        </PasswordProtection>
+      </RootDocument>
+    </ConvexClientProvider>
   )
 }
 

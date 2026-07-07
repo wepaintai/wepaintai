@@ -7,7 +7,6 @@
   "pnpm": {
     "overrides": {
       "@babel/core@7": "^7.29.7",
-      "@clerk/shared@3": "^3.47.7",
       "brace-expansion@1": "^1.1.13",
       "brace-expansion@2": "^2.0.3",
       "defu": "^6.1.5",
@@ -34,7 +33,6 @@
       "vite@6": "^6.4.3"
     },
     "onlyBuiltDependencies": [
-      "@clerk/shared",
       "@parcel/watcher",
       "@tailwindcss/oxide",
       "core-js",
@@ -60,8 +58,7 @@
     "format:check": "prettier --check ."
   },
   "dependencies": {
-    "@clerk/clerk-react": "^5.61.8",
-    "@clerk/tanstack-start": "^0.11.5",
+    "@convex-dev/better-auth": "^0.12.5",
     "@polar-sh/sdk": "^0.48.1",
     "@tailwindcss/forms": "^0.5.11",
     "@tailwindcss/postcss": "^4.3.2",
@@ -70,6 +67,7 @@
     "@tanstack/react-start": "^1.168.27",
     "@vitejs/plugin-react": "^6.0.3",
     "autoprefixer": "^10.5.2",
+    "better-auth": "~1.6.23",
     "clsx": "^2.1.1",
     "convex": "^1.42.1",
     "convex-helpers": "^0.1.120",

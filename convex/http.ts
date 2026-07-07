@@ -1,8 +1,12 @@
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { handlePolarWebhook } from "./polarWebhook";
+import { authComponent, createAuth } from "./auth";
 
 const http = httpRouter();
+
+// Better Auth routes (/api/auth/*), reached via the TanStack Start proxy
+authComponent.registerRoutes(http, createAuth);
 
 // Add a simple health check endpoint
 http.route({

@@ -180,7 +180,7 @@ export const getSessionImages = query({
       if (identity) {
         const user = await ctx.db
           .query("users")
-          .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+          .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
           .first();
         if (!user || session.createdBy !== user._id) {
           if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [] as any[];
@@ -461,7 +461,7 @@ export const getAIGeneratedImages = query({
       if (identity) {
         const user = await ctx.db
           .query("users")
-          .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+          .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
           .first();
         if (!user || session.createdBy !== user._id) {
           if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];

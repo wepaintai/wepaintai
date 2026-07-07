@@ -79,9 +79,13 @@ const schema = defineSchema({
     .index("by_user_session", ["userId", "sessionId"]),
 
   users: defineTable({
-    // Clerk integration fields
-    clerkId: v.optional(v.string()), // Clerk user ID (subject)
-    
+    // Better Auth user id (identity.subject)
+    authId: v.optional(v.string()),
+
+    // Vestigial Clerk user ID from before the Better Auth migration.
+    // Old rows keep it; new rows never set it.
+    clerkId: v.optional(v.string()),
+
     // User profile fields
     name: v.optional(v.string()),
     email: v.optional(v.string()),
@@ -93,7 +97,8 @@ const schema = defineSchema({
     // Timestamps
     createdAt: v.optional(v.number()),
     updatedAt: v.optional(v.number()),
-  }).index("by_clerk_id", ["clerkId"]),
+  }).index("by_clerk_id", ["clerkId"])
+    .index("by_auth_id", ["authId"]),
 
   viewerStates: defineTable({
     sessionId: v.id("paintingSessions"),

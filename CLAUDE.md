@@ -33,7 +33,7 @@ Note: No test runner is configured yet.
 ### Tech Stack
 - **Frontend**: TanStack Start (React 19 + file-based routing), TypeScript, Tailwind CSS
 - **Backend**: Convex (real-time serverless database with WebSocket support)
-- **Authentication**: Clerk (user authentication and management)
+- **Authentication**: Better Auth (self-hosted, via @convex-dev/better-auth component)
 - **Drawing**: perfect-freehand library for smooth strokes
 - **Canvas Library**: Konva.js (via react-konva) for advanced canvas rendering and layer management
 - **Deployment**: Vercel (frontend) + Convex Cloud (backend)
@@ -75,9 +75,7 @@ Note: No test runner is configured yet.
 
 ### Environment Variables
 - `VITE_CONVEX_URL`: Backend URL (auto-set by dev commands)
-- `VITE_CLERK_PUBLISHABLE_KEY`: Clerk publishable key for authentication
-- `VITE_CLERK_FRONTEND_API_URL`: Clerk Frontend API URL (e.g., https://your-app.clerk.accounts.dev)
-- `CLERK_SECRET_KEY`: Clerk secret key (for production deployments)
+- `VITE_CONVEX_SITE_URL`: Convex HTTP actions URL (`.convex.site` for cloud, `https://site.wepaint.ai` for self-hosted prod) — used by the Better Auth server proxy
 - `VITE_INTERNAL_HIDE_ADMIN_PANEL`: Hide debug panel in production
 - `VITE_PASSWORD_PROTECTION_ENABLED`: Enable/disable password protection (set to 'true' for production, 'false' for local dev)
 - `VITE_AUTH_DISABLED`: Disable all auth for local dev (set to 'true' to bypass auth, 'false' or unset for normal auth flow)
@@ -93,21 +91,24 @@ Set these in the Convex dashboard (Settings > Environment Variables):
 - `POLAR_API_BASE_URL`: (Optional) API base URL
   - For sandbox (default): Leave empty or set to `https://sandbox-api.polar.sh`
   - For production: Set to `https://api.polar.sh`
+- `BETTER_AUTH_SECRET`: Secret for Better Auth (generate with `openssl rand -base64 32`)
+- `SITE_URL`: The app origin (e.g. `http://localhost:3000` for dev, `https://app.wepaint.ai` for prod)
 
-### Authentication Setup
-1. **Create a Clerk account** at https://clerk.com
-2. **Create a new application** in Clerk dashboard
-3. **Create a JWT Template**:
-   - Go to JWT Templates in Clerk dashboard
-   - Create a new template named "convex" (must be exactly this name)
-   - Copy the Issuer URL (Frontend API URL)
-4. **Set environment variables**:
-   - `VITE_CLERK_PUBLISHABLE_KEY` from Clerk dashboard → API Keys
-   - `VITE_CLERK_FRONTEND_API_URL` from JWT Templates → Issuer URL
-   - `CLERK_SECRET_KEY` from Clerk dashboard → API Keys (for production)
-5. **Configure Convex**:
-   - Set `CLERK_FRONTEND_API_URL` in Convex dashboard environment variables
-   - The auth config in `convex/auth.config.ts` uses this for JWT validation
+### Authentication Setup (Better Auth)
+Authentication is self-hosted with [Better Auth](https://www.better-auth.com) via the
+[`@convex-dev/better-auth`](https://labs.convex.dev/better-auth) component. Email/password
+is enabled; social providers can be added later in `convex/auth.ts` (`socialProviders`).
+
+- **Backend**: the component is registered in `convex/convex.config.ts`; `convex/auth.ts`
+  defines `authComponent`/`createAuth` and a signup trigger that creates the app `users`
+  row (with the 10-token welcome grant). Auth HTTP routes are registered in `convex/http.ts`.
+- **Frontend**: `src/lib/auth-client.ts` (client + `useAuthState()` hook),
+  `src/lib/auth-server.ts` (TanStack Start server helpers), `src/routes/api/auth/$.ts`
+  (proxy route so auth cookies stay same-origin), `ConvexBetterAuthProvider` in `src/lib/convex.tsx`.
+- **Setup**: set `BETTER_AUTH_SECRET` and `SITE_URL` in the Convex deployment env, and
+  `VITE_CONVEX_SITE_URL` in `.env.local` (written automatically by `pnpm dev` for local).
+- **Users**: app `users` rows link to Better Auth via `authId` (`identity.subject`).
+  The `clerkId` field is vestigial from the pre-migration era; old rows keep it, new rows never set it.
 
 ### Development Notes
 - Use `pnpm dev` for local development with free local backend

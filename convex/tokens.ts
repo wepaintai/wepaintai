@@ -36,15 +36,15 @@ export const getTokenBalance = query({
         return null;
       }
 
-      console.log("[getTokenBalance] Querying for user with clerkId:", identity.subject);
+      console.log("[getTokenBalance] Querying for user with authId:", identity.subject);
       const user = await ctx.db
         .query("users")
-        .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+        .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
         .first();
 
       if (!user) {
         // User not found in database
-        console.log("[getTokenBalance] User not found in database for clerkId:", identity.subject);
+        console.log("[getTokenBalance] User not found in database for authId:", identity.subject);
         return null;
       }
 
@@ -76,7 +76,7 @@ export const getTokenHistory = query({
 
     const user = await ctx.db
       .query("users")
-      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
       .first();
 
     if (!user) return [];
@@ -106,7 +106,7 @@ export const useTokensForGeneration = mutation({
 
     const user = await ctx.db
       .query("users")
-      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
       .first();
 
     if (!user) {
@@ -158,7 +158,7 @@ export const useTokensForOperation = mutation({
 
     const user = await ctx.db
       .query("users")
-      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
       .first();
 
     if (!user) {
@@ -282,7 +282,7 @@ export const useTokens = mutation({
 
     const user = await ctx.db
       .query("users")
-      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
       .first();
 
     if (!user) {
@@ -348,7 +348,7 @@ export const hasEnoughTokens = query({
 
       const user = await ctx.db
         .query("users")
-        .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+        .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
         .first();
 
       if (!user) return false;
