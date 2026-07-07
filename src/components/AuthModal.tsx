@@ -1,6 +1,6 @@
 import React from 'react'
 import { X, User } from 'lucide-react'
-import { AuthForm } from './AuthForm'
+import { GoogleSignInButton } from './GoogleSignInButton'
 import { authClient, useAuthState } from '../lib/auth-client'
 
 interface AuthModalProps {
@@ -9,7 +9,6 @@ interface AuthModalProps {
 }
 
 export function AuthModal({ isOpen, onClose }: AuthModalProps) {
-  const [mode, setMode] = React.useState<'sign-in' | 'sign-up'>('sign-in')
   const { isSignedIn, user } = useAuthState()
 
   const handleSignOut = async () => {
@@ -35,7 +34,7 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
         <div className="flex items-center justify-between p-4 border-b border-white/20">
           <h2 className="text-lg font-semibold text-white flex items-center gap-2">
             <User className="w-5 h-5" />
-            {isSignedIn ? 'Account' : mode === 'sign-in' ? 'Sign In' : 'Sign Up'}
+            {isSignedIn ? 'Account' : 'Sign In'}
           </h2>
           <button
             onClick={onClose}
@@ -69,12 +68,13 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
               </button>
             </div>
           ) : (
-            <AuthForm
-              mode={mode}
-              onModeChange={setMode}
-              onSuccess={() => window.location.reload()}
-              variant="dark"
-            />
+            <div className="py-2">
+              <p className="text-white/60 text-sm text-center mb-4">
+                Sign in with your Google account to save your work and use AI
+                features.
+              </p>
+              <GoogleSignInButton callbackURL={typeof window !== 'undefined' ? window.location.href : '/'} />
+            </div>
           )}
         </div>
       </div>
