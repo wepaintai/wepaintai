@@ -40,7 +40,7 @@ export function loadConfig(): P2PConfig {
       
       // Add TURN server to ICE servers
       config.iceServers.push({
-        urls: config.turnUrl,
+        urls: env.VITE_TURN_URL,
         username: config.turnUsername,
         credential: config.turnCredential,
       });

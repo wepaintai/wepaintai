@@ -1,4 +1,4 @@
-import { ConvexClient } from "convex/browser";
+import type { ConvexReactClient } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import type { 
@@ -18,7 +18,7 @@ export interface P2PManagerOptions {
   sessionId: Id<"paintingSessions">;
   peerId: string;
   roomKey: string;
-  convexClient: ConvexClient;
+  convexClient: ConvexReactClient;
   onPacketReceived?: (peerId: string, packet: P2PPacket) => void;
   onPeerConnected?: (peerId: string) => void;
   onPeerDisconnected?: (peerId: string) => void;
@@ -29,7 +29,7 @@ export class P2PManager {
   private config: P2PConfig;
   private peers: Map<string, PeerConnection> = new Map();
   private mode: ConnectionMode = 'mesh';
-  private convexClient: ConvexClient;
+  private convexClient: ConvexReactClient;
   private sessionId: Id<"paintingSessions">;
   private peerId: string;
   private roomKey: string;

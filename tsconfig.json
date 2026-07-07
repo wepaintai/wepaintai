@@ -4,14 +4,15 @@
     "moduleResolution": "Bundler",
     "module": "ESNext",
     "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["vite/client", "node"],
     "skipLibCheck": true,
-    "strictNullChecks": true,
+    "strict": true,
+    "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"],
-      "better-auth/integrations/react-start": [
-        "./node_modules/better-auth/dist/integrations/react-start.d.ts"
-      ]
+      "@/*": ["./src/*"]
     }
-  }
+  },
+  "include": ["src", "vite.config.ts", "postcss.config.ts"]
 }

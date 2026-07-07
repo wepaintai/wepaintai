@@ -1,0 +1,10 @@
+node_modules
+.output
+.vercel
+.nitro
+.tanstack
+.vite
+dist
+convex/_generated
+src/routeTree.gen.ts
+pnpm-lock.yaml

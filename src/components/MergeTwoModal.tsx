@@ -60,11 +60,11 @@ export function MergeTwoModal({
         mergeMode,
       })
 
-      if (result.success && result.imageUrl) {
+      if (result.success && 'imageUrl' in result && result.imageUrl) {
         onMergeComplete(result.imageUrl)
         onClose()
       } else {
-        setError(result.error || 'Merge failed')
+        setError(('error' in result && result.error) || 'Merge failed')
       }
     } catch (err) {
       setError('Failed to merge images. Please try again.')

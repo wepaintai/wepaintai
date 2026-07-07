@@ -78,7 +78,7 @@ export function AIGenerationModal({
       console.log('Result type:', typeof result)
       console.log('Result keys:', result ? Object.keys(result) : 'null')
       
-      if (result.success && result.imageUrl) {
+      if (result.success && 'imageUrl' in result && result.imageUrl) {
         console.log('Generated image URL:', result.imageUrl)
         // Save the prompt to both session and user history
         await addAIPrompt({ sessionId, prompt: prompt.trim() })
@@ -86,7 +86,7 @@ export function AIGenerationModal({
         onGenerationComplete(result.imageUrl)
         onClose()
       } else {
-        setError(result.error || 'Generation failed')
+        setError(('error' in result && result.error) || 'Generation failed')
       }
     } catch (err) {
       setError('Failed to generate image. Please try again.')

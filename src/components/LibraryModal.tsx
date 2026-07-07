@@ -30,10 +30,6 @@ export function LibraryModal({ isOpen, onClose, onCreateNew }: LibraryModalProps
   const sessions = useQuery(api.paintingSessions.getUserSessions) ?? []
   const updateSessionName = useMutation(api.paintingSessions.updateSessionName)
   const deleteSession = useMutation(api.paintingSessions.deleteSession)
-  
-  // Debug info - Hidden
-  // const debugInfo = useQuery(api.debug.debugUserSessions)
-  // const claimOrphaned = useMutation(api.debug.claimOrphanedSessions)
   const createTestSession = useMutation(api.paintingSessions.createSession)
 
   const filteredSessions = sessions.filter((session: SessionWithThumbnail) => {

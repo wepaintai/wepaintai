@@ -3,6 +3,16 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@10.34.4",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@clerk/shared",
+      "@parcel/watcher",
+      "@tailwindcss/oxide",
+      "core-js",
+      "esbuild"
+    ]
+  },
   "scripts": {
     "dev:app": "vite dev --port 3000",
     "dev:convex:local": "convex dev --local",
@@ -11,12 +21,17 @@
     "dev:cloud": "run-p \"dev:app\" \"dev:convex:cloud\"",
     "dev:prod-db": "VITE_CONVEX_URL=https://cool-crow-733.convex.cloud pnpm dev:app",
     "build": "vite build",
-    "start": "node .output/server/index.mjs"
+    "start": "node .output/server/index.mjs",
+    "typecheck": "run-s typecheck:app typecheck:convex",
+    "typecheck:app": "tsc --noEmit",
+    "typecheck:convex": "tsc -p convex --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "dependencies": {
     "@clerk/clerk-react": "^5.33.0",
     "@clerk/tanstack-start": "^0.11.5",
-    "@convex-dev/auth": "^0.0.87",
     "@polar-sh/nextjs": "^0.4.2",
     "@polar-sh/sdk": "^0.34.3",
     "@tailwindcss/forms": "^0.5.10",
@@ -44,7 +59,17 @@
     "zod": "^4.0.4"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.1.0",
     "@types/react": "^19.0.8",
-    "npm-run-all": "^4.1.5"
+    "@types/react-dom": "^19.2.3",
+    "eslint": "^10.6.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.7.0",
+    "npm-run-all": "^4.1.5",
+    "prettier": "^3.9.4",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.63.0"
   }
 }

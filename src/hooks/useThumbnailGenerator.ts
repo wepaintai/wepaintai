@@ -2,11 +2,11 @@ import { useEffect, useRef } from 'react'
 import { useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import { Id } from '../../convex/_generated/dataModel'
-import type { CanvasRef } from '../components/Canvas'
+import type { CanvasRef } from '../components/KonvaCanvas'
 
 interface UseThumbnailGeneratorOptions {
   sessionId?: Id<"paintingSessions">
-  canvasRef: React.RefObject<CanvasRef>
+  canvasRef: React.RefObject<CanvasRef | null>
   interval?: number // Default: 30 seconds
   enabled?: boolean
 }
@@ -19,7 +19,7 @@ export function useThumbnailGenerator({
 }: UseThumbnailGeneratorOptions) {
   const updateThumbnail = useMutation(api.paintingSessions.updateSessionThumbnail)
   const lastThumbnailRef = useRef<string>('')
-  const intervalRef = useRef<NodeJS.Timeout>()
+  const intervalRef = useRef<NodeJS.Timeout | undefined>(undefined)
 
   useEffect(() => {
     if (!enabled || !sessionId) {
