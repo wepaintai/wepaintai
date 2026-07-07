@@ -23,7 +23,6 @@ A real-time collaborative painting app with AI-powered image generation, built w
 - Node.js (v18+ recommended)
 - pnpm package manager
 - Convex account (free tier available for local development)
-- Clerk account for authentication (optional for local dev)
 
 ### Installation
 
@@ -41,10 +40,6 @@ A real-time collaborative painting app with AI-powered image generation, built w
 3. **Set up environment variables:**
    Create a `.env.local` file:
    ```bash
-   # Required for authentication (get from Clerk dashboard)
-   VITE_CLERK_PUBLISHABLE_KEY=your_clerk_publishable_key
-   VITE_CLERK_FRONTEND_API_URL=your_clerk_frontend_api_url
-   
    # For local development (disable auth)
    VITE_AUTH_DISABLED=true
    
@@ -80,7 +75,7 @@ npx convex deploy     # Deploy backend to Convex cloud
 - **Frontend**: TanStack Start (React 19 + file-based routing)
 - **Canvas**: Konva.js for high-performance 2D graphics
 - **Backend**: Convex (real-time serverless database)
-- **Authentication**: Clerk (optional, can be disabled for local dev)
+- **Authentication**: Better Auth (self-hosted, optional for local dev)
 - **AI**: Replicate API (Flux Kontext Pro model)
 - **Styling**: Tailwind CSS
 - **Language**: TypeScript
@@ -177,7 +172,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [Convex](https://convex.dev) for the amazing real-time backend
 - [Konva.js](https://konvajs.org) for powerful canvas capabilities
 - [Replicate](https://replicate.com) for AI image generation
-- [Clerk](https://clerk.com) for authentication
+- [Better Auth](https://www.better-auth.com) for authentication
 - [perfect-freehand](https://github.com/steveruizok/perfect-freehand) for smooth drawing
 - The open source community for inspiration and support
 

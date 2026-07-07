@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react'
-import { useUser } from '@clerk/tanstack-start'
+import { useAuthState } from '../lib/auth-client'
 import { KonvaCanvas, CanvasRef } from './KonvaCanvas'
 import { ToolPanel, Layer } from './ToolPanel'
 import { type BrushSettings } from './BrushSettingsModal'
@@ -169,7 +169,7 @@ function AIGenerationModalWrapper({
 }
 
 export function PaintingView() {
-  const { isSignedIn, isLoaded } = useUser()
+  const { isSignedIn, isLoaded } = useAuthState()
   const authDisabled = import.meta.env.VITE_AUTH_DISABLED === 'true'
   const effectiveIsSignedIn = authDisabled || isSignedIn
   const canvasRef = useRef<CanvasRef | null>(null)
@@ -364,7 +364,7 @@ export function PaintingView() {
   }, [paintLayers, activePaintLayerId])
 
   // Create a new session or join existing one on mount
-  // Wait until Clerk auth state is loaded (unless auth is disabled)
+  // Wait until auth state is loaded (unless auth is disabled)
   useEffect(() => {
     const initSession = async () => {
       try {

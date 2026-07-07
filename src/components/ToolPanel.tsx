@@ -31,7 +31,7 @@ import {
 import { AuthModal } from './AuthModal'
 import { LibraryModal } from './LibraryModal'
 import { BrushSettingsModal, type BrushSettings } from './BrushSettingsModal'
-import { useAuth, useUser } from '@clerk/tanstack-start'
+import { useAuthState } from '../lib/auth-client'
 import { useLibrary } from '../hooks/useLibrary'
 import { useClipboardContext } from '../context/ClipboardContext'
 import { DraggableWindow } from './DraggableWindow'
@@ -616,9 +616,8 @@ export function ToolPanel({
   canUndo = true,
   canRedo = true,
 }: ToolPanelProps) {
-  const { userId, isLoaded } = useAuth()
+  const { userId, isLoaded, isSignedIn, user } = useAuthState()
   const { setIsMouseOverToolbox } = useClipboardContext()
-  const { isSignedIn, user } = useUser()
   const [internalSelectedTool, setInternalSelectedTool] = React.useState('brush')
   const selectedTool = externalSelectedTool || internalSelectedTool
   

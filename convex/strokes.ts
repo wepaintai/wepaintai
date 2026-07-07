@@ -36,7 +36,7 @@ export const addStroke = mutation({
       if (identity) {
         const user = await ctx.db
           .query("users")
-          .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+          .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
           .first();
         if (!user || session.createdBy !== user._id) {
           // Fall through to guest key check
@@ -145,7 +145,7 @@ export const getSessionStrokes = query({
       if (identity) {
         const user = await ctx.db
           .query("users")
-          .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+          .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
           .first();
         if (!user || session.createdBy !== user._id) {
           if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
@@ -213,7 +213,7 @@ export const getLayerStrokes = query({
       if (identity) {
         const user = await ctx.db
           .query("users")
-          .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+          .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
           .first();
         if (!user || session.createdBy !== user._id) {
           if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
@@ -267,7 +267,7 @@ export const getStrokesAfter = query({
       if (identity) {
         const user = await ctx.db
           .query("users")
-          .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+          .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
           .first();
         if (!user || session.createdBy !== user._id) {
           if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
@@ -670,7 +670,7 @@ export const getUndoRedoAvailability = query({
       if (identity) {
         const user = await ctx.db
           .query("users")
-          .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+          .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
           .first();
         authorized = !!user && session.createdBy === user._id;
       }

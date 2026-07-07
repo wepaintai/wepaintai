@@ -1,6 +1,7 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
+import { createUserWithWelcomeTokens } from "./users";
 
 /**
  * Create a new painting session
@@ -23,39 +24,25 @@ export const createSession = mutation({
       console.log("[createSession] Identity:", identity ? { subject: identity.subject, email: identity.email } : null);
       
       if (identity) {
-        // Find the user by their Clerk ID
+        // Find the user by their Better Auth ID
         const user = await ctx.db
           .query("users")
-          .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+          .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
           .first();
-        
+
         console.log("[createSession] Found user:", user ? { _id: user._id, email: user.email } : null);
-        
+
         if (user) {
           userId = user._id;
         } else {
-          // Create the user if they don't exist
+          // Fallback: the signup trigger normally creates the user row
           console.log("[createSession] Creating new user for:", identity.email);
-          userId = await ctx.db.insert("users", {
-            clerkId: identity.subject,
+          userId = await createUserWithWelcomeTokens(ctx, {
+            authId: identity.subject,
             email: identity.email,
-            name: identity.name || identity.givenName || identity.email?.split("@")[0] || "User",
-            tokens: 10, // Initial 10 tokens for new users
-            lifetimeTokensUsed: 0,
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
+            name: identity.name || identity.givenName,
           });
           console.log("[createSession] Created user with ID:", userId);
-          
-          // Record initial token grant
-          await ctx.db.insert("tokenTransactions", {
-            userId,
-            type: "initial",
-            amount: 10,
-            balance: 10,
-            description: "Welcome bonus - 10 free tokens",
-            createdAt: Date.now(),
-          });
         }
       } else {
         console.log("[createSession] No identity found - creating guest session");
@@ -140,7 +127,7 @@ export const getSession = query({
     if (identity) {
       const user = await ctx.db
         .query("users")
-        .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+        .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
         .first();
       if (user && session.createdBy === user._id) return session;
     }
@@ -224,10 +211,10 @@ export const getUserSessions = query({
       return [];
     }
 
-    // Find the user by their Clerk ID
+    // Find the user by their Better Auth ID
     const user = await ctx.db
       .query("users")
-      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
       .first();
 
     if (!user) {
@@ -328,7 +315,7 @@ export const updateSessionName = mutation({
     // Find the user
     const user = await ctx.db
       .query("users")
-      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
       .first();
 
     // Check if user owns this session
@@ -363,7 +350,7 @@ export const deleteSession = mutation({
     // Find the user
     const user = await ctx.db
       .query("users")
-      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
       .first();
 
     // Check if user owns this session
@@ -443,7 +430,7 @@ export const getAIPrompts = query({
       if (identity) {
         const user = await ctx.db
           .query("users")
-          .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+          .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
           .first();
         authorized = !!user && session.createdBy === user._id;
       }
@@ -479,7 +466,7 @@ export const claimSessionOwnership = mutation({
 
     const user = await ctx.db
       .query("users")
-      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
       .first();
     if (!user) return;
 
@@ -505,7 +492,7 @@ export const setSessionVisibility = mutation({
     if (identity) {
       const user = await ctx.db
         .query("users")
-        .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+        .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
         .first();
       if (!user) throw new Error("User not found");
       if (session.createdBy !== user._id) {

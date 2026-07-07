@@ -2,14 +2,12 @@ import React, { useState } from 'react'
 import { useQuery, useAction } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import { Coins, Loader2 } from 'lucide-react'
-import { useAuth } from '@clerk/tanstack-start'
 
 interface TokenDisplayProps {
   className?: string
 }
 
 export function TokenDisplay({ className = '' }: TokenDisplayProps) {
-  const { userId } = useAuth()
   const [showPurchaseModal, setShowPurchaseModal] = useState(false)
   const [purchasing, setPurchasing] = useState(false)
   const [selectedProduct, setSelectedProduct] = useState<'50' | '125'>('125')

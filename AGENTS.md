@@ -16,7 +16,7 @@
 - `pnpm build`: Production build (SSR via Nitro/TanStack Start).
 - `pnpm start`: Start built server from `.output/`.
 
-Environment: copy `.env.example` to `.env.local` and fill Clerk, Convex, and other keys. For local Convex, run commands above; for cloud, ensure your Convex deployment is configured.
+Environment: copy `.env.example` to `.env.local` and fill Convex and other keys. For local Convex, run commands above; for cloud, ensure your Convex deployment is configured.
 
 ## Coding Style & Naming
 - Language: TypeScript, React function components, hooks-first.
@@ -39,4 +39,4 @@ Environment: copy `.env.example` to `.env.local` and fill Clerk, Convex, and oth
 ## Security & Configuration
 - Never commit secrets; use `.env.local`.
 - Convex: changing schema/migrations requires coordination and clear PR notes.
-- Authentication: Clerk config must align across app and Convex.
+- Authentication: Better Auth config must align across app and Convex (SITE_URL, BETTER_AUTH_SECRET on the deployment).
