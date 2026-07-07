@@ -247,6 +247,9 @@ export class P2PManager {
           const signalIds = signals.map(s => s.id);
           await this.convexClient.mutation(api.webrtc.deleteSignals, {
             signalIds,
+            sessionId: this.sessionId,
+            peerId: this.peerId,
+            guestKey: this.guestKey,
           });
         }
       } catch (error) {
@@ -393,6 +396,7 @@ export class P2PManager {
       await this.convexClient.mutation(api.webrtc.leaveP2PSession, {
         sessionId: this.sessionId,
         peerId: this.peerId,
+        guestKey: this.guestKey,
       });
     } catch (error) {
       console.error('Error leaving P2P session:', error);
