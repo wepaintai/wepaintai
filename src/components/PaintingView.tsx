@@ -355,7 +355,7 @@ export function PaintingView() {
   useEffect(() => {
     if (!paintLayers) return
     const currentIds = new Set(paintLayers.map(pl => pl._id))
-    if (activePaintLayerId && !currentIds.has(activePaintLayerId)) {
+    if (activePaintLayerId && !currentIds.has(activePaintLayerId as Id<"paintLayers">)) {
       const fallback = paintLayers[0]
       if (fallback) {
         setActivePaintLayerId(fallback._id)

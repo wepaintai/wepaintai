@@ -30,7 +30,7 @@ export function P2PDebugPanel({
         setConvexCallCount(count);
         
         // Log mutation details
-        if (args[1]?.body) {
+        if (typeof args[1]?.body === 'string') {
           try {
             const body = JSON.parse(args[1].body);
             if (body.path?.includes('updateLiveStroke')) {

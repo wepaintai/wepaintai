@@ -453,12 +453,13 @@ export const restoreLastDeletedStroke = mutation({
     let lastDeletedStroke = null;
     
     // Use lastDeletedStrokeOrder for direct lookup if available
-    if (session.lastDeletedStrokeOrder !== undefined && session.lastDeletedStrokeOrder !== null) {
+    const lastDeletedStrokeOrder = session.lastDeletedStrokeOrder;
+    if (lastDeletedStrokeOrder !== undefined && lastDeletedStrokeOrder !== null) {
       lastDeletedStroke = await ctx.db
         .query("deletedStrokes")
-        .withIndex("by_session_stroke", (q) => 
+        .withIndex("by_session_stroke", (q) =>
           q.eq("sessionId", args.sessionId)
-           .eq("strokeOrder", session.lastDeletedStrokeOrder)
+           .eq("strokeOrder", lastDeletedStrokeOrder)
         )
         .unique();
     }

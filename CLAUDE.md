@@ -19,9 +19,14 @@ pnpm dev:convex:cloud # Cloud Convex backend only
 
 # Convex deployment
 npx convex deploy     # Deploy backend to production
+
+# Quality checks
+pnpm typecheck        # TypeScript check (app + convex)
+pnpm lint             # ESLint (existing debt is reported as warnings)
+pnpm format           # Prettier write / format:check to verify
 ```
 
-Note: No test or lint commands are currently configured.
+Note: No test runner is configured yet.
 
 ## Architecture
 

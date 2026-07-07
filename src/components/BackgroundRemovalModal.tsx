@@ -91,7 +91,7 @@ export function BackgroundRemovalModal({
         onRemovalComplete(result.imageUrl)
         onClose()
       } else {
-        setError(result.error || 'Background removal failed')
+        setError('Background removal failed')
       }
     } catch (err) {
       setError('Failed to remove background. Please try again.')
@@ -185,7 +185,7 @@ export function BackgroundRemovalModal({
             </span>
           </div>
           
-          {tokenBalance !== undefined && tokenBalance < 1 && (
+          {tokenBalance != null && tokenBalance.tokens < 1 && (
             <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
               <p className="text-sm text-red-400">Insufficient tokens. You need at least 1 token.</p>
             </div>
@@ -208,7 +208,7 @@ export function BackgroundRemovalModal({
           </button>
           <button
             onClick={handleRemoveBackground}
-            disabled={isRemoving || (tokenBalance !== undefined && tokenBalance < 1)}
+            disabled={isRemoving || (tokenBalance != null && tokenBalance.tokens < 1)}
             className="flex-1 px-4 py-2 bg-purple-500 hover:bg-purple-600 disabled:bg-purple-500/50 text-white rounded-lg transition-colors flex items-center justify-center gap-2 disabled:cursor-not-allowed"
           >
             {isRemoving ? (
@@ -227,7 +227,7 @@ export function BackgroundRemovalModal({
       </div>
       
       {/* Add checkered background pattern styles */}
-      <style jsx>{`
+      <style>{`
         .bg-checkered {
           background-image: 
             linear-gradient(45deg, #333 25%, transparent 25%),

@@ -38,7 +38,7 @@ export function useP2PPainting({
   const convex = useConvex();
   const p2pManagerRef = useRef<P2PManager | null>(null);
   const [isConnected, setIsConnected] = useState(false);
-  const [connectionMode, setConnectionMode] = useState<ConnectionMode>('fallback');
+  const [connectionMode, setConnectionMode] = useState<ConnectionMode>('disconnected');
   const [remoteStrokes, setRemoteStrokes] = useState<Map<string, RemoteStroke>>(new Map());
   const [remoteCursors, setRemoteCursors] = useState<Map<string, { x: number; y: number; drawing: boolean }>>(new Map());
   const [metrics, setMetrics] = useState<P2PMetrics | null>(null);
