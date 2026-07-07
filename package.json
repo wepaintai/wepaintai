@@ -22,6 +22,8 @@
     "dev:prod-db": "VITE_CONVEX_URL=https://cool-crow-733.convex.cloud pnpm dev:app",
     "build": "vite build",
     "start": "node .output/server/index.mjs",
+    "deploy:convex": "convex deploy --env-file selfhost/.env.convex",
+    "backup:convex": "selfhost/bin/backup.sh",
     "typecheck": "run-s typecheck:app typecheck:convex",
     "typecheck:app": "tsc --noEmit",
     "typecheck:convex": "tsc -p convex --noEmit",

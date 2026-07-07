@@ -9,6 +9,10 @@ node_modules/
 .env.production
 .env.staging
 
+# Self-hosting secrets (examples are committed, real files are not)
+selfhost/.env
+selfhost/.env.convex
+
 # System Files
 .DS_Store
 Thumbs.db

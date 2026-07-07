@@ -1,0 +1,31 @@
+# Cloudflare Tunnel configuration for wepaintai.
+#
+# Setup:
+#   brew install cloudflared
+#   cloudflared tunnel login
+#   cloudflared tunnel create wepaintai
+#   cp config.example.yml ~/.cloudflared/config.yml   # then edit
+#   cloudflared tunnel route dns wepaintai app.YOUR_DOMAIN
+#   cloudflared tunnel route dns wepaintai convex.YOUR_DOMAIN
+#   cloudflared tunnel route dns wepaintai convex-site.YOUR_DOMAIN
+#   sudo cloudflared service install   # runs as a launchd daemon
+
+tunnel: wepaintai
+credentials-file: /Users/travisirby/.cloudflared/TUNNEL_ID.json
+
+ingress:
+  # The app (TanStack Start node server)
+  - hostname: app.YOUR_DOMAIN
+    service: http://localhost:3000
+
+  # Convex deployment API + WebSocket sync.
+  # Cloudflare proxies WebSockets on this route automatically.
+  - hostname: convex.YOUR_DOMAIN
+    service: http://localhost:3210
+
+  # Convex HTTP actions (Polar webhook endpoint lives here)
+  - hostname: convex-site.YOUR_DOMAIN
+    service: http://localhost:3211
+
+  # Do NOT expose the dashboard (6791) — LAN only.
+  - service: http_status:404
