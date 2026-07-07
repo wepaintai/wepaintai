@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Nightly Convex backup at 03:30.
+  Install:
+    cp selfhost/launchd/com.wepaintai.backup.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.wepaintai.backup.plist
+  Logs: /tmp/wepaintai-backup.log
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.wepaintai.backup</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/travisirby/Documents/GitHub/wepaintai/selfhost/bin/backup.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/tmp/wepaintai-backup.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/wepaintai-backup.log</string>
+</dict>
+</plist>
