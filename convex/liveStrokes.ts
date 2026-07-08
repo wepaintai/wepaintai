@@ -20,11 +20,18 @@ export const updateLiveStroke = mutation({
     brushSize: v.number(),
     opacity: v.number(),
     colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))),
+    guestKey: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) {
+      throw new Error("Session not found");
+    }
+    await assertCanModifySession(ctx, session, args.guestKey);
+
     const now = Date.now();
-    
+
     // Find existing live stroke for this user in this session
     const existingLiveStroke = await ctx.db
       .query("liveStrokes")
@@ -125,9 +132,33 @@ export const clearLiveStroke = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
     userId: v.optional(v.id("users")),
+    guestKey: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) {
+      // Session is gone; nothing to clear
+      return null;
+    }
+    await assertCanModifySession(ctx, session, args.guestKey);
+
+    // A caller may only clear their own live stroke: a userId-scoped stroke
+    // requires the caller to be signed in as that user
+    if (args.userId) {
+      const identity = await ctx.auth.getUserIdentity();
+      if (!identity) {
+        throw new Error("Unauthorized");
+      }
+      const user = await ctx.db
+        .query("users")
+        .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
+        .first();
+      if (!user || user._id !== args.userId) {
+        throw new Error("Unauthorized");
+      }
+    }
+
     const liveStroke = await ctx.db
       .query("liveStrokes")
       .withIndex("by_user_session", (q) => 
