@@ -106,6 +106,20 @@ at the tunnel: `pgrep -fl "cloudflared tunnel"`.
   Tailscale `ssh -L 6791:localhost:6791 ...`), login with the admin
   key from `selfhost/.env.convex`. Deliberately not tunnel-exposed.
 
+## PR previews (also on the mini)
+
+Open same-repo PRs are auto-served at `https://preview-pr-<N>.wepaint.ai`
+by a GitHub Actions self-hosted runner on the mini (launchd agent
+`actions.runner.wepaintai-wepaintai.mini`, `~/actions-runner`). Each
+preview is a launchd agent `com.wepaintai.preview.pr-<N>` on port
+`3300 + (N % 700)`, routed by Caddy on :3299 (`brew services`, config
+`~/apps/wepaintai-previews/Caddyfile`) behind the tunnel's
+`*.wepaint.ai` wildcard ingress rule + wildcard DNS CNAME. Previews
+share the LIVE prod Convex backend — nothing under convex/ is deployed
+for them. Full runbook: `selfhost/preview/README.md`. When debugging the
+tunnel config, the wildcard rule must stay AFTER the exact prod
+hostnames and BEFORE the http_status:404 catch-all.
+
 ## Recovery notes
 
 - Nightly backups (03:30, 14 kept): `~/Backups/wepaintai/selfhosted/`
