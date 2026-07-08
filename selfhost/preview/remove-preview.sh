@@ -12,9 +12,9 @@ case "$PR" in *[!0-9]*) echo "PR number must be numeric" >&2; exit 1 ;; esac
 ROOT="$HOME/apps/wepaintai-previews"
 DEST="$ROOT/prs/pr-$PR"
 
-if [ -f "$DEST/pid" ]; then
-  kill "$(cat "$DEST/pid")" 2>/dev/null || true
-fi
+LABEL="com.wepaintai.preview.pr-$PR"
+launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+rm -f "$HOME/Library/LaunchAgents/$LABEL.plist"
 rm -rf "$DEST"
 rm -f "$ROOT/caddy/pr-$PR.caddy" "$ROOT/logs/pr-$PR.log"
 caddy reload --config "$ROOT/Caddyfile" --adapter caddyfile

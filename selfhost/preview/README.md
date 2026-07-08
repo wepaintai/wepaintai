@@ -28,7 +28,7 @@ than running a parallel stack. Consequences:
 | Cleanup workflow | [.github/workflows/cleanup-preview.yml](../../.github/workflows/cleanup-preview.yml) — `pull_request` closed |
 | Build + serve script | [deploy-preview.sh](deploy-preview.sh) (run from the PR checkout on the mini) |
 | Teardown script | [remove-preview.sh](remove-preview.sh) (deploy installs a copy at `~/apps/wepaintai-previews/bin/` so cleanup needs no checkout) |
-| Per-PR node servers | mini, `~/apps/wepaintai-previews/prs/pr-<N>/` on port `3300 + (N % 700)`, logs in `~/apps/wepaintai-previews/logs/` |
+| Per-PR node servers | mini, launchd agents `com.wepaintai.preview.pr-<N>` serving `~/apps/wepaintai-previews/prs/pr-<N>/` on port `3300 + (N % 700)`, logs in `~/apps/wepaintai-previews/logs/` |
 | Hostname router | Caddy on `:3299` (`brew services`, config `~/apps/wepaintai-previews/Caddyfile`, per-PR snippets in `caddy/*.caddy`) |
 | Public routing | Cloudflare Tunnel ingress rule `*.wepaint.ai → 127.0.0.1:3299` (in the shared `~/.cloudflared/config.yml`, after the exact prod hostnames) + wildcard DNS `*.wepaint.ai` CNAME to the tunnel |
 
@@ -46,7 +46,7 @@ than running a parallel stack. Consequences:
 
 ```bash
 # list running previews
-ssh claw@claws-mac-mini.tailc81e10.ts.net 'ls ~/apps/wepaintai-previews/prs; pgrep -fl "wepaintai-previews"'
+ssh claw@claws-mac-mini.tailc81e10.ts.net 'launchctl list | grep com.wepaintai.preview'
 
 # manually remove one
 ssh claw@claws-mac-mini.tailc81e10.ts.net '~/apps/wepaintai-previews/bin/remove-preview.sh <N>'
@@ -55,6 +55,8 @@ ssh claw@claws-mac-mini.tailc81e10.ts.net '~/apps/wepaintai-previews/bin/remove-
 ssh claw@claws-mac-mini.tailc81e10.ts.net 'tail -50 ~/apps/wepaintai-previews/logs/pr-<N>.log'
 ```
 
-Previews do not survive a mini reboot (plain `nohup` processes, no launchd);
-push to the PR again to redeploy. If a preview 404s, check Caddy
-(`launchctl list | grep caddy`) and the tunnel (`pgrep -fl cloudflared`).
+Previews run as launchd agents (a plain background process would be killed
+by the runner's orphan-process cleanup at job end), so they survive crashes
+and mini reboots. If a preview 404s, check Caddy (`launchctl list | grep
+caddy`) and the tunnel (`pgrep -fl cloudflared`); a 502 means the node
+agent is down (`tail` its log above).

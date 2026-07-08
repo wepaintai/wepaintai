@@ -37,18 +37,43 @@ corepack pnpm build
 cp "$(cd "$(dirname "$0")" && pwd)/remove-preview.sh" "$ROOT/bin/remove-preview.sh"
 chmod +x "$ROOT/bin/remove-preview.sh"
 
-# Replace any previous instance of this PR's preview.
-if [ -f "$DEST/pid" ]; then
-  kill "$(cat "$DEST/pid")" 2>/dev/null || true
-  sleep 1
-fi
+# Replace any previous instance of this PR's preview. Each preview runs as
+# a launchd agent (like prod's com.wepaintai.app): a plain background
+# process would be killed by the runner's orphan-process cleanup when the
+# job ends, and launchd also restarts previews after a mini reboot.
+LABEL="com.wepaintai.preview.pr-$PR"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+sleep 1
 mkdir -p "$DEST"
 rsync -a --delete .output/ "$DEST/output/"
 
-PORT="$PORT" HOST=127.0.0.1 nohup node "$DEST/output/server/index.mjs" \
-  >> "$ROOT/logs/pr-$PR.log" 2>&1 &
-echo $! > "$DEST/pid"
-disown
+NODE_BIN="$(command -v node)"
+cat > "$PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key><string>$LABEL</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>$NODE_BIN</string>
+		<string>$DEST/output/server/index.mjs</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PORT</key><string>$PORT</string>
+		<key>HOST</key><string>127.0.0.1</string>
+	</dict>
+	<key>WorkingDirectory</key><string>$DEST</string>
+	<key>StandardOutPath</key><string>$ROOT/logs/pr-$PR.log</string>
+	<key>StandardErrorPath</key><string>$ROOT/logs/pr-$PR.log</string>
+	<key>RunAtLoad</key><true/>
+	<key>KeepAlive</key><true/>
+</dict>
+</plist>
+EOF
+launchctl bootstrap "gui/$(id -u)" "$PLIST"
 
 cat > "$ROOT/caddy/pr-$PR.caddy" <<EOF
 @pr$PR host $HOST_NAME
