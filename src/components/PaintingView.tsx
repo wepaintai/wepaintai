@@ -240,8 +240,15 @@ export function PaintingView() {
   
   // Removed localLastStrokeInfo - now using lastStrokeInfo from usePaintingSession
 
-  const { session, createNewSession, presence, currentUser, isLoading, clearSession, undoLastStroke, redoLastStroke, strokes: rawStrokes, undoRedoAvailability, lastStrokeInfo } = usePaintingSession(sessionId)
-  
+  const { session, sessionStatus, createNewSession, presence, currentUser, isLoading, clearSession, undoLastStroke, redoLastStroke, strokes: rawStrokes, undoRedoAvailability, lastStrokeInfo } = usePaintingSession(sessionId)
+
+  // Only hit session-scoped queries once the session is confirmed accessible;
+  // a malformed URL id would otherwise throw validation errors in every query.
+  const sessionReady = !!sessionId && sessionStatus === 'ok'
+  const validSessionId = sessionReady ? sessionId : null
+  const sessionError: 'not_found' | 'unauthorized' | null =
+    sessionId && (sessionStatus === 'not_found' || sessionStatus === 'unauthorized') ? sessionStatus : null
+
   // Filter out strokes that are pending undo for optimistic UI
   // Strokes are already pre-sorted in usePaintingSession for performance
   const strokes = useMemo(() => {
@@ -255,7 +262,7 @@ export function PaintingView() {
   const updateAIImageTransform = useMutation(api.images.updateAIImageTransform)
   
   // Get images to find AI-generated ones
-  const { images, updateImageTransform, deleteImage, changeLayerOrder } = useSessionImages(sessionId)
+  const { images, updateImageTransform, deleteImage, changeLayerOrder } = useSessionImages(validSessionId)
   const aiGeneratedImages = images.filter(img => (img as any).type === 'ai-generated')
   
   // Paint layer mutations
@@ -264,15 +271,15 @@ export function PaintingView() {
   
   // Thumbnail generation
   const { generateNow: generateThumbnail } = useThumbnailGenerator({
-    sessionId: sessionId || undefined,
+    sessionId: validSessionId || undefined,
     canvasRef,
     interval: 30000, // Generate thumbnail every 30 seconds
-    enabled: !!sessionId
+    enabled: sessionReady
   })
-  const paintLayerSettings = useQuery(api.paintLayer.getPaintLayerSettings, sessionId ? { sessionId, guestKey: (typeof window !== 'undefined' ? (JSON.parse(localStorage.getItem('wepaint_guest_keys_v1') || '{}') || {})[sessionId as any] : undefined) } : 'skip')
-  
+  const paintLayerSettings = useQuery(api.paintLayer.getPaintLayerSettings, validSessionId ? { sessionId: validSessionId, guestKey: (typeof window !== 'undefined' ? (JSON.parse(localStorage.getItem('wepaint_guest_keys_v1') || '{}') || {})[validSessionId as any] : undefined) } : 'skip')
+
   // Multiple paint layers support
-  const paintLayers = useQuery(api.paintLayers.getPaintLayers, sessionId ? { sessionId, guestKey: (typeof window !== 'undefined' ? (JSON.parse(localStorage.getItem('wepaint_guest_keys_v1') || '{}') || {})[sessionId as any] : undefined) } : 'skip')
+  const paintLayers = useQuery(api.paintLayers.getPaintLayers, validSessionId ? { sessionId: validSessionId, guestKey: (typeof window !== 'undefined' ? (JSON.parse(localStorage.getItem('wepaint_guest_keys_v1') || '{}') || {})[validSessionId as any] : undefined) } : 'skip')
   const createPaintLayer = useMutation(api.paintLayers.createPaintLayer)
   const updatePaintLayer = useMutation(api.paintLayers.updatePaintLayer)
   const deletePaintLayer = useMutation(api.paintLayers.deletePaintLayer)
@@ -301,7 +308,7 @@ export function PaintingView() {
   }, [strokes, sessionId, currentUser])
   
   // Get AI generated images separately
-  const aiImages = useQuery(api.images.getAIGeneratedImages, sessionId ? { sessionId, guestKey: (typeof window !== 'undefined' ? (JSON.parse(localStorage.getItem('wepaint_guest_keys_v1') || '{}') || {})[sessionId as any] : undefined) } : 'skip')
+  const aiImages = useQuery(api.images.getAIGeneratedImages, validSessionId ? { sessionId: validSessionId, guestKey: (typeof window !== 'undefined' ? (JSON.parse(localStorage.getItem('wepaint_guest_keys_v1') || '{}') || {})[validSessionId as any] : undefined) } : 'skip')
   const updateAIImageTransformMutation = useMutation(api.images.updateAIImageTransform)
   const deleteAIImageMutation = useMutation(api.images.deleteAIImage)
   const updateAIImageLayerOrderMutation = useMutation(api.images.updateAIImageLayerOrder)
@@ -311,19 +318,16 @@ export function PaintingView() {
     // console.log('[PaintingView] AI images from direct query:', aiImages)
   }, [aiImages])
 
-  // Unauthorized overlay if session is private and user is not owner
-  const isUnauthorized = sessionId && session === null && !isLoading
-  
   // P2P connection status
-  const { 
-    isConnected: isP2PConnected, 
-    connectionMode, 
+  const {
+    isConnected: isP2PConnected,
+    connectionMode,
     metrics: p2pMetrics,
-    remoteStrokes 
+    remoteStrokes
   } = useP2PPainting({
-    sessionId,
+    sessionId: validSessionId,
     userId: currentUser.id ? currentUser.id.toString() : currentUser.name, // Convert ID to string
-    enabled: !!currentUser.id, // Only enable when user is created
+    enabled: !!currentUser.id && sessionReady, // Only enable when user is created and session is accessible
   })
 
   // Initialize P2P logger in development
@@ -414,6 +418,27 @@ export function PaintingView() {
       initSession()
     }
   }, [createNewSession, sessionId, effectiveIsSignedIn, isLoaded, authDisabled])
+
+  // Surface an error instead of spinning forever if session load/creation hangs
+  // (backend unreachable, session creation failed, etc.)
+  const [loadTimedOut, setLoadTimedOut] = useState(false)
+  useEffect(() => {
+    if (sessionReady || sessionError) {
+      setLoadTimedOut(false)
+      return
+    }
+    const timer = setTimeout(() => setLoadTimedOut(true), 20000)
+    return () => clearTimeout(timer)
+  }, [sessionReady, sessionError])
+
+  // Leave the broken session behind: drop any stored guest session and reload
+  // without the session param so a fresh painting is created.
+  const startNewPainting = useCallback(() => {
+    clearCurrentGuestSession()
+    const url = new URL(window.location.href)
+    url.searchParams.delete('session')
+    window.location.href = url.toString()
+  }, [])
 
   // Keep URL masked for guest-owned sessions; show for others and signed-in users
   useEffect(() => {
@@ -1011,10 +1036,10 @@ export function PaintingView() {
         </>
       )}
 
-      {sessionId ? (
+      {validSessionId ? (
         <KonvaCanvas
           ref={canvasRef}
-          sessionId={sessionId}
+          sessionId={validSessionId}
           color={color}
           size={size}
           opacity={opacity}
@@ -1037,10 +1062,33 @@ export function PaintingView() {
         />
       ) : (
         <div className="absolute inset-0 flex items-center justify-center bg-gray-100">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-            <p className="text-gray-600">Creating painting session...</p>
-          </div>
+          {!sessionError && (loadTimedOut ? (
+            <div className="text-center max-w-sm px-4">
+              <div className="text-gray-800 text-lg font-semibold mb-2">This is taking longer than expected</div>
+              <p className="text-gray-600 text-sm mb-4">
+                We couldn't {sessionId ? 'load' : 'create'} the painting session. Check your connection and try again.
+              </p>
+              <div className="flex items-center justify-center gap-2">
+                <button
+                  className="px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white text-sm"
+                  onClick={() => window.location.reload()}
+                >
+                  Try again
+                </button>
+                <button
+                  className="px-3 py-2 bg-gray-200 hover:bg-gray-300 rounded text-gray-800 text-sm"
+                  onClick={startNewPainting}
+                >
+                  Start a new painting
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="text-center">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+              <p className="text-gray-600">{sessionId ? 'Loading painting session...' : 'Creating painting session...'}</p>
+            </div>
+          ))}
         </div>
       )}
       {adminFeaturesEnabled && (
@@ -1107,21 +1155,36 @@ export function PaintingView() {
         canUndo={((hasLocalStrokes || lastStrokeInfo !== null || (undoRedoAvailability?.canUndo ?? false))) && !isMutating}
         canRedo={(undoRedoAvailability?.canRedo ?? false) && !isMutating}
       />
-      {isUnauthorized && (
+      {sessionError && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80">
           <div className="bg-black/90 border border-white/20 rounded-lg p-6 text-center max-w-sm">
-            <div className="text-white text-lg font-semibold mb-2">This session is private</div>
-            <div className="text-white/70 text-sm mb-4">Only the owner can view it unless it’s shared publicly.</div>
-            <button
-              className="px-3 py-2 bg-white/10 hover:bg-white/20 border border-white/20 rounded text-white text-sm"
-              onClick={() => {
-                const url = new URL(window.location.href)
-                url.searchParams.delete('session')
-                window.location.href = url.toString()
-              }}
-            >
-              Return to new canvas
-            </button>
+            {sessionError === 'not_found' ? (
+              <>
+                <div className="text-white text-lg font-semibold mb-2">This painting no longer exists</div>
+                <div className="text-white/70 text-sm mb-4">It may have been deleted, or the link may be incomplete or mistyped.</div>
+              </>
+            ) : (
+              <>
+                <div className="text-white text-lg font-semibold mb-2">This session is private</div>
+                <div className="text-white/70 text-sm mb-4">Only the owner can view it unless it’s shared publicly. If it’s yours, sign in to open it.</div>
+              </>
+            )}
+            <div className="flex items-center justify-center gap-2">
+              {sessionError === 'unauthorized' && (
+                <button
+                  className="px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white text-sm"
+                  onClick={() => { window.location.href = '/login' }}
+                >
+                  Sign in
+                </button>
+              )}
+              <button
+                className="px-3 py-2 bg-white/10 hover:bg-white/20 border border-white/20 rounded text-white text-sm"
+                onClick={startNewPainting}
+              >
+                Start a new painting
+              </button>
+            </div>
           </div>
         </div>
       )}
