@@ -88,14 +88,21 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
 
   // Queries
   const localGuestKey = guestKeyState || getGuestKey(sessionId as any);
-  const isGuest = !authenticatedUser;
-  const canAccessAsGuest = Boolean(localGuestKey);
-  // Always fetch session when we have an ID; backend will enforce access
-  const session = useQuery(
+  // Always fetch session when we have an ID; backend will enforce access.
+  // getSession accepts an arbitrary string and reports not_found for malformed
+  // IDs, so a mangled ?session= URL param never throws a validation error.
+  const sessionResult = useQuery(
     api.paintingSessions.getSession,
     sessionId ? { sessionId, guestKey: localGuestKey || undefined } : "skip"
   );
-  const canReadSessionData = Boolean(authenticatedUser) || canAccessAsGuest || (session?.isPublic === true);
+  const session = sessionResult?.status === "ok" ? sessionResult.session : null;
+  // 'loading' until both the session query and auth state have resolved, so
+  // the UI never flashes an unauthorized/not-found state for the owner.
+  const sessionStatus: 'loading' | 'ok' | 'not_found' | 'unauthorized' =
+    sessionResult === undefined || authenticatedUser === undefined
+      ? 'loading'
+      : sessionResult.status;
+  const canReadSessionData = sessionStatus === 'ok';
   
   const strokes = useQuery(
     api.strokes.getSessionStrokes,
@@ -134,8 +141,8 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
   
   // For viewer state, use user ID if authenticated, otherwise use name as viewer ID
   const viewerId = currentUser.id || currentUser.name;
-  const getViewerState = useQuery(api.viewerAcks.getViewerState, 
-    sessionId && viewerId ? { sessionId, viewerId } : "skip"
+  const getViewerState = useQuery(api.viewerAcks.getViewerState,
+    sessionId && viewerId && canReadSessionData ? { sessionId, viewerId } : "skip"
   );
 
   const localLastAckedStrokeOrderRef = useRef<number>(0);
@@ -515,6 +522,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
   return {
     // Data
     session,
+    sessionStatus,
     strokes: memoizedStrokes,
     lastStrokeInfo,
     presence: presence || [],
@@ -533,8 +541,6 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     clearLiveStrokeForUser,
     
     // State
-    isLoading: sessionId !== null && (
-      session === undefined || authenticatedUser === undefined || (isGuest && !canAccessAsGuest && session?.isPublic !== true)
-    ),
+    isLoading: sessionId !== null && sessionStatus === 'loading',
   };
 }

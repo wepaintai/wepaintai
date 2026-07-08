@@ -4,6 +4,7 @@ import { useAction, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import type { Id } from '../../convex/_generated/dataModel'
 import type { Layer } from './ToolPanel'
+import { getErrorMessage } from '../utils/errorMessage'
 
 interface BackgroundRemovalModalProps {
   isOpen: boolean
@@ -94,7 +95,7 @@ export function BackgroundRemovalModal({
         setError('Background removal failed')
       }
     } catch (err) {
-      setError('Failed to remove background. Please try again.')
+      setError(getErrorMessage(err, 'Failed to remove background. Please try again.'))
       console.error('Background removal error:', err)
     } finally {
       setIsRemoving(false)

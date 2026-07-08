@@ -12,13 +12,17 @@ export const removeBackground = action({
     console.log("[BG-REMOVAL] Starting background removal process");
 
     // Get the session to check ownership
-    const session = await ctx.runQuery(api.paintingSessions.getSession, {
+    const sessionResult = await ctx.runQuery(api.paintingSessions.getSession, {
       sessionId: args.sessionId,
     });
 
-    if (!session) {
+    if (sessionResult.status === "not_found") {
       throw new Error("Session not found");
     }
+    if (sessionResult.status !== "ok") {
+      throw new Error("You don't have permission to edit this painting");
+    }
+    const session = sessionResult.session;
 
     // Check authentication
     const identity = await ctx.auth.getUserIdentity();

@@ -82,6 +82,30 @@ export const createSession = mutation({
   },
 });
 
+const sessionObjectValidator = v.object({
+  _id: v.id("paintingSessions"),
+  _creationTime: v.number(),
+  name: v.optional(v.string()),
+  createdBy: v.optional(v.id("users")),
+  hasGuestOwner: v.boolean(),
+  isPublic: v.boolean(),
+  canvasWidth: v.number(),
+  canvasHeight: v.number(),
+  strokeCounter: v.number(),
+  paintLayerOrder: v.optional(v.number()),
+  paintLayerVisible: v.optional(v.boolean()),
+  backgroundImage: v.optional(v.string()),
+  thumbnailUrl: v.optional(v.string()),
+  lastModified: v.optional(v.number()),
+  recentStrokeOrders: v.optional(v.array(v.number())),
+  recentStrokeIds: v.optional(v.array(v.id("strokes"))),
+  deletedStrokeCount: v.optional(v.number()),
+  lastDeletedStrokeOrder: v.optional(v.number()),
+  lastAction: v.optional(v.string()),
+  lastClearBatchId: v.optional(v.string()),
+  aiPrompts: v.optional(v.array(v.string())),
+});
+
 /**
  * Strip guestOwnerKey before returning session docs to clients — exposing the
  * key would let any viewer impersonate the guest owner. Clients only need to
@@ -93,44 +117,31 @@ function sanitizeSession(session: Doc<"paintingSessions">) {
 }
 
 /**
- * Get session details
+ * Get session details.
+ *
+ * Accepts an arbitrary string so that malformed session IDs (e.g. share links
+ * truncated by a chat app) resolve to `not_found` instead of throwing an
+ * ArgumentValidationError, and distinguishes a deleted/nonexistent session
+ * from one the caller isn't allowed to view.
  */
 export const getSession = query({
   args: {
-    sessionId: v.id("paintingSessions"),
+    sessionId: v.string(),
     guestKey: v.optional(v.string()),
   },
   returns: v.union(
-    v.object({
-      _id: v.id("paintingSessions"),
-      _creationTime: v.number(),
-      name: v.optional(v.string()),
-      createdBy: v.optional(v.id("users")),
-      hasGuestOwner: v.boolean(),
-      isPublic: v.boolean(),
-      canvasWidth: v.number(),
-      canvasHeight: v.number(),
-      strokeCounter: v.number(),
-      paintLayerOrder: v.optional(v.number()),
-      paintLayerVisible: v.optional(v.boolean()),
-      backgroundImage: v.optional(v.string()),
-      thumbnailUrl: v.optional(v.string()),
-      lastModified: v.optional(v.number()),
-      recentStrokeOrders: v.optional(v.array(v.number())),
-      recentStrokeIds: v.optional(v.array(v.id("strokes"))),
-      deletedStrokeCount: v.optional(v.number()),
-      lastDeletedStrokeOrder: v.optional(v.number()),
-      lastAction: v.optional(v.string()),
-      lastClearBatchId: v.optional(v.string()),
-      aiPrompts: v.optional(v.array(v.string())),
-    }),
-    v.null()
+    v.object({ status: v.literal("ok"), session: sessionObjectValidator }),
+    v.object({ status: v.literal("not_found") }),
+    v.object({ status: v.literal("unauthorized") }),
   ),
   handler: async (ctx, args) => {
-    const session = await ctx.db.get(args.sessionId);
-    if (!session) return null;
+    const sessionId = ctx.db.normalizeId("paintingSessions", args.sessionId);
+    if (!sessionId) return { status: "not_found" as const };
 
-    if (session.isPublic) return sanitizeSession(session);
+    const session = await ctx.db.get(sessionId);
+    if (!session) return { status: "not_found" as const };
+
+    if (session.isPublic) return { status: "ok" as const, session: sanitizeSession(session) };
 
     // Private: only owner can view
     const identity = await ctx.auth.getUserIdentity();
@@ -139,14 +150,14 @@ export const getSession = query({
         .query("users")
         .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
         .first();
-      if (user && session.createdBy === user._id) return sanitizeSession(session);
+      if (user && session.createdBy === user._id) return { status: "ok" as const, session: sanitizeSession(session) };
     }
 
     // Guest ownership
     if (session.guestOwnerKey && args.guestKey && session.guestOwnerKey === args.guestKey) {
-      return sanitizeSession(session);
+      return { status: "ok" as const, session: sanitizeSession(session) };
     }
-    return null;
+    return { status: "unauthorized" as const };
   },
 });
 

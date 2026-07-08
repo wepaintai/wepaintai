@@ -1,5 +1,5 @@
-import React from 'react'
-import { X, Copy, Globe, Lock } from 'lucide-react'
+import React, { useRef, useState } from 'react'
+import { X, Copy, Check, Globe, Lock } from 'lucide-react'
 import { useQuery, useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import { Id } from '../../convex/_generated/dataModel'
@@ -13,14 +13,31 @@ interface ShareModalProps {
 
 export function ShareModal({ isOpen, onClose, sessionId }: ShareModalProps) {
   const localGuestKey = getGuestKey(sessionId)
-  const session = useQuery(api.paintingSessions.getSession, { sessionId, guestKey: localGuestKey || undefined })
+  const sessionResult = useQuery(api.paintingSessions.getSession, { sessionId, guestKey: localGuestKey || undefined })
+  const session = sessionResult?.status === 'ok' ? sessionResult.session : null
   const setVisibility = useMutation(api.paintingSessions.setSessionVisibility)
   const currentUser = useQuery(api.auth.getCurrentUser)
+  const [copied, setCopied] = useState(false)
+  const linkInputRef = useRef<HTMLInputElement>(null)
 
   if (!isOpen) return null
 
   const isOwner = (session && currentUser && session.createdBy === currentUser._id) || !!localGuestKey
   const shareUrl = `${window.location.origin}?session=${sessionId}`
+  const isPublic = !!session?.isPublic
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (err) {
+      console.error('Failed to copy link', err)
+      // Clipboard unavailable — select the text so the user can copy manually
+      linkInputRef.current?.focus()
+      linkInputRef.current?.select()
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-[110] flex items-center justify-center">
@@ -40,30 +57,46 @@ export function ShareModal({ isOpen, onClose, sessionId }: ShareModalProps) {
             <label className="text-xs text-white/60">Session link</label>
             <div className="mt-1 flex items-center gap-2">
               <input
+                ref={linkInputRef}
                 readOnly
                 value={shareUrl}
+                onFocus={(e) => e.target.select()}
                 className="flex-1 bg-white/10 border border-white/20 rounded px-2 py-1 text-sm text-white"
               />
               <button
                 className="px-2 py-1 bg-white/10 hover:bg-white/20 border border-white/20 rounded text-sm text-white flex items-center gap-1"
-                onClick={async () => {
-                  await navigator.clipboard.writeText(shareUrl)
-                }}
+                onClick={handleCopy}
               >
-                <Copy className="w-3.5 h-3.5" /> Copy
+                {copied ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-green-400" /> Copied
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5" /> Copy
+                  </>
+                )}
               </button>
             </div>
+            {copied && !isPublic && (
+              <div className="mt-2 text-xs text-yellow-300/80">
+                This session is private — recipients won't be able to open the link until you turn on Public access.
+              </div>
+            )}
           </div>
           <div className="flex items-center justify-between">
             <div>
               <div className="text-sm text-white/80">Public access</div>
               <div className="text-xs text-white/50">Allow anyone with the link to view and collaborate</div>
             </div>
-            <label className="inline-flex items-center cursor-pointer">
+            <label className="inline-flex items-center gap-2 cursor-pointer">
+              <span className={`text-xs ${isPublic ? 'text-green-400' : 'text-white/60'}`}>
+                {isPublic ? 'Public' : 'Private'}
+              </span>
               <input
                 type="checkbox"
                 className="sr-only peer"
-                checked={!!session?.isPublic}
+                checked={isPublic}
                 disabled={!isOwner}
                 onChange={async (e) => {
                   try {
@@ -73,7 +106,7 @@ export function ShareModal({ isOpen, onClose, sessionId }: ShareModalProps) {
                   }
                 }}
               />
-              <span className={`w-10 h-5 rounded-full transition-colors ${session?.isPublic ? 'bg-green-500' : 'bg-white/30'} ${!isOwner ? 'opacity-50' : ''}`}></span>
+              <span className={`w-10 h-5 rounded-full transition-colors ${isPublic ? 'bg-green-500' : 'bg-white/30'} ${!isOwner ? 'opacity-50' : ''}`}></span>
             </label>
           </div>
           {!isOwner && (
