@@ -5,7 +5,8 @@ import viteReact from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
-  plugins: [tanstackStart(), nitro(), viteReact(), tailwindcss()],
+  // serverDir enables nitro's server/ conventions (middleware/, plugins/, …)
+  plugins: [tanstackStart(), nitro({ serverDir: 'server' }), viteReact(), tailwindcss()],
   ssr: {
     // Required by @convex-dev/better-auth for TanStack Start SSR
     noExternal: ['@convex-dev/better-auth'],
