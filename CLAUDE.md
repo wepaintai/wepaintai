@@ -113,6 +113,9 @@ redirects to `/login`; both are a single "Continue with Google" button.
 - **Users**: app `users` rows link to Better Auth via `authId` (`identity.subject`).
   The `clerkId` field is vestigial from the pre-migration era; old rows keep it, new rows never set it.
 
+### PR Previews
+Every open same-repo PR is served at `https://preview-pr-<N>.wepaint.ai` (a sticky PR comment carries the URL). It's the prod frontend build of the branch against the **live production Convex backend** — `convex/` changes are not deployed, and sign-in is effectively guest-only. Built on the Mac mini's self-hosted runner; redeployed on every push, torn down on PR close. Details: `selfhost/preview/README.md`.
+
 ### Development Notes
 - Use `pnpm dev` for local development with free local backend
 - The admin panel (bottom-left debug info) is hidden in production
