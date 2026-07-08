@@ -1,6 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import { Id } from "./_generated/dataModel";
+import { Doc, Id } from "./_generated/dataModel";
 import { createUserWithWelcomeTokens } from "./users";
 
 /**
@@ -83,6 +83,16 @@ export const createSession = mutation({
 });
 
 /**
+ * Strip guestOwnerKey before returning session docs to clients — exposing the
+ * key would let any viewer impersonate the guest owner. Clients only need to
+ * know whether a guest owner exists.
+ */
+function sanitizeSession(session: Doc<"paintingSessions">) {
+  const { guestOwnerKey, ...rest } = session;
+  return { ...rest, hasGuestOwner: !!guestOwnerKey };
+}
+
+/**
  * Get session details
  */
 export const getSession = query({
@@ -96,7 +106,7 @@ export const getSession = query({
       _creationTime: v.number(),
       name: v.optional(v.string()),
       createdBy: v.optional(v.id("users")),
-      guestOwnerKey: v.optional(v.string()),
+      hasGuestOwner: v.boolean(),
       isPublic: v.boolean(),
       canvasWidth: v.number(),
       canvasHeight: v.number(),
@@ -120,7 +130,7 @@ export const getSession = query({
     const session = await ctx.db.get(args.sessionId);
     if (!session) return null;
 
-    if (session.isPublic) return session;
+    if (session.isPublic) return sanitizeSession(session);
 
     // Private: only owner can view
     const identity = await ctx.auth.getUserIdentity();
@@ -129,12 +139,12 @@ export const getSession = query({
         .query("users")
         .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
         .first();
-      if (user && session.createdBy === user._id) return session;
+      if (user && session.createdBy === user._id) return sanitizeSession(session);
     }
 
     // Guest ownership
     if (session.guestOwnerKey && args.guestKey && session.guestOwnerKey === args.guestKey) {
-      return session;
+      return sanitizeSession(session);
     }
     return null;
   },
@@ -150,7 +160,7 @@ export const listRecentSessions = query({
     _creationTime: v.number(),
     name: v.optional(v.string()),
     createdBy: v.optional(v.id("users")),
-    guestOwnerKey: v.optional(v.string()),
+    hasGuestOwner: v.boolean(),
     isPublic: v.boolean(),
     canvasWidth: v.number(),
     canvasHeight: v.number(),
@@ -169,11 +179,12 @@ export const listRecentSessions = query({
     aiPrompts: v.optional(v.array(v.string())),
   })),
   handler: async (ctx) => {
-    return await ctx.db
+    const sessions = await ctx.db
       .query("paintingSessions")
       .filter((q) => q.eq(q.field("isPublic"), true))
       .order("desc")
       .take(20);
+    return sessions.map(sanitizeSession);
   },
 });
 
@@ -187,7 +198,7 @@ export const getUserSessions = query({
     _creationTime: v.number(),
     name: v.optional(v.string()),
     createdBy: v.optional(v.id("users")),
-    guestOwnerKey: v.optional(v.string()),
+    hasGuestOwner: v.boolean(),
     isPublic: v.boolean(),
     canvasWidth: v.number(),
     canvasHeight: v.number(),
@@ -258,28 +269,7 @@ export const getUserSessions = query({
     userLayers.forEach((pl) => sessionIdSet.add(pl.sessionId));
 
     // Fetch session docs for all collected IDs
-  const sessions: Array<{
-      _id: Id<"paintingSessions">;
-      _creationTime: number;
-      name?: string | undefined;
-      createdBy?: Id<"users"> | undefined;
-      isPublic: boolean;
-      canvasWidth: number;
-      canvasHeight: number;
-      strokeCounter: number;
-      paintLayerOrder?: number | undefined;
-      paintLayerVisible?: boolean | undefined;
-      backgroundImage?: string | undefined;
-      thumbnailUrl?: string | undefined;
-      lastModified?: number | undefined;
-      recentStrokeOrders?: number[] | undefined;
-      recentStrokeIds?: Id<"strokes">[] | undefined;
-      deletedStrokeCount?: number | undefined;
-      lastDeletedStrokeOrder?: number | undefined;
-      lastAction?: string | undefined;
-      lastClearBatchId?: string | undefined;
-      aiPrompts?: string[] | undefined;
-    }> = [];
+    const sessions: Array<Doc<"paintingSessions">> = [];
 
     for (const sessionId of sessionIdSet) {
       const session = await ctx.db.get(sessionId);
@@ -293,7 +283,7 @@ export const getUserSessions = query({
       return tb - ta;
     });
 
-    return sessions;
+    return sessions.map(sanitizeSession);
   },
 });
 
