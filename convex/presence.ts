@@ -8,6 +8,7 @@ export const updatePresence = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
     userId: v.optional(v.id("users")),
+    guestId: v.optional(v.string()),
     userColor: v.string(),
     userName: v.string(),
     cursorX: v.number(),
@@ -18,14 +19,30 @@ export const updatePresence = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const now = Date.now();
-    
-    // Find existing presence record
-    const existingPresence = await ctx.db
-      .query("userPresence")
-      .withIndex("by_user_session", (q) => 
-        q.eq("userId", args.userId).eq("sessionId", args.sessionId)
-      )
-      .first();
+
+    // Find existing presence record. Guests all have userId undefined, so they
+    // are keyed by their stable per-browser guestId instead.
+    const existingPresence = args.userId
+      ? await ctx.db
+          .query("userPresence")
+          .withIndex("by_user_session", (q) =>
+            q.eq("userId", args.userId).eq("sessionId", args.sessionId)
+          )
+          .first()
+      : args.guestId
+        ? await ctx.db
+            .query("userPresence")
+            .withIndex("by_guest_session", (q) =>
+              q.eq("guestId", args.guestId).eq("sessionId", args.sessionId)
+            )
+            .first()
+        : await ctx.db
+            .query("userPresence")
+            .withIndex("by_user_session", (q) =>
+              q.eq("userId", undefined).eq("sessionId", args.sessionId)
+            )
+            .filter((q) => q.eq(q.field("guestId"), undefined))
+            .first();
 
     if (existingPresence) {
       // If an identical update arrived within a short window, skip writing to reduce conflicts
@@ -44,6 +61,7 @@ export const updatePresence = mutation({
       await ctx.db.replace(existingPresence._id, {
         sessionId: args.sessionId,
         userId: args.userId,
+        guestId: args.guestId,
         userColor: args.userColor,
         userName: args.userName,
         cursorX: args.cursorX,
@@ -57,6 +75,7 @@ export const updatePresence = mutation({
       await ctx.db.insert("userPresence", {
         sessionId: args.sessionId,
         userId: args.userId,
+        guestId: args.guestId,
         userColor: args.userColor,
         userName: args.userName,
         cursorX: args.cursorX,
@@ -84,6 +103,7 @@ export const getSessionPresence = query({
     _creationTime: v.number(),
     sessionId: v.id("paintingSessions"),
     userId: v.optional(v.id("users")),
+    guestId: v.optional(v.string()),
     userColor: v.string(),
     userName: v.string(),
     cursorX: v.number(),
@@ -126,16 +146,26 @@ export const leaveSession = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
     userId: v.optional(v.id("users")),
+    guestId: v.optional(v.string()),
     userName: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const presence = await ctx.db
-      .query("userPresence")
-      .withIndex("by_user_session", (q) => 
-        q.eq("userId", args.userId).eq("sessionId", args.sessionId)
-      )
-      .first();
+    const presence = args.userId
+      ? await ctx.db
+          .query("userPresence")
+          .withIndex("by_user_session", (q) =>
+            q.eq("userId", args.userId).eq("sessionId", args.sessionId)
+          )
+          .first()
+      : args.guestId
+        ? await ctx.db
+            .query("userPresence")
+            .withIndex("by_guest_session", (q) =>
+              q.eq("guestId", args.guestId).eq("sessionId", args.sessionId)
+            )
+            .first()
+        : null;
 
     if (presence) {
       await ctx.db.delete(presence._id);

@@ -270,8 +270,10 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     presence,
     liveStrokes,
     currentUser,
+    presenceGuestId,
     addStrokeToSession,
     updateUserPresence,
+    setPresenceCadence,
     updateLiveStrokeForUser,
     clearLiveStrokeForUser,
   } = usePaintingSession(sessionId)
@@ -324,6 +326,12 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
 
   // Track current stroke ID for P2P
   const [currentStrokeId, setCurrentStrokeId] = useState<string | null>(null)
+
+  // When P2P carries cursors, back Convex presence off to a coarse heartbeat;
+  // otherwise send at ~4 Hz so collaborators still see live cursors.
+  useEffect(() => {
+    setPresenceCadence(isP2PConnected ? 'coarse' : 'realtime')
+  }, [isP2PConnected, setPresenceCadence])
   
   // Track which layer is being dragged (not needed with Konva's built-in dragging)
 
@@ -586,7 +594,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     strokeEndedRef.current = false
 
     setCurrentStroke([point])
-    updateUserPresence(point.x, point.y, true, selectedTool)
+    // Presence cursors render in stage coordinates, so don't send layer-local points
+    updateUserPresence(stagePoint.x, stagePoint.y, true, selectedTool)
 
     // Initialize stroke ID for P2P
     const strokeId = crypto.randomUUID()
@@ -2099,7 +2108,40 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                 </Group>
               )
             })}
-            
+
+            {/* Fallback remote cursors from Convex presence when P2P is not connected */}
+            {!isP2PConnected && presence
+              .filter((p) => {
+                // Exclude our own presence record
+                const self = currentUser.id
+                  ? p.userId === currentUser.id
+                  : !!presenceGuestId && p.guestId === presenceGuestId
+                if (self) return false
+                // Hide cursors that have gone stale (no movement in a while)
+                return Date.now() - p.lastSeen < 15000
+              })
+              .map((p) => (
+                <Group key={p._id} x={p.cursorX} y={p.cursorY} listening={false}>
+                  <Circle
+                    radius={p.isDrawing ? 8 : 5}
+                    fill={p.userColor}
+                    stroke={p.isDrawing ? '#000000' : '#FFFFFF'}
+                    strokeWidth={p.isDrawing ? 2 : 1}
+                  />
+                  <Text
+                    text={p.userName}
+                    fontSize={11}
+                    fontStyle="bold"
+                    fill="white"
+                    stroke={p.userColor}
+                    strokeWidth={3}
+                    x={-20}
+                    y={-25}
+                    align="center"
+                  />
+                </Group>
+              ))}
+
             {/* Cursor size indicator */}
             {(() => {
               const activeLayer = layers.find(l => l.id === activeLayerId)

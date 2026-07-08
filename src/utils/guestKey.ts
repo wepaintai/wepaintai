@@ -55,3 +55,29 @@ export function clearCurrentGuestSession() {
     window.localStorage.removeItem(CURRENT_GUEST_SESSION_KEY)
   } catch {}
 }
+
+// Stable per-browser client id, used to identify guests in presence records
+// (guests have no userId, so without this they'd all collide on one record).
+export const CLIENT_ID_STORAGE = 'wepaint_client_id_v1'
+
+let inMemoryClientId: string | null = null
+
+export function getClientId(): string {
+  if (inMemoryClientId) return inMemoryClientId
+  if (typeof window === 'undefined') {
+    inMemoryClientId = generateGuestKey()
+    return inMemoryClientId
+  }
+  try {
+    let id = window.localStorage.getItem(CLIENT_ID_STORAGE)
+    if (!id) {
+      id = generateGuestKey()
+      window.localStorage.setItem(CLIENT_ID_STORAGE, id)
+    }
+    inMemoryClientId = id
+    return id
+  } catch {
+    inMemoryClientId = generateGuestKey()
+    return inMemoryClientId
+  }
+}
