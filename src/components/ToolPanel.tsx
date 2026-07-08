@@ -258,18 +258,20 @@ const ToolButton = React.memo(({
 ToolButton.displayName = 'ToolButton'
 
 // Action button component
-const ActionButton = React.memo(({ 
-  icon: Icon, 
-  label, 
-  onClick, 
+const ActionButton = React.memo(({
+  icon: Icon,
+  label,
+  onClick,
   isPrimary = false,
-  disabled = false 
-}: { 
-  icon: React.ElementType, 
-  label: string, 
-  onClick: () => void, 
+  isDanger = false,
+  disabled = false
+}: {
+  icon: React.ElementType,
+  label: string,
+  onClick: () => void,
   isPrimary?: boolean,
-  disabled?: boolean 
+  isDanger?: boolean,
+  disabled?: boolean
 }) => (
   <button
     onClick={onClick}
@@ -277,8 +279,10 @@ const ActionButton = React.memo(({
     className={`w-8 h-8 flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-blue-400 ${
       disabled
         ? 'bg-white/5 text-white/30 cursor-not-allowed'
-        : isPrimary 
-        ? 'bg-blue-500 text-white hover:bg-blue-600' 
+        : isDanger
+        ? 'bg-red-500 text-white hover:bg-red-600'
+        : isPrimary
+        ? 'bg-blue-500 text-white hover:bg-blue-600'
         : 'bg-white/10 text-white hover:bg-white/20'
     }`}
     title={label}
@@ -449,7 +453,8 @@ const LayerItem = React.memo(({
   onOpacityChange,
   totalLayers,
   isTopLayer = false,
-  isBottomLayer = false
+  isBottomLayer = false,
+  isOnlyPaintLayer = false
 }: {
   layer: Layer
   isActive: boolean
@@ -461,8 +466,15 @@ const LayerItem = React.memo(({
   totalLayers: number
   isTopLayer?: boolean
   isBottomLayer?: boolean
+  isOnlyPaintLayer?: boolean
 }) => {
   const [showOpacitySlider, setShowOpacitySlider] = React.useState(false)
+  const [confirmingDelete, setConfirmingDelete] = React.useState(false)
+  const deleteConfirmTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  React.useEffect(() => () => {
+    if (deleteConfirmTimeoutRef.current) clearTimeout(deleteConfirmTimeoutRef.current)
+  }, [])
   
   return (
     <div className="space-y-1">
@@ -551,13 +563,24 @@ const LayerItem = React.memo(({
           <button
             onClick={(e) => {
               e.stopPropagation()
-              console.log('[LayerItem] Delete button clicked for layer:', layer.id, layer.name)
-              onDelete()
+              if (confirmingDelete) {
+                // Confirm delete
+                if (deleteConfirmTimeoutRef.current) clearTimeout(deleteConfirmTimeoutRef.current)
+                setConfirmingDelete(false)
+                onDelete()
+              } else {
+                // First click - set as pending delete
+                setConfirmingDelete(true)
+                // Reset after 3 seconds
+                deleteConfirmTimeoutRef.current = setTimeout(() => setConfirmingDelete(false), 3000)
+              }
             }}
-            className="p-0.5 hover:bg-white/20 rounded transition-colors"
-            aria-label="Delete layer"
+            disabled={isOnlyPaintLayer}
+            className="p-0.5 hover:bg-white/20 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+            aria-label={isOnlyPaintLayer ? "Can't delete the only paint layer" : confirmingDelete ? 'Click again to confirm delete' : 'Delete layer'}
+            title={isOnlyPaintLayer ? "Can't delete the only paint layer" : confirmingDelete ? 'Click again to confirm' : 'Delete layer'}
           >
-            <Trash2 className="w-3 h-3 text-white/60 hover:text-red-400" />
+            <Trash2 className={confirmingDelete ? 'w-3 h-3 text-red-400' : 'w-3 h-3 text-white/60 hover:text-red-400'} />
           </button>
         </div>
       </div>
@@ -652,6 +675,26 @@ export function ToolPanel({
   const [autoCollapsed, setAutoCollapsed] = React.useState(false)
   const { isLibraryModalOpen, openLibrary, closeLibrary } = useLibrary()
   const [showBrushSettings, setShowBrushSettings] = React.useState(false)
+  const [confirmingClear, setConfirmingClear] = React.useState(false)
+  const clearConfirmTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const handleClearClick = React.useCallback(() => {
+    if (confirmingClear) {
+      // Confirm clear
+      if (clearConfirmTimeoutRef.current) clearTimeout(clearConfirmTimeoutRef.current)
+      setConfirmingClear(false)
+      onClear()
+    } else {
+      // First click - set as pending clear
+      setConfirmingClear(true)
+      // Reset after 3 seconds
+      clearConfirmTimeoutRef.current = setTimeout(() => setConfirmingClear(false), 3000)
+    }
+  }, [confirmingClear, onClear])
+
+  React.useEffect(() => () => {
+    if (clearConfirmTimeoutRef.current) clearTimeout(clearConfirmTimeoutRef.current)
+  }, [])
   
   // Drag functionality state
   const [isDragging, setIsDragging] = React.useState(false)
@@ -1028,14 +1071,19 @@ export function ToolPanel({
           <ActionButton icon={Redo2} label="Redo" onClick={onRedo} disabled={!canRedo} />
         </div>
         <div className="flex justify-center">
-          <ActionButton icon={X} label="Clear Canvas" onClick={onClear} />
+          <ActionButton
+            icon={X}
+            label={confirmingClear ? 'Click again to confirm' : 'Clear Canvas'}
+            onClick={handleClearClick}
+            isDanger={confirmingClear}
+          />
         </div>
         <div className="flex justify-center">
           <ActionButton icon={Save} label="Export" onClick={onExport} />
         </div>
       </div>
     </>
-  ), [selectedTool, handleToolSelect, effectiveIsSignedIn, color, onColorChange, colorMode, onColorModeChange, size, onSizeChange, opacity, onOpacityChange, onUndo, canUndo, onRedo, canRedo, onClear, onExport])
+  ), [selectedTool, handleToolSelect, effectiveIsSignedIn, color, onColorChange, colorMode, onColorModeChange, size, onSizeChange, opacity, onOpacityChange, onUndo, canUndo, onRedo, canRedo, confirmingClear, handleClearClick, onExport])
 
   const renderLayersTab = React.useCallback(() => (
     <div className="space-y-2">
@@ -1076,6 +1124,7 @@ export function ToolPanel({
                 totalLayers={layers.length}
                 isTopLayer={index === 0}
                 isBottomLayer={index === [...layers].sort((a, b) => b.order - a.order).length - 1}
+                isOnlyPaintLayer={(layer.type === 'paint' || layer.type === 'stroke') && layers.filter(l => l.type === 'paint' || l.type === 'stroke').length <= 1}
               />
             ))}
           </div>
