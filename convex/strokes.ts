@@ -1,5 +1,29 @@
-import { mutation, query } from "./_generated/server";
+import { mutation, query, QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
+import { Doc } from "./_generated/dataModel";
+
+/**
+ * Authorization: allow if the session is public, the caller is the signed-in
+ * owner, or the caller presents the session's guest owner key.
+ */
+export async function assertCanModifySession(
+  ctx: QueryCtx,
+  session: Doc<"paintingSessions">,
+  guestKey: string | undefined,
+): Promise<void> {
+  if (session.isPublic) return;
+  const identity = await ctx.auth.getUserIdentity();
+  if (identity) {
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
+      .first();
+    if (user && session.createdBy === user._id) return;
+  }
+  if (!session.guestOwnerKey || session.guestOwnerKey !== guestKey) {
+    throw new Error("Unauthorized");
+  }
+}
 
 /**
  * Add a new stroke to a painting session
@@ -31,21 +55,7 @@ export const addStroke = mutation({
     }
 
     // Authorization: allow if public or owner or guest owner
-    if (!session.isPublic) {
-      const identity = await ctx.auth.getUserIdentity();
-      if (identity) {
-        const user = await ctx.db
-          .query("users")
-          .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
-          .first();
-        if (!user || session.createdBy !== user._id) {
-          // Fall through to guest key check
-          if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) throw new Error("Unauthorized");
-        }
-      } else {
-        if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) throw new Error("Unauthorized");
-      }
-    }
+    await assertCanModifySession(ctx, session, args.guestKey);
 
     // Increment stroke counter for ordering
     const strokeOrder = session.strokeCounter + 1;

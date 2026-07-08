@@ -416,6 +416,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
         brushSize,
         opacity,
         colorMode,
+        guestKey: localGuestKey || undefined,
       });
       pendingLiveStrokeRef.current = null;
       
@@ -448,12 +449,13 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
           brushSize: pending.brushSize,
           opacity: pending.opacity,
           colorMode: pending.colorMode,
+          guestKey: localGuestKey || undefined,
         });
         pendingLiveStrokeRef.current = null;
       }
       liveStrokeUpdateRef.current = null;
     }, 16); // 16ms throttle (~60 FPS)
-  }, [sessionId, updateLiveStroke, currentUser]);
+  }, [sessionId, updateLiveStroke, currentUser, localGuestKey]);
 
   // Clear live stroke (when finishing drawing)
   const clearLiveStrokeForUser = useCallback(async () => {
@@ -464,9 +466,10 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
       return await clearLiveStroke({
         sessionId,
         userId: currentUser.id,
+        guestKey: localGuestKey || undefined,
       });
     }
-  }, [sessionId, currentUser.id, clearLiveStroke]);
+  }, [sessionId, currentUser.id, clearLiveStroke, localGuestKey]);
 
   // Leave session on unmount and cleanup timeouts
   useEffect(() => {
