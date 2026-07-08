@@ -26,6 +26,7 @@ import { api } from '../../convex/_generated/api'
 import { useThumbnailGenerator } from '../hooks/useThumbnailGenerator'
 import { ClipboardProvider } from '../context/ClipboardContext'
 import { getCurrentGuestSession, setCurrentGuestSession, clearCurrentGuestSession, getGuestKey } from '../utils/guestKey'
+import { startNewCanvas } from '../utils/newCanvas'
 
 // Wrapper component for background removal modal
 function BackgroundRemovalModalWrapper({ 
@@ -377,12 +378,9 @@ export function PaintingView() {
         const existingSessionId = urlParams.get('session') as Id<"paintingSessions"> | null
         
         if (existingSessionId) {
-          // Use session from URL
+          // Use session from URL; it's recorded as the guest's current session
+          // only once access is confirmed (see effect below)
           setSessionId(existingSessionId)
-          // Record as current only for guests; URL masking handled by effect below
-          if (!effectiveIsSignedIn) {
-            setCurrentGuestSession(existingSessionId)
-          }
           return
         }
 
@@ -431,13 +429,23 @@ export function PaintingView() {
     return () => clearTimeout(timer)
   }, [sessionReady, sessionError])
 
-  // Leave the broken session behind: drop any stored guest session and reload
-  // without the session param so a fresh painting is created.
+  // Track the guest's current session in localStorage based on access:
+  // record it once confirmed accessible, and forget it when the session is
+  // private or deleted so reloads and "new canvas" don't resurrect it.
+  useEffect(() => {
+    if (!sessionId || effectiveIsSignedIn) return
+    if (sessionStatus === 'ok') {
+      setCurrentGuestSession(sessionId)
+    } else if (sessionStatus === 'not_found' || sessionStatus === 'unauthorized') {
+      if (getCurrentGuestSession() === sessionId) {
+        clearCurrentGuestSession()
+      }
+    }
+  }, [sessionId, sessionStatus, effectiveIsSignedIn])
+
+  // Leave the broken session behind so a fresh painting is created
   const startNewPainting = useCallback(() => {
-    clearCurrentGuestSession()
-    const url = new URL(window.location.href)
-    url.searchParams.delete('session')
-    window.location.href = url.toString()
+    startNewCanvas()
   }, [])
 
   // Keep URL masked for guest-owned sessions; show for others and signed-in users

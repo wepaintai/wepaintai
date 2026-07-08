@@ -1,14 +1,17 @@
 import { useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import { authClient } from '../lib/auth-client'
+import { clearCurrentGuestSession } from '../utils/guestKey'
 
 export function UserProfile() {
   const user = useQuery(api.auth.getCurrentUser)
 
   const handleLogout = async () => {
     await authClient.signOut()
-    // Force a full page reload to ensure auth state is cleared
-    window.location.href = '/login'
+    // Land on a fresh canvas with all auth-dependent state cleared; the
+    // current session may be private and inaccessible once signed out
+    clearCurrentGuestSession()
+    window.location.href = '/'
   }
 
   if (!user) return null

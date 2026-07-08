@@ -37,6 +37,7 @@ import { useClipboardContext } from '../context/ClipboardContext'
 import { DraggableWindow } from './DraggableWindow'
 import { ShareModal } from './ShareModal'
 import { Id } from '../../convex/_generated/dataModel'
+import { startNewCanvas } from '../utils/newCanvas'
 
 // Types
 export interface Layer {
@@ -1305,13 +1306,7 @@ export function ToolPanel({
             className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors flex items-center gap-2"
             onClick={() => {
               setShowMenu(false)
-              // Clear the session parameter to create a new one
-              const url = new URL(window.location.href);
-              url.searchParams.delete('session');
-              window.history.pushState({}, '', url.toString());
-              try { localStorage.removeItem('wepaint_current_session_v1') } catch {}
-              // Reload to trigger new session creation
-              window.location.reload();
+              startNewCanvas()
             }}
           >
             <PlusCircle className="w-4 h-4" />
@@ -1466,14 +1461,7 @@ export function ToolPanel({
       <LibraryModal
         isOpen={isLibraryModalOpen}
         onClose={closeLibrary}
-        onCreateNew={() => {
-          // Clear the session parameter to create a new one
-          const url = new URL(window.location.href);
-          url.searchParams.delete('session');
-          window.history.pushState({}, '', url.toString());
-          // Reload to trigger new session creation
-          window.location.reload();
-        }}
+        onCreateNew={startNewCanvas}
       />
       {showShareModal && sessionId && (
         <ShareModal isOpen={showShareModal} onClose={() => setShowShareModal(false)} sessionId={sessionId} />
