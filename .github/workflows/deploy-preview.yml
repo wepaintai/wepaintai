@@ -1,0 +1,50 @@
+name: Deploy PR preview
+
+# Builds the PR branch on the Mac mini's self-hosted runner and serves it at
+# https://preview-pr-<N>.wepaint.ai, pointed at the LIVE production Convex
+# backend. Frontend-only: changes under convex/ are not deployed anywhere.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: preview-pr-${{ github.event.number }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    # Same-repo branches only — fork PRs must never run on the mini.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, mini]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and deploy preview
+        run: ./selfhost/preview/deploy-preview.sh "${{ github.event.number }}"
+
+      - name: Comment preview URL on the PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.number }}
+        run: |
+          export PATH="/opt/homebrew/bin:$PATH"
+          MARKER="<!-- pr-preview-url -->"
+          URL="https://preview-pr-$PR.wepaint.ai/"
+          BODY=$(printf '%s\n🎨 **PR preview:** %s\n\n_Frontend preview of this branch against the **live production Convex backend** — changes under `convex/` are not deployed. Google sign-in redirects to app.wepaint.ai, so use guest mode. Redeploys on every push; torn down when the PR closes._' "$MARKER" "$URL")
+          EXISTING=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --jq "[.[] | select(.body | startswith(\"$MARKER\"))][0].id // empty")
+          if [ -n "$EXISTING" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$EXISTING" -f body="$BODY" > /dev/null
+            echo "Updated existing preview comment on PR #$PR."
+          else
+            gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -f body="$BODY" > /dev/null
+            echo "Commented preview URL on PR #$PR."
+          fi
+
+      - name: Add preview URL to summary
+        run: |
+          echo "### 🎨 Preview deployed for PR #${{ github.event.number }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "https://preview-pr-${{ github.event.number }}.wepaint.ai/" >> "$GITHUB_STEP_SUMMARY"
