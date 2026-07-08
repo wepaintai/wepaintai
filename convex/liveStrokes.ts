@@ -1,5 +1,6 @@
 import { mutation, query, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
+import { assertCanModifySession } from "./strokes";
 
 /**
  * Update or create a live stroke for a user
@@ -170,9 +171,17 @@ export const cleanupStaleLiveStrokes = internalMutation({
 export const clearSessionLiveStrokes = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
+    guestKey: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) {
+      throw new Error("Session not found");
+    }
+    // Paired with strokes.clearSession — owner-only, even on public sessions
+    await assertCanModifySession(ctx, session, args.guestKey, { ownerOnly: true });
+
     const liveStrokes = await ctx.db
       .query("liveStrokes")
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
