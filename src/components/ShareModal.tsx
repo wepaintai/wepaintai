@@ -13,7 +13,8 @@ interface ShareModalProps {
 
 export function ShareModal({ isOpen, onClose, sessionId }: ShareModalProps) {
   const localGuestKey = getGuestKey(sessionId)
-  const session = useQuery(api.paintingSessions.getSession, { sessionId, guestKey: localGuestKey || undefined })
+  const sessionResult = useQuery(api.paintingSessions.getSession, { sessionId, guestKey: localGuestKey || undefined })
+  const session = sessionResult?.status === 'ok' ? sessionResult.session : null
   const setVisibility = useMutation(api.paintingSessions.setSessionVisibility)
   const currentUser = useQuery(api.auth.getCurrentUser)
 
