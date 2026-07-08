@@ -1,17 +1,19 @@
 import { mutation, query, QueryCtx } from "./_generated/server";
-import { v } from "convex/values";
 import { Doc } from "./_generated/dataModel";
+import { v } from "convex/values";
 
 /**
- * Authorization: allow if the session is public, the caller is the signed-in
- * owner, or the caller presents the session's guest owner key.
+ * Authorization for session-modifying mutations.
+ * Allows: public sessions (unless ownerOnly), the signed-in owner, or the
+ * guest owner (matching guestOwnerKey). Throws "Unauthorized" otherwise.
  */
 export async function assertCanModifySession(
   ctx: QueryCtx,
   session: Doc<"paintingSessions">,
   guestKey: string | undefined,
+  opts?: { ownerOnly?: boolean },
 ): Promise<void> {
-  if (session.isPublic) return;
+  if (session.isPublic && !opts?.ownerOnly) return;
   const identity = await ctx.auth.getUserIdentity();
   if (identity) {
     const user = await ctx.db
@@ -20,9 +22,8 @@ export async function assertCanModifySession(
       .first();
     if (user && session.createdBy === user._id) return;
   }
-  if (!session.guestOwnerKey || session.guestOwnerKey !== guestKey) {
-    throw new Error("Unauthorized");
-  }
+  if (session.guestOwnerKey && guestKey && session.guestOwnerKey === guestKey) return;
+  throw new Error("Unauthorized");
 }
 
 /**
@@ -302,6 +303,7 @@ export const getStrokesAfter = query({
 export const removeLastStroke = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
+    guestKey: v.optional(v.string()),
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
@@ -310,6 +312,8 @@ export const removeLastStroke = mutation({
     if (!session) {
       throw new Error("Session not found");
     }
+
+    await assertCanModifySession(ctx, session, args.guestKey);
 
     // If the last action was a bulk clear and there are no strokes, treat Undo as restore-all
     if (session.lastAction === 'clear' && session.lastClearBatchId) {
@@ -451,6 +455,7 @@ export const removeLastStroke = mutation({
 export const restoreLastDeletedStroke = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
+    guestKey: v.optional(v.string()),
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
@@ -459,6 +464,8 @@ export const restoreLastDeletedStroke = mutation({
     if (!session) {
       throw new Error("Session not found");
     }
+
+    await assertCanModifySession(ctx, session, args.guestKey);
 
     let lastDeletedStroke = null;
     
@@ -543,6 +550,7 @@ export const restoreLastDeletedStroke = mutation({
 export const deleteStroke = mutation({
   args: {
     strokeId: v.id("strokes"),
+    guestKey: v.optional(v.string()),
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
@@ -551,6 +559,13 @@ export const deleteStroke = mutation({
     if (!stroke) {
       return false; // Stroke not found
     }
+
+    const session = await ctx.db.get(stroke.sessionId);
+    if (!session) {
+      throw new Error("Session not found");
+    }
+    // Deleting arbitrary strokes is owner-only, even on public sessions
+    await assertCanModifySession(ctx, session, args.guestKey, { ownerOnly: true });
 
     // Save the stroke to deletedStrokes before deleting
     await ctx.db.insert("deletedStrokes", {
@@ -581,6 +596,7 @@ export const deleteStroke = mutation({
 export const clearSession = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
+    guestKey: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -589,6 +605,9 @@ export const clearSession = mutation({
     if (!session) {
       throw new Error("Session not found");
     }
+
+    // Clearing the whole canvas is owner-only, even on public sessions
+    await assertCanModifySession(ctx, session, args.guestKey, { ownerOnly: true });
 
     // Get all strokes for this session
     const strokes = await ctx.db

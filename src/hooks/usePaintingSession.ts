@@ -82,11 +82,9 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
   // Guest key state (in-memory) to ensure we always pass it on initial queries
   const [guestKeyState, setGuestKeyState] = useState<string | null>(null);
   useEffect(() => {
-    if (sessionId && !guestKeyState) {
-      const existing = getGuestKey(sessionId as any);
-      if (existing) setGuestKeyState(existing);
-    }
-  }, [sessionId, guestKeyState]);
+    // Re-read on session change so a stale key from a previous session is never sent
+    setGuestKeyState(getGuestKey(sessionId as any));
+  }, [sessionId]);
 
   // Queries
   const localGuestKey = guestKeyState || getGuestKey(sessionId as any);
@@ -174,7 +172,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     if (!session) return;
     if (session.createdBy !== undefined) return;
     // Avoid claiming sessions that have a guest owner key
-    if ((session as any).guestOwnerKey) return;
+    if (session.hasGuestOwner) return;
     claimSessionOwnership({ sessionId });
   }, [sessionId, authenticatedUser, session, claimSessionOwnership]);
 
@@ -344,8 +342,8 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     
     // Clear both completed strokes and live strokes
     await Promise.all([
-      clearSessionMutation({ sessionId }),
-      clearSessionLiveStrokes({ sessionId })
+      clearSessionMutation({ sessionId, guestKey: localGuestKey || undefined }),
+      clearSessionLiveStrokes({ sessionId, guestKey: localGuestKey || undefined })
     ]);
     
     // Reset local acknowledgment state
@@ -359,21 +357,21 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
         lastAckedStrokeOrder: 0,
       });
     }
-  }, [sessionId, clearSessionMutation, clearSessionLiveStrokes, currentUser.id, upsertViewerState]);
+  }, [sessionId, clearSessionMutation, clearSessionLiveStrokes, currentUser.id, upsertViewerState, localGuestKey]);
 
   // Undo the last stroke
   const undoLastStroke = useCallback(async () => {
     if (!sessionId) return false;
     
-    return await removeLastStroke({ sessionId });
-  }, [sessionId, removeLastStroke]);
+    return await removeLastStroke({ sessionId, guestKey: localGuestKey || undefined });
+  }, [sessionId, removeLastStroke, localGuestKey]);
 
   // Redo the last undone stroke
   const redoLastStroke = useCallback(async () => {
     if (!sessionId) return false;
     
-    return await restoreLastDeletedStroke({ sessionId });
-  }, [sessionId, restoreLastDeletedStroke]);
+    return await restoreLastDeletedStroke({ sessionId, guestKey: localGuestKey || undefined });
+  }, [sessionId, restoreLastDeletedStroke, localGuestKey]);
 
   // Throttle live stroke updates to reduce lag
   const liveStrokeUpdateRef = useRef<NodeJS.Timeout | null>(null);
