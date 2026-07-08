@@ -480,6 +480,62 @@ export const claimSessionOwnership = mutation({
 });
 
 /**
+ * Claim a guest-owned session for the authenticated user.
+ *
+ * The guest key proves the caller's device created the session before they
+ * signed in, so ownership moves to their account and the key is cleared.
+ * This is how a guest's painting survives the sign-in round-trip.
+ */
+export const claimGuestSession = mutation({
+  args: {
+    sessionId: v.id("paintingSessions"),
+    guestKey: v.string(),
+  },
+  returns: v.union(
+    v.literal("claimed"),
+    v.literal("already_owned"),
+    v.literal("invalid"),
+  ),
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return "invalid";
+
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) return "invalid";
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
+      .first();
+
+    if (session.createdBy !== undefined) {
+      return user && session.createdBy === user._id ? "already_owned" : "invalid";
+    }
+    if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) {
+      return "invalid";
+    }
+
+    // Only create a missing user row once the claim is proven valid, so bogus
+    // claim attempts can't mint accounts/welcome tokens as a side effect.
+    // Fallback: the signup trigger normally creates the row (see createSession).
+    const userId =
+      user?._id ??
+      (await createUserWithWelcomeTokens(ctx, {
+        authId: identity.subject,
+        email: identity.email,
+        name: identity.name || identity.givenName,
+      }));
+
+    await ctx.db.patch(args.sessionId, {
+      createdBy: userId,
+      guestOwnerKey: undefined,
+      lastModified: Date.now(),
+    });
+    return "claimed";
+  },
+});
+
+/**
  * Set session public accessibility (owner only)
  */
 export const setSessionVisibility = mutation({

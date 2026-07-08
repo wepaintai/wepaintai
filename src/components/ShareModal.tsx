@@ -4,6 +4,7 @@ import { useQuery, useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import { Id } from '../../convex/_generated/dataModel'
 import { getGuestKey } from '../utils/guestKey'
+import { GoogleSignInButton } from './GoogleSignInButton'
 
 interface ShareModalProps {
   isOpen: boolean
@@ -111,6 +112,18 @@ export function ShareModal({ isOpen, onClose, sessionId }: ShareModalProps) {
           </div>
           {!isOwner && (
             <div className="text-xs text-yellow-300/80">Only the session owner can change sharing.</div>
+          )}
+          {currentUser === null && !!localGuestKey && (
+            <div className="border-t border-white/10 pt-4">
+              <div className="text-sm text-white/80">Keep this painting</div>
+              <div className="text-xs text-white/50 mt-1 mb-3">
+                Right now it's only saved on this device. Sign in to keep it on
+                all your devices.
+              </div>
+              <GoogleSignInButton
+                callbackURL={typeof window !== 'undefined' ? window.location.href : '/'}
+              />
+            </div>
           )}
         </div>
       </div>
