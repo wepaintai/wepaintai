@@ -32,6 +32,13 @@ function GoogleLogo() {
 export function GoogleSignInButton({ callbackURL }: { callbackURL?: string }) {
   const [error, setError] = React.useState<string | null>(null)
   const [submitting, setSubmitting] = React.useState(false)
+  // PR previews share the prod backend but aren't a trusted auth origin, so
+  // sign-in can't work there (see selfhost/preview/README.md). Detected in an
+  // effect to keep server and client renders identical.
+  const [isPreviewHost, setIsPreviewHost] = React.useState(false)
+  React.useEffect(() => {
+    setIsPreviewHost(/^preview-pr-\d+\.wepaint\.ai$/.test(window.location.hostname))
+  }, [])
 
   const handleClick = async () => {
     setError(null)
@@ -51,6 +58,21 @@ export function GoogleSignInButton({ callbackURL }: { callbackURL?: string }) {
       setError('Sign-in failed. Please try again.')
       setSubmitting(false)
     }
+  }
+
+  if (isPreviewHost) {
+    return (
+      <p className="text-sm text-white/60 text-center">
+        Sign-in isn't available on PR previews — continue as a guest, or use{' '}
+        <a
+          href="https://app.wepaint.ai"
+          className="text-blue-400 hover:underline"
+        >
+          app.wepaint.ai
+        </a>{' '}
+        to sign in.
+      </p>
+    )
   }
 
   return (

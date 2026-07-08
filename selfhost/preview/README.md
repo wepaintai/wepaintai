@@ -16,8 +16,12 @@ than running a parallel stack. Consequences:
   functions (new function calls will error until merged + deployed).
 - Guest painting works normally and writes real data to the prod database,
   exactly like a guest on the prod site.
-- Google sign-in can't complete on a preview host (the OAuth redirect URI is
-  pinned to `app.wepaint.ai`), so previews are effectively guest-mode.
+- Google sign-in can't work on a preview host: Better Auth rejects the
+  preview origin ("Invalid origin" — only `SITE_URL` is trusted), and even a
+  trusted origin wouldn't get a session cookie back (the OAuth redirect URI
+  is pinned to `app.wepaint.ai` and cookies aren't shared across subdomains).
+  The sign-in dialog detects `preview-pr-*.wepaint.ai` and explains this
+  instead of showing the button.
 
 ## Moving parts
 
