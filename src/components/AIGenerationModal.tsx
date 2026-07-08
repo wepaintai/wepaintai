@@ -4,6 +4,7 @@ import { useAction, useQuery, useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import type { Id } from '../../convex/_generated/dataModel'
 import { getGuestKey } from '../utils/guestKey'
+import { getErrorMessage } from '../utils/errorMessage'
 
 interface AIGenerationModalProps {
   isOpen: boolean
@@ -89,7 +90,7 @@ export function AIGenerationModal({
         setError(('error' in result && result.error) || 'Generation failed')
       }
     } catch (err) {
-      setError('Failed to generate image. Please try again.')
+      setError(getErrorMessage(err, 'Failed to generate image. Please try again.'))
       console.error('AI generation error:', err)
     } finally {
       setIsGenerating(false)
