@@ -2,6 +2,7 @@ import React from 'react'
 import { X, User } from 'lucide-react'
 import { GoogleSignInButton } from './GoogleSignInButton'
 import { authClient, useAuthState } from '../lib/auth-client'
+import { clearCurrentGuestSession } from '../utils/guestKey'
 
 interface AuthModalProps {
   isOpen: boolean
@@ -14,8 +15,13 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
   const handleSignOut = async () => {
     await authClient.signOut()
     onClose()
-    // Full reload so all auth-dependent state is cleared
-    window.location.reload()
+    // Land on a fresh canvas: the current session may be private and
+    // inaccessible once signed out, so drop any reference to it and do a
+    // full navigation so all auth-dependent state is cleared
+    clearCurrentGuestSession()
+    const url = new URL(window.location.href)
+    url.searchParams.delete('session')
+    window.location.href = url.toString()
   }
 
   if (!isOpen) return null
