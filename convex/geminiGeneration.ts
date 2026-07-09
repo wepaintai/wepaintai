@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { action } from "./_generated/server";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 
 // Generate an image using Gemini 2.5 Flash Image (preview)
 export const generateImage = action({
@@ -21,8 +21,9 @@ export const generateImage = action({
     }
 
     // Token gating: 1 token per generation to match Replicate
-    const tokenCost = 1;
-    const hasTokens = await ctx.runQuery(api.tokens.hasEnoughTokens, { requiredTokens: tokenCost });
+    const hasTokens = await ctx.runQuery(internal.tokens.hasEnoughTokensForOperation, {
+      operationType: "ai-generation",
+    });
     if (!hasTokens) {
       console.error('[GEMINI] Insufficient tokens');
       return { success: false, error: "Insufficient tokens. Please purchase more tokens to continue." };
@@ -130,9 +131,9 @@ export const generateImage = action({
       });
 
       // Consume tokens on success
-      await ctx.runMutation(api.tokens.useTokensForGeneration, {
-        generationId,
-        tokenCost,
+      await ctx.runMutation(internal.tokens.consumeTokensForOperation, {
+        operationId: generationId,
+        operationType: "ai-generation",
       });
 
       return { success: true, imageUrl: storageUrl };
@@ -142,4 +143,3 @@ export const generateImage = action({
     }
   },
 });
-

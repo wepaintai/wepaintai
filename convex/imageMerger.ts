@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { mutation, action, query } from "./_generated/server";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 
 // Mutation to store image merge requests and results
@@ -115,9 +115,8 @@ export const mergeImages = action({
     }
 
     // Check if user has enough tokens (1 token per merge)
-    const tokenCost = 1;
-    const hasTokens = await ctx.runQuery(api.tokens.hasEnoughTokens, {
-      requiredTokens: tokenCost,
+    const hasTokens = await ctx.runQuery(internal.tokens.hasEnoughTokensForOperation, {
+      operationType: "image-merge",
     });
     
     if (!hasTokens) {
@@ -343,10 +342,9 @@ export const mergeImages = action({
               });
               
               // Consume tokens after successful merge
-              await ctx.runMutation(api.tokens.useTokensForOperation, {
+              await ctx.runMutation(internal.tokens.consumeTokensForOperation, {
                 operationId: mergeId,
                 operationType: "image-merge",
-                tokenCost,
               });
               
               const result = { success: true, imageUrl: finalUrl };
@@ -370,10 +368,9 @@ export const mergeImages = action({
               });
               
               // Consume tokens after successful merge
-              await ctx.runMutation(api.tokens.useTokensForOperation, {
+              await ctx.runMutation(internal.tokens.consumeTokensForOperation, {
                 operationId: mergeId,
                 operationType: "image-merge",
-                tokenCost,
               });
               
               console.log('[IMAGE-MERGE] Using fallback due to storage error');
