@@ -46,7 +46,8 @@ Variables, or `pnpm exec convex env set --env-file selfhost/.env.convex KEY valu
 
 - `REPLICATE_API_TOKEN`, `REPLICATE_MODEL_VERSION`, `REPLICATE_TIMEOUT_SECONDS`
 - `GEMINI_API_KEY`
-- `POLAR_API_KEY`, `POLAR_WEBHOOK_SECRET`, `POLAR_API_BASE_URL`
+- `POLAR_API_KEY`, `POLAR_WEBHOOK_SECRET`, `POLAR_PRODUCT_ID_50`,
+  `POLAR_PRODUCT_ID_125`, `POLAR_API_BASE_URL`
 
 ## 4. Import the production backup
 

@@ -257,6 +257,8 @@ const schema = defineSchema({
   polarPurchases: defineTable({
     userId: v.id("users"),
     checkoutId: v.string(),
+    // Optional so existing rows can deploy; new checkouts always store a key.
+    packageKey: v.optional(v.union(v.literal("50_tokens"), v.literal("125_tokens"))),
     productId: v.string(),
     productName: v.string(),
     amount: v.number(), // Amount in cents
