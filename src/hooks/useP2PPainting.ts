@@ -44,6 +44,7 @@ export function useP2PPainting({
   const [remoteCursors, setRemoteCursors] = useState<Map<string, { x: number; y: number; drawing: boolean }>>(new Map());
   const [metrics, setMetrics] = useState<P2PMetrics | null>(null);
   const metricsIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const connectedPeersRef = useRef<Set<string>>(new Set());
 
   // Handle incoming packets
   const handlePacketReceived = useCallback((peerId: string, packet: P2PPacket) => {
@@ -105,12 +106,19 @@ export function useP2PPainting({
   // Handle peer connections
   const handlePeerConnected = useCallback((peerId: string) => {
     console.log(`Peer connected: ${peerId}`);
+    connectedPeersRef.current.add(peerId);
     setIsConnected(true);
   }, []);
 
   const handlePeerDisconnected = useCallback((peerId: string) => {
     console.log(`Peer disconnected: ${peerId}`);
-    // Clean up strokes from disconnected peer
+    connectedPeersRef.current.delete(peerId);
+    // Drop back to disconnected when the last peer leaves so the app can fall
+    // back to Convex presence for cursors
+    if (connectedPeersRef.current.size === 0) {
+      setIsConnected(false);
+    }
+    // Clean up strokes and cursor from disconnected peer
     setRemoteStrokes(prev => {
       const newStrokes = new Map(prev);
       for (const [key] of newStrokes) {
@@ -119,6 +127,12 @@ export function useP2PPainting({
         }
       }
       return newStrokes;
+    });
+    setRemoteCursors(prev => {
+      if (!prev.has(peerId)) return prev;
+      const newCursors = new Map(prev);
+      newCursors.delete(peerId);
+      return newCursors;
     });
   }, []);
 
@@ -169,6 +183,7 @@ export function useP2PPainting({
       }
       manager.destroy();
       p2pManagerRef.current = null;
+      connectedPeersRef.current.clear();
       setIsConnected(false);
       setRemoteStrokes(new Map());
       setRemoteCursors(new Map());

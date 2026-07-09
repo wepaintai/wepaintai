@@ -11,6 +11,7 @@ import {
   removeGuestKey,
   getCurrentGuestSession,
   clearCurrentGuestSession,
+  getClientId,
 } from "../utils/guestKey";
 
 export interface PaintPoint {
@@ -40,6 +41,7 @@ export interface UserPresence {
   _creationTime: number;
   sessionId: Id<"paintingSessions">;
   userId?: Id<"users">;
+  guestId?: string;
   userColor: string;
   userName: string;
   cursorX: number;
@@ -297,6 +299,9 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     return strokeId;
   }, [sessionId, addStroke, currentUser, localGuestKey]);
 
+  // Stable per-browser id used to key guest presence records (guests have no userId)
+  const presenceGuestId = currentUser.id ? undefined : getClientId();
+
   // Presence throttling and heartbeat
   const presenceIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastPresenceSentAtRef = useRef<number>(0);
@@ -306,7 +311,20 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     isDrawing: boolean;
     currentTool: string;
   } | null>(null);
+  const lastSentPresenceRef = useRef<{
+    cursorX: number;
+    cursorY: number;
+    isDrawing: boolean;
+    currentTool: string;
+  } | null>(null);
   const presenceInFlightRef = useRef<boolean>(false);
+  // Cursor send cadence. Defaults to ~4 Hz so collaborators see each other's
+  // cursors via Convex presence; when P2P is connected the canvas switches to
+  // 'coarse' (20s) since cursors travel over the data channel instead.
+  const presenceThrottleMsRef = useRef<number>(250);
+  const setPresenceCadence = useCallback((mode: 'realtime' | 'coarse') => {
+    presenceThrottleMsRef.current = mode === 'realtime' ? 250 : 20000;
+  }, []);
 
   // Send the latest queued presence update if not already in flight
   const flushPresence = useCallback(async () => {
@@ -319,12 +337,17 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
       await convexLow.mutation(api.presence.updatePresence, {
         sessionId,
         userId: currentUser.id || undefined,
+        guestId: currentUser.id ? undefined : getClientId(),
         userColor: currentUser.color,
         userName: currentUser.name,
         ...payload,
       });
       lastPresenceSentAtRef.current = Date.now();
-      pendingPresenceRef.current = null;
+      lastSentPresenceRef.current = payload;
+      // Only clear if no newer update was queued while the mutation was in flight
+      if (pendingPresenceRef.current === payload) {
+        pendingPresenceRef.current = null;
+      }
     } catch (e) {
       // ignore
     } finally {
@@ -332,7 +355,8 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     }
   }, [sessionId, currentUser.id, currentUser.color, currentUser.name]);
 
-  // Send coarse presence heartbeat every 20s using low-priority client
+  // Presence heartbeat every 20s: flush anything queued, or re-send the last
+  // position so lastSeen stays fresh and idle users still count as online.
   useEffect(() => {
     if (!sessionId) return;
 
@@ -342,7 +366,9 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     }
 
     presenceIntervalRef.current = setInterval(() => {
-      // Heartbeat: try to flush any queued presence, but avoid overlap
+      if (!pendingPresenceRef.current && lastSentPresenceRef.current) {
+        pendingPresenceRef.current = lastSentPresenceRef.current;
+      }
       flushPresence();
     }, 20000); // 20s
 
@@ -367,7 +393,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
       pendingPresenceRef.current = { cursorX, cursorY, isDrawing, currentTool };
 
       const now = Date.now();
-      if (now - lastPresenceSentAtRef.current > 20000) {
+      if (now - lastPresenceSentAtRef.current > presenceThrottleMsRef.current) {
         await flushPresence();
       }
     },
@@ -511,18 +537,24 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
   useEffect(() => {
     const currentSessionId = sessionId; // Capture sessionId for cleanup
     const currentViewerId = currentUser.id; // Capture viewerId for cleanup
-    const currentUserName = currentUser.name; // Capture userName for cleanup
     return () => {
-      if (currentSessionId && currentViewerId) {
-        convexLow.mutation(api.presence.leaveSession, { sessionId: currentSessionId, userId: currentViewerId });
-        removeViewerState({ sessionId: currentSessionId, viewerId: currentViewerId });
+      if (currentSessionId) {
+        // Guests identify by their stable client id instead of a user id
+        convexLow.mutation(api.presence.leaveSession, {
+          sessionId: currentSessionId,
+          userId: currentViewerId || undefined,
+          guestId: currentViewerId ? undefined : getClientId(),
+        });
+        if (currentViewerId) {
+          removeViewerState({ sessionId: currentSessionId, viewerId: currentViewerId });
+        }
       }
       // Clean up any pending live stroke updates
       if (liveStrokeUpdateRef.current) {
         clearTimeout(liveStrokeUpdateRef.current);
       }
     };
-  }, [sessionId, leaveSession, removeViewerState, currentUser.id, currentUser.name]);
+  }, [sessionId, leaveSession, removeViewerState, currentUser.id]);
 
   // Memoized strokes with pre-sorted order and metadata for O(1) access
   const { memoizedStrokes, lastStrokeInfo } = useMemo(() => {
@@ -569,12 +601,14 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     presence: presence || [],
     liveStrokes: liveStrokes || [],
     currentUser,
+    presenceGuestId,
     undoRedoAvailability,
-    
+
     // Actions
     createNewSession,
     addStrokeToSession,
     updateUserPresence,
+    setPresenceCadence,
     clearSession,
     undoLastStroke,
     redoLastStroke,

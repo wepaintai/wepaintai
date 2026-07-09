@@ -50,6 +50,7 @@ const schema = defineSchema({
   userPresence: defineTable({
     sessionId: v.id("paintingSessions"),
     userId: v.optional(v.id("users")),
+    guestId: v.optional(v.string()), // Stable per-browser id so guests don't collide on userId=undefined
     userColor: v.string(),
     userName: v.string(),
     cursorX: v.number(),
@@ -58,7 +59,8 @@ const schema = defineSchema({
     currentTool: v.string(),
     lastSeen: v.number(),
   }).index("by_session", ["sessionId"])
-    .index("by_user_session", ["userId", "sessionId"]),
+    .index("by_user_session", ["userId", "sessionId"])
+    .index("by_guest_session", ["guestId", "sessionId"]),
 
   liveStrokes: defineTable({
     sessionId: v.id("paintingSessions"),

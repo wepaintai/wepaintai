@@ -5,6 +5,7 @@ import { ToolPanel, Layer } from './ToolPanel'
 import { type BrushSettings } from './BrushSettingsModal'
 import { AdminPanel } from './AdminPanel' // Import AdminPanel
 import { SessionInfo } from './SessionInfo'
+import { PresenceStrip } from './PresenceStrip'
 import { P2PStatus } from './P2PStatus'
 import { P2PDebugPanel } from './P2PDebugPanel'
 import { ImageUploadModal } from './ImageUploadModal'
@@ -15,6 +16,7 @@ import { ExportModal } from './ExportModal'
 import { UserProfile } from './UserProfile'
 import { TokenDisplay } from './TokenDisplay'
 import { usePaintingSession } from '../hooks/usePaintingSession'
+import { useConnectionStatus } from '../hooks/useConnectionStatus'
 import { useP2PPainting } from '../hooks/useP2PPainting'
 import { useSessionImages } from '../hooks/useSessionImages'
 import { shouldShowAdminFeatures } from '../utils/environment'
@@ -241,7 +243,8 @@ export function PaintingView() {
   
   // Removed localLastStrokeInfo - now using lastStrokeInfo from usePaintingSession
 
-  const { session, sessionStatus, createNewSession, presence, currentUser, isLoading, clearSession, undoLastStroke, redoLastStroke, strokes: rawStrokes, undoRedoAvailability, lastStrokeInfo } = usePaintingSession(sessionId)
+  const { session, sessionStatus, createNewSession, presence, currentUser, presenceGuestId, isLoading, clearSession, undoLastStroke, redoLastStroke, strokes: rawStrokes, undoRedoAvailability, lastStrokeInfo } = usePaintingSession(sessionId)
+  const connectionStatus = useConnectionStatus()
 
   // Only hit session-scoped queries once the session is confirmed accessible;
   // a malformed URL id would otherwise throw validation errors in every query.
@@ -1109,6 +1112,15 @@ export function PaintingView() {
             </div>
           ))}
         </div>
+      )}
+      {/* Presence strip + connection indicator — visible to all users */}
+      {validSessionId && (
+        <PresenceStrip
+          presence={presence}
+          currentUser={currentUser}
+          presenceGuestId={presenceGuestId}
+          connectionStatus={connectionStatus}
+        />
       )}
       {adminFeaturesEnabled && (
         <SessionInfo
