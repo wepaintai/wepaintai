@@ -30,6 +30,18 @@ export function getGuestKey(sessionId: string | null | undefined): string | null
   }
 }
 
+export function removeGuestKey(sessionId: string) {
+  if (typeof window === 'undefined') return
+  try {
+    const raw = window.localStorage.getItem(GUEST_KEYS_STORAGE)
+    const map = raw ? JSON.parse(raw) : {}
+    if (map[sessionId]) {
+      delete map[sessionId]
+      window.localStorage.setItem(GUEST_KEYS_STORAGE, JSON.stringify(map))
+    }
+  } catch {}
+}
+
 // Track current guest session ID locally so we can mask it from the URL
 export const CURRENT_GUEST_SESSION_KEY = 'wepaint_current_session_v1'
 

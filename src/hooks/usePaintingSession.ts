@@ -4,7 +4,15 @@ import { Id } from "../../convex/_generated/dataModel";
 import { useCallback, useEffect, useState, useRef, useMemo } from "react";
 import { p2pLogger } from "../lib/p2p-logger";
 import { convexLow } from "../lib/convex";
-import { generateGuestKey, getGuestKey, setGuestKey, getClientId } from "../utils/guestKey";
+import {
+  generateGuestKey,
+  getGuestKey,
+  setGuestKey,
+  removeGuestKey,
+  getCurrentGuestSession,
+  clearCurrentGuestSession,
+  getClientId,
+} from "../utils/guestKey";
 
 export interface PaintPoint {
   x: number;
@@ -139,6 +147,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
   const upsertViewerState = useMutation(api.viewerAcks.upsertViewerState);
   const removeViewerState = useMutation(api.viewerAcks.removeViewerState);
   const claimSessionOwnership = useMutation(api.paintingSessions.claimSessionOwnership);
+  const claimGuestSession = useMutation(api.paintingSessions.claimGuestSession);
   
   // For viewer state, use user ID if authenticated, otherwise use name as viewer ID
   const viewerId = currentUser.id || currentUser.name;
@@ -176,6 +185,36 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     if (session.hasGuestOwner) return;
     claimSessionOwnership({ sessionId });
   }, [sessionId, authenticatedUser, session, claimSessionOwnership]);
+
+  // If a signed-in user holds the guest key for a guest-owned session, they
+  // created it on this device before signing in — claim it for their account
+  // so the painting survives the sign-in round-trip.
+  const claimingGuestSessionRef = useRef(false);
+  useEffect(() => {
+    if (!sessionId || !authenticatedUser || !session) return;
+    if (!session.hasGuestOwner) return;
+    const guestKey = getGuestKey(sessionId);
+    if (!guestKey) return;
+    if (claimingGuestSessionRef.current) return;
+    claimingGuestSessionRef.current = true;
+    claimGuestSession({ sessionId, guestKey })
+      .then(() => {
+        // On success the key is spent; on "invalid" it's provably useless
+        // (wrong key or someone else owns the session) — either way, drop the
+        // local pointers so signed-in loads stop resuming this session.
+        removeGuestKey(sessionId);
+        setGuestKeyState(null);
+        if (getCurrentGuestSession() === sessionId) {
+          clearCurrentGuestSession();
+        }
+      })
+      .catch((e) => {
+        console.error("[usePaintingSession] Failed to claim guest session:", e);
+      })
+      .finally(() => {
+        claimingGuestSessionRef.current = false;
+      });
+  }, [sessionId, authenticatedUser, session, claimGuestSession]);
 
   // Remove duplicate warming queries as they're ineffective and already defined above
 

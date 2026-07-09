@@ -387,13 +387,24 @@ export function PaintingView() {
           return
         }
 
-        // No URL param: guests may resume their last session; signed-in (or auth-disabled) users should start fresh
-        if (!effectiveIsSignedIn) {
-          const stored = getCurrentGuestSession() as Id<"paintingSessions"> | null
-          if (stored) {
+        // No URL param: resume this device's guest session — for guests
+        // directly, and for signed-in users when they hold its guest key
+        // (they painted as a guest and just signed in; usePaintingSession
+        // claims the session for their account once it loads). Signed-in
+        // users without the key start fresh.
+        const stored = getCurrentGuestSession() as Id<"paintingSessions"> | null
+        if (stored) {
+          if (!effectiveIsSignedIn) {
             setSessionId(stored)
             return
           }
+          if (isSignedIn && getGuestKey(stored)) {
+            setSessionId(stored)
+            return
+          }
+          // Signed-in without the key: the pointer can't be claimed by this
+          // account, so drop it rather than resurrecting it on every load
+          clearCurrentGuestSession()
         }
 
         // Create new session if needed
@@ -418,7 +429,7 @@ export function PaintingView() {
     if (sessionId === null && authReady) {
       initSession()
     }
-  }, [createNewSession, sessionId, effectiveIsSignedIn, isLoaded, authDisabled])
+  }, [createNewSession, sessionId, effectiveIsSignedIn, isSignedIn, isLoaded, authDisabled])
 
   // Surface an error instead of spinning forever if session load/creation hangs
   // (backend unreachable, session creation failed, etc.)
