@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { mutation, action, query } from "./_generated/server";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 
 // Mutation to store AI generation requests and results
@@ -86,9 +86,8 @@ export const generateImage = action({
     }
 
     // Check if user has enough tokens (1 token per generation)
-    const tokenCost = 1;
-    const hasTokens = await ctx.runQuery(api.tokens.hasEnoughTokens, {
-      requiredTokens: tokenCost,
+    const hasTokens = await ctx.runQuery(internal.tokens.hasEnoughTokensForOperation, {
+      operationType: "ai-generation",
     });
     
     if (!hasTokens) {
@@ -360,9 +359,9 @@ export const generateImage = action({
               });
               
               // Consume tokens after successful generation
-              await ctx.runMutation(api.tokens.useTokensForGeneration, {
-                generationId,
-                tokenCost,
+              await ctx.runMutation(internal.tokens.consumeTokensForOperation, {
+                operationId: generationId,
+                operationType: "ai-generation",
               });
               
               const result = { success: true, imageUrl: finalUrl };
@@ -387,9 +386,9 @@ export const generateImage = action({
               });
               
               // Consume tokens after successful generation
-              await ctx.runMutation(api.tokens.useTokensForGeneration, {
-                generationId,
-                tokenCost,
+              await ctx.runMutation(internal.tokens.consumeTokensForOperation, {
+                operationId: generationId,
+                operationType: "ai-generation",
               });
               
               console.log('ERROR: Using fallback due to storage error');

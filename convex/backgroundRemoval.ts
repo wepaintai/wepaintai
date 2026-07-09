@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { action } from "./_generated/server";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 
 export const removeBackground = action({
   args: {
@@ -38,9 +38,8 @@ export const removeBackground = action({
     }
 
     // Check if user has enough tokens (1 token per background removal)
-    const tokenCost = 1;
-    const hasTokens = await ctx.runQuery(api.tokens.hasEnoughTokens, {
-      requiredTokens: tokenCost,
+    const hasTokens = await ctx.runQuery(internal.tokens.hasEnoughTokensForOperation, {
+      operationType: "background-removal",
     });
     
     if (!hasTokens) {
@@ -156,13 +155,11 @@ export const removeBackground = action({
       }
 
       // Deduct token
-      await ctx.runMutation(api.tokens.useTokens, {
-        tokenCost,
-        description: "Background removal",
-        metadata: {
-          sessionId: args.sessionId,
-          targetLayerId: args.targetLayerId,
-        },
+      await ctx.runMutation(internal.tokens.consumeTokensForOperation, {
+        operationId: crypto.randomUUID(),
+        operationType: "background-removal",
+        sessionId: args.sessionId,
+        targetLayerId: args.targetLayerId,
       });
 
       console.log("[BG-REMOVAL] Background removal successful");

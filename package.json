@@ -53,6 +53,8 @@
     "typecheck": "run-s typecheck:app typecheck:convex",
     "typecheck:app": "tsc --noEmit",
     "typecheck:convex": "tsc -p convex --noEmit",
+    "test": "vitest",
+    "test:run": "vitest run",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
@@ -87,10 +89,12 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@edge-runtime/vm": "^5.0.0",
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.1.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
+    "convex-test": "^0.0.54",
     "eslint": "^10.6.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react-hooks": "^7.1.1",
@@ -98,6 +102,7 @@
     "npm-run-all": "^4.1.5",
     "prettier": "^3.9.4",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.63.0"
+    "typescript-eslint": "^8.63.0",
+    "vitest": "^4.1.10"
   }
 }

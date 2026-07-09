@@ -1,6 +1,19 @@
-import { query, mutation, internalMutation } from "./_generated/server";
+import { query, internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
+import {
+  assertPositiveTokenAmount,
+  assertValidTokenBalance,
+  createTokenOperationKey,
+  getTokenCost,
+  type TokenOperationType,
+} from "./tokenPolicy";
+
+const tokenOperationValidator = v.union(
+  v.literal("ai-generation"),
+  v.literal("background-removal"),
+  v.literal("image-merge"),
+);
 
 // Get user's current token balance
 export const getTokenBalance = query({
@@ -92,11 +105,14 @@ export const getTokenHistory = query({
   },
 });
 
-// Use tokens for AI generation
-export const useTokensForGeneration = mutation({
+// Token consumption is internal-only. Callers identify the completed operation;
+// this mutation owns the price, authentication, and idempotency policy.
+export const consumeTokensForOperation = internalMutation({
   args: {
-    generationId: v.id("aiGenerations"),
-    tokenCost: v.number(),
+    operationId: v.string(),
+    operationType: tokenOperationValidator,
+    sessionId: v.optional(v.id("paintingSessions")),
+    targetLayerId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -113,98 +129,94 @@ export const useTokensForGeneration = mutation({
       throw new Error("User not found");
     }
 
-    const currentTokens = user.tokens ?? 0;
-    if (currentTokens < args.tokenCost) {
-      throw new Error("Insufficient tokens");
-    }
-
-    // Update user tokens
-    const newBalance = currentTokens - args.tokenCost;
-    await ctx.db.patch(user._id, {
-      tokens: newBalance,
-      lifetimeTokensUsed: (user.lifetimeTokensUsed ?? 0) + args.tokenCost,
-      updatedAt: Date.now(),
-    });
-
-    // Record transaction
-    await ctx.db.insert("tokenTransactions", {
-      userId: user._id,
-      type: "usage",
-      amount: -args.tokenCost,
-      balance: newBalance,
-      description: "AI image generation",
-      metadata: {
-        aiGenerationId: args.generationId,
-      },
-      createdAt: Date.now(),
-    });
-
-    return { newBalance };
-  },
-});
-
-// Generic token consumption for different operation types
-export const useTokensForOperation = mutation({
-  args: {
-    operationId: v.string(), // Generic ID for any operation
-    operationType: v.union(v.literal("ai-generation"), v.literal("background-removal"), v.literal("image-merge")),
-    tokenCost: v.number(),
-  },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      throw new Error("Not authenticated");
-    }
-
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
+    const operationType: TokenOperationType = args.operationType;
+    const operationKey = createTokenOperationKey(operationType, args.operationId);
+    const existingTransaction = await ctx.db
+      .query("tokenTransactions")
+      .withIndex("by_user_operation", (q) =>
+        q.eq("userId", user._id).eq("operationKey", operationKey),
+      )
       .first();
 
-    if (!user) {
-      throw new Error("User not found");
+    if (existingTransaction) {
+      return { newBalance: existingTransaction.balance, charged: false };
     }
 
-    const currentTokens = user.tokens ?? 0;
-    if (currentTokens < args.tokenCost) {
+    const tokenCost = assertPositiveTokenAmount(getTokenCost(operationType));
+    const currentTokens = assertValidTokenBalance(user.tokens ?? 0);
+    if (currentTokens < tokenCost) {
       throw new Error("Insufficient tokens");
     }
 
-    // Update user tokens
-    const newBalance = currentTokens - args.tokenCost;
+    const newBalance = currentTokens - tokenCost;
     await ctx.db.patch(user._id, {
       tokens: newBalance,
-      lifetimeTokensUsed: (user.lifetimeTokensUsed ?? 0) + args.tokenCost,
+      lifetimeTokensUsed: (user.lifetimeTokensUsed ?? 0) + tokenCost,
       updatedAt: Date.now(),
     });
 
-    // Record transaction with appropriate description and metadata
     const descriptions = {
       "ai-generation": "AI image generation",
       "background-removal": "Background removal",
-      "image-merge": "Image merge operation"
-    };
+      "image-merge": "Image merge operation",
+    } as const;
 
-    const metadata: any = {};
-    if (args.operationType === "ai-generation") {
-      metadata.aiGenerationId = args.operationId;
-    } else if (args.operationType === "background-removal") {
+    const metadata: {
+      aiGenerationId?: Id<"aiGenerations">;
+      backgroundRemovalId?: string;
+      imageMergeId?: Id<"imageMerges">;
+      sessionId?: string;
+      targetLayerId?: string;
+    } = {};
+
+    if (operationType === "ai-generation") {
+      const generationId = ctx.db.normalizeId("aiGenerations", args.operationId);
+      if (!generationId) throw new Error("Invalid AI generation ID");
+      metadata.aiGenerationId = generationId;
+    } else if (operationType === "background-removal") {
       metadata.backgroundRemovalId = args.operationId;
-    } else if (args.operationType === "image-merge") {
-      metadata.imageMergeId = args.operationId;
+      metadata.sessionId = args.sessionId;
+      metadata.targetLayerId = args.targetLayerId;
+    } else {
+      const imageMergeId = ctx.db.normalizeId("imageMerges", args.operationId);
+      if (!imageMergeId) throw new Error("Invalid image merge ID");
+      metadata.imageMergeId = imageMergeId;
     }
 
     await ctx.db.insert("tokenTransactions", {
       userId: user._id,
+      operationKey,
       type: "usage",
-      amount: -args.tokenCost,
+      amount: -tokenCost,
       balance: newBalance,
-      description: descriptions[args.operationType],
+      description: descriptions[operationType],
       metadata,
       createdAt: Date.now(),
     });
 
-    return { newBalance };
+    return { newBalance, charged: true };
+  },
+});
+
+// Balance checks are also internal and use the same server-owned price table.
+export const hasEnoughTokensForOperation = internalQuery({
+  args: {
+    operationType: tokenOperationValidator,
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return false;
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
+      .first();
+
+    if (!user) return false;
+    const requiredTokens = assertPositiveTokenAmount(
+      getTokenCost(args.operationType),
+    );
+    return (user.tokens ?? 0) >= requiredTokens;
   },
 });
 
@@ -218,6 +230,8 @@ export const creditTokensFromPurchase = internalMutation({
     description: v.string(),
   },
   handler: async (ctx, args) => {
+    const tokens = assertPositiveTokenAmount(args.tokens, "Purchase tokens");
+
     // Check if transaction already exists for this checkout (duplicate prevention)
     const existingTransaction = await ctx.db
       .query("tokenTransactions")
@@ -240,8 +254,8 @@ export const creditTokensFromPurchase = internalMutation({
       throw new Error("User not found");
     }
 
-    const currentTokens = user.tokens ?? 0;
-    const newBalance = currentTokens + args.tokens;
+    const currentTokens = assertValidTokenBalance(user.tokens ?? 0);
+    const newBalance = assertValidTokenBalance(currentTokens + tokens);
 
     // Update user tokens
     await ctx.db.patch(args.userId, {
@@ -253,7 +267,7 @@ export const creditTokensFromPurchase = internalMutation({
     await ctx.db.insert("tokenTransactions", {
       userId: args.userId,
       type: "purchase",
-      amount: args.tokens,
+      amount: tokens,
       balance: newBalance,
       description: args.description,
       metadata: {
@@ -264,99 +278,5 @@ export const creditTokensFromPurchase = internalMutation({
     });
 
     return { newBalance };
-  },
-});
-
-// Generic token usage mutation
-export const useTokens = mutation({
-  args: {
-    tokenCost: v.number(),
-    description: v.string(),
-    metadata: v.optional(v.any()),
-  },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      throw new Error("Not authenticated");
-    }
-
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
-      .first();
-
-    if (!user) {
-      throw new Error("User not found");
-    }
-
-    const currentTokens = user.tokens ?? 0;
-    if (currentTokens < args.tokenCost) {
-      throw new Error("Insufficient tokens");
-    }
-
-    // Update user tokens
-    const newBalance = currentTokens - args.tokenCost;
-    await ctx.db.patch(user._id, {
-      tokens: newBalance,
-      lifetimeTokensUsed: (user.lifetimeTokensUsed ?? 0) + args.tokenCost,
-      updatedAt: Date.now(),
-    });
-
-    // Record transaction
-    await ctx.db.insert("tokenTransactions", {
-      userId: user._id,
-      type: "usage",
-      amount: -args.tokenCost,
-      balance: newBalance,
-      description: args.description,
-      metadata: args.metadata || {},
-      createdAt: Date.now(),
-    });
-
-    return { newBalance };
-  },
-});
-
-// Check if user has enough tokens
-export const hasEnoughTokens = query({
-  args: {
-    requiredTokens: v.number(),
-  },
-  handler: async (ctx, args) => {
-    // Return false immediately if running in an environment without auth
-    if (typeof ctx.auth === 'undefined') {
-      console.log("[hasEnoughTokens] Running without auth context");
-      return false;
-    }
-    
-    try {
-      // Check if auth is available
-      if (!ctx.auth || typeof ctx.auth.getUserIdentity !== 'function') {
-        console.log("[hasEnoughTokens] Auth not properly configured");
-        return false;
-      }
-      
-      let identity;
-      try {
-        identity = await ctx.auth.getUserIdentity();
-      } catch (authError) {
-        console.log("[hasEnoughTokens] Auth error:", authError);
-        return false;
-      }
-      
-      if (!identity) return false;
-
-      const user = await ctx.db
-        .query("users")
-        .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
-        .first();
-
-      if (!user) return false;
-
-      return (user.tokens ?? 0) >= args.requiredTokens;
-    } catch (error) {
-      console.error("[hasEnoughTokens] Error:", error);
-      return false;
-    }
   },
 });

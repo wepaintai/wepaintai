@@ -235,6 +235,7 @@ const schema = defineSchema({
   // Token transactions
   tokenTransactions: defineTable({
     userId: v.id("users"),
+    operationKey: v.optional(v.string()),
     type: v.union(v.literal("initial"), v.literal("purchase"), v.literal("usage"), v.literal("refund")),
     amount: v.number(), // Positive for credits, negative for usage
     balance: v.number(), // Balance after transaction
@@ -249,7 +250,8 @@ const schema = defineSchema({
       targetLayerId: v.optional(v.string()),
     })),
     createdAt: v.number(),
-  }).index("by_user", ["userId", "createdAt"]),
+  }).index("by_user", ["userId", "createdAt"])
+    .index("by_user_operation", ["userId", "operationKey"]),
 
   // Polar purchase records
   polarPurchases: defineTable({
