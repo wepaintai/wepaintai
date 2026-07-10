@@ -3,11 +3,11 @@ import { Upload, X } from 'lucide-react'
 import { useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import { Id } from '../../convex/_generated/dataModel'
-import { uploadImageFile, validateImageFile, ACCEPTED_TYPES, MAX_FILE_SIZE } from '../utils/imageUpload'
+import { uploadImageFile, validateImageFile, ACCEPTED_TYPES } from '../utils/imageUpload'
+import { getGuestKey } from '../utils/guestKey'
 
 interface ImageUploadModalProps {
   sessionId: Id<"paintingSessions"> | null
-  userId?: Id<"users"> | null
   onImageUploaded?: (imageId: Id<"uploadedImages">) => void
   onClose: () => void
   canvasWidth?: number
@@ -18,7 +18,6 @@ interface ImageUploadModalProps {
 
 export function ImageUploadModal({ 
   sessionId, 
-  userId, 
   onImageUploaded, 
   onClose,
   canvasWidth = 800,
@@ -93,7 +92,7 @@ export function ImageUploadModal({
         selectedFile,
         {
           sessionId,
-          userId,
+          guestKey: getGuestKey(sessionId) || undefined,
           canvasWidth,
           canvasHeight,
           onImageUploaded,

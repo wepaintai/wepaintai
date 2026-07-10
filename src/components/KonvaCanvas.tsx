@@ -12,6 +12,7 @@ import { api } from '../../convex/_generated/api'
 import { shouldShowAdminFeatures } from '../utils/environment'
 import { uploadImageFile, validateImageFile, ACCEPTED_TYPES } from '../utils/imageUpload'
 import { useClipboardContext } from '../context/ClipboardContext'
+import { getGuestKey } from '../utils/guestKey'
 
 const average = (a: number, b: number): number => (a + b) / 2
 
@@ -230,6 +231,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     endTaper = 0,
     endCap = true,
   } = props
+  const guestKey = getGuestKey(sessionId) || undefined
   
   const stageRef = useRef<Konva.Stage>(null)
   const strokeLayerRef = useRef<Konva.Layer>(null)
@@ -294,7 +296,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   const { images } = useSessionImages(sessionId)
   
   // Get AI generated images separately
-  const aiImages = useQuery(api.images.getAIGeneratedImages, sessionId ? { sessionId, guestKey: (typeof window !== 'undefined' ? (JSON.parse(localStorage.getItem('wepaint_guest_keys_v1') || '{}') || {})[sessionId as any] : undefined) } : 'skip')
+  const aiImages = useQuery(api.images.getAIGeneratedImages, sessionId ? { sessionId, guestKey } : 'skip')
   // Get paint layers for transforms
   const paintLayersData = useQuery(api.paintLayers.getPaintLayers, sessionId ? { sessionId, guestKey: (typeof window !== 'undefined' ? (JSON.parse(localStorage.getItem('wepaint_guest_keys_v1') || '{}') || {})[sessionId as any] : undefined) } : 'skip')
   
@@ -411,12 +413,13 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
             scaleX: desiredScale,
             scaleY: desiredScale,
             x: desiredX,
-            y: desiredY
+            y: desiredY,
+            guestKey,
           } as any)
           autoFittedRef.current.add(img._id)
         }
       })
-  }, [images, dimensions.width, dimensions.height, updateImageTransform])
+  }, [images, dimensions.width, dimensions.height, updateImageTransform, guestKey])
 
   // Auto-fit newly loaded AI images once as well
   useEffect(() => {
@@ -435,12 +438,13 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
           scaleX: desiredScale,
           scaleY: desiredScale,
           x: desiredX,
-          y: desiredY
+          y: desiredY,
+          guestKey,
         } as any)
         autoFittedRef.current.add(img._id)
       }
     })
-  }, [aiImages, dimensions.width, dimensions.height, updateAIImageTransform])
+  }, [aiImages, dimensions.width, dimensions.height, updateAIImageTransform, guestKey])
 
   // Remove confirmed strokes from pending when they appear in the strokes array
   useEffect(() => {
@@ -997,7 +1001,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
         imageFile,
         {
           sessionId,
-          userId: currentUser.id,
+          guestKey,
           canvasWidth: dimensions.width || 800,
           canvasHeight: dimensions.height || 600,
           onImageUploaded,
@@ -1014,7 +1018,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     } finally {
       setIsUploading(false)
     }
-  }, [sessionId, isUploading, currentUser.id, dimensions, onImageUploaded, generateUploadUrl, uploadImage])
+  }, [sessionId, isUploading, dimensions, onImageUploaded, generateUploadUrl, uploadImage, guestKey])
 
   // Clipboard paste handler: allow when over canvas or toolbox and when AI modal not open
   useEffect(() => {
@@ -1069,7 +1073,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
           fileWithName,
           {
             sessionId,
-            userId: currentUser.id,
+            guestKey,
             canvasWidth: dimensions.width || 800,
             canvasHeight: dimensions.height || 600,
             onImageUploaded,
@@ -1095,7 +1099,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     isMouseOverCanvas,
     isMouseOverToolbox,
     isAIModalOpen,
-    currentUser.id,
+    guestKey,
     dimensions.width,
     dimensions.height,
     onImageUploaded,
@@ -1683,7 +1687,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                         await updateImageTransform({
                           imageId: layer.id as Id<"uploadedImages">,
                           x: node.x(),
-                          y: node.y()
+                          y: node.y(),
+                          guestKey,
                         })
                       }}
                       onTransformEnd={async (e) => {
@@ -1698,6 +1703,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                           rotation: newRotation,
                           x: node.x(),
                           y: node.y(),
+                          guestKey,
                         } as any)
                         // Do not reset node scale here; let controlled props re-render with persisted values
                       }}
@@ -1871,7 +1877,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                         await updateAIImageTransform({
                           imageId: layer.id as Id<"aiGeneratedImages">,
                           x: node.x(),
-                          y: node.y()
+                          y: node.y(),
+                          guestKey,
                         })
                       }}
                       onTransformEnd={async (e) => {
@@ -1886,6 +1893,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                           rotation: newRotation,
                           x: node.x(),
                           y: node.y(),
+                          guestKey,
                         } as any)
                         // Do not reset node scale here; let controlled props re-render with persisted values
                       }}
