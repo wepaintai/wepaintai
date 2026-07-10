@@ -27,7 +27,7 @@ import { useMutation, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import { useThumbnailGenerator } from '../hooks/useThumbnailGenerator'
 import { ClipboardProvider } from '../context/ClipboardContext'
-import { getCurrentGuestSession, setCurrentGuestSession, clearCurrentGuestSession, getGuestKey } from '../utils/guestKey'
+import { getCurrentGuestSession, setCurrentGuestSession, clearCurrentGuestSession, getGuestKey, touchRecentGuestSession, removeRecentGuestSession } from '../utils/guestKey'
 import { startNewCanvas } from '../utils/newCanvas'
 
 // Wrapper component for background removal modal
@@ -450,12 +450,14 @@ export function PaintingView() {
     if (!sessionId || effectiveIsSignedIn) return
     if (sessionStatus === 'ok') {
       setCurrentGuestSession(sessionId)
+      touchRecentGuestSession(sessionId, session?.name)
     } else if (sessionStatus === 'not_found' || sessionStatus === 'unauthorized') {
       if (getCurrentGuestSession() === sessionId) {
         clearCurrentGuestSession()
       }
+      removeRecentGuestSession(sessionId)
     }
-  }, [sessionId, sessionStatus, effectiveIsSignedIn])
+  }, [sessionId, sessionStatus, effectiveIsSignedIn, session?.name])
 
   // Leave the broken session behind so a fresh painting is created
   const startNewPainting = useCallback(() => {

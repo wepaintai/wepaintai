@@ -26,11 +26,18 @@ export function LibraryModal({ isOpen, onClose, onCreateNew }: LibraryModalProps
   const [editingSessionId, setEditingSessionId] = React.useState<Id<"paintingSessions"> | null>(null)
   const [editingName, setEditingName] = React.useState('')
   const [deletingSessionId, setDeletingSessionId] = React.useState<Id<"paintingSessions"> | null>(null)
+  const [recentlyDeleted, setRecentlyDeleted] = React.useState<{ sessionId: Id<"paintingSessions">; name: string } | null>(null)
+  const undoTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const sessions = useQuery(api.paintingSessions.getUserSessions) ?? []
   const updateSessionName = useMutation(api.paintingSessions.updateSessionName)
   const deleteSession = useMutation(api.paintingSessions.deleteSession)
+  const restoreSession = useMutation(api.paintingSessions.restoreSession)
   const createTestSession = useMutation(api.paintingSessions.createSession)
+
+  React.useEffect(() => () => {
+    if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current)
+  }, [])
 
   const filteredSessions = sessions.filter((session: SessionWithThumbnail) => {
     const name = session.name || 'Untitled'
@@ -66,14 +73,28 @@ export function LibraryModal({ isOpen, onClose, onCreateNew }: LibraryModalProps
 
   const handleDelete = async (sessionId: Id<"paintingSessions">) => {
     if (deletingSessionId === sessionId) {
-      // Confirm delete
+      // Confirm delete (soft delete server-side; undoable via the toast below)
+      const session = sessions.find((s: SessionWithThumbnail) => s._id === sessionId)
       await deleteSession({ sessionId })
       setDeletingSessionId(null)
+      if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current)
+      setRecentlyDeleted({ sessionId, name: session?.name || 'Untitled' })
+      undoTimeoutRef.current = setTimeout(() => setRecentlyDeleted(null), 8000)
     } else {
       // First click - set as pending delete
       setDeletingSessionId(sessionId)
       // Reset after 3 seconds
       setTimeout(() => setDeletingSessionId(null), 3000)
+    }
+  }
+
+  const handleUndoDelete = async () => {
+    if (!recentlyDeleted) return
+    if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current)
+    try {
+      await restoreSession({ sessionId: recentlyDeleted.sessionId })
+    } finally {
+      setRecentlyDeleted(null)
     }
   }
 
@@ -273,6 +294,28 @@ export function LibraryModal({ isOpen, onClose, onCreateNew }: LibraryModalProps
             </div>
           )}
         </div>
+
+        {/* Footer note: contributed-to sessions are looked up from recent
+            activity only, so old collaborations may be missing */}
+        <div className="px-4 py-2 border-t border-white/10 text-xs text-white/40">
+          Shows your paintings and recent collaborations. Older canvases you
+          contributed to (but don't own) may not appear.
+        </div>
+
+        {/* Undo-delete toast */}
+        {recentlyDeleted && (
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-2 bg-black/90 border border-white/20 rounded-lg shadow-xl">
+            <span className="text-sm text-white/80">
+              Deleted "{recentlyDeleted.name}"
+            </span>
+            <button
+              onClick={handleUndoDelete}
+              className="text-sm font-medium text-blue-400 hover:text-blue-300 transition-colors"
+            >
+              Undo
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

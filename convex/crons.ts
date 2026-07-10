@@ -27,4 +27,12 @@ crons.interval(
   {}
 );
 
+// Hard-delete soft-deleted sessions after their restore grace window
+crons.interval(
+  "purge deleted sessions",
+  { hours: 6 },
+  internal.paintingSessions.purgeDeletedSessions,
+  {}
+);
+
 export default crons;
