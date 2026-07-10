@@ -25,7 +25,11 @@ const schema = defineSchema({
     lastClearBatchId: v.optional(v.string()),
     // AI generation prompts history
     aiPrompts: v.optional(v.array(v.string())), // Array of unique prompts used in this session
-  }).index("by_creator", ["createdBy"]),
+    // Soft delete: set when the owner deletes the session; hard-deleted by a
+    // cron after a grace window. Unset means the session is live.
+    deletedAt: v.optional(v.number()),
+  }).index("by_creator", ["createdBy"])
+    .index("by_deleted", ["deletedAt"]),
 
   strokes: defineTable({
     sessionId: v.id("paintingSessions"),
