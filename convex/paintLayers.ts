@@ -45,15 +45,30 @@ export const createPaintLayer = mutation({
     name: v.string(),
   },
   handler: async (ctx, args) => {
-    // Get the highest layer order to put new layer on top
+    // Get the highest layer order across ALL layer types (paint, uploaded, AI)
+    // so the new layer lands on top of images too, not just other paint layers
     const existingLayers = await ctx.db
       .query("paintLayers")
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
       .collect();
-    
-    const maxOrder = existingLayers.reduce((max, layer) => 
+    const uploadedImages = await ctx.db
+      .query("uploadedImages")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+    const aiImages = await ctx.db
+      .query("aiGeneratedImages")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+
+    let maxOrder = existingLayers.reduce((max, layer) =>
       Math.max(max, layer.layerOrder), -1
     );
+    uploadedImages.forEach(img => {
+      maxOrder = Math.max(maxOrder, img.layerOrder);
+    });
+    aiImages.forEach(img => {
+      maxOrder = Math.max(maxOrder, img.layerOrder);
+    });
     
     // Create the new paint layer
     const layerId = await ctx.db.insert("paintLayers", {
