@@ -4,6 +4,7 @@ import { Id } from "../../convex/_generated/dataModel";
 import { useCallback, useEffect, useState, useRef, useMemo } from "react";
 import { p2pLogger } from "../lib/p2p-logger";
 import { convexLow } from "../lib/convex";
+import { reportSyncFailure, reportSyncSuccess } from "../lib/syncStatus";
 import {
   generateGuestKey,
   getGuestKey,
@@ -281,8 +282,8 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     if (!sessionId) return;
     
     console.log('[usePaintingSession] Adding stroke with isEraser:', isEraser, 'layerId:', layerId, 'colorMode:', colorMode);
-    
-    const strokeId = await addStroke({
+
+    const strokeArgs = {
       sessionId,
       layerId: layerId ? (layerId as Id<"paintLayers"> | Id<"uploadedImages"> | Id<"aiGeneratedImages">) : undefined,
       userId: currentUser.id || undefined,  // Allow undefined for guest users
@@ -294,9 +295,19 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
       isEraser,
       colorMode,
       guestKey: localGuestKey || undefined,
-    });
-    
-    return strokeId;
+    };
+
+    try {
+      const strokeId = await addStroke(strokeArgs);
+      reportSyncSuccess();
+      return strokeId;
+    } catch (e) {
+      // Queue the stroke for replay after re-auth/reconnect and surface the
+      // failure via the sync banner instead of failing silently.
+      console.error('[usePaintingSession] Failed to save stroke:', e);
+      reportSyncFailure(e, strokeArgs);
+      return undefined;
+    }
   }, [sessionId, addStroke, currentUser, localGuestKey]);
 
   // Stable per-browser id used to key guest presence records (guests have no userId)
@@ -348,8 +359,11 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
       if (pendingPresenceRef.current === payload) {
         pendingPresenceRef.current = null;
       }
+      reportSyncSuccess();
     } catch (e) {
-      // ignore
+      // Presence is best-effort, but a failure here is the same auth/network
+      // problem that breaks stroke saving — surface it via the sync banner.
+      reportSyncFailure(e);
     } finally {
       presenceInFlightRef.current = false;
     }
@@ -426,15 +440,31 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
   // Undo the last stroke
   const undoLastStroke = useCallback(async () => {
     if (!sessionId) return false;
-    
-    return await removeLastStroke({ sessionId, guestKey: localGuestKey || undefined });
+
+    try {
+      const result = await removeLastStroke({ sessionId, guestKey: localGuestKey || undefined });
+      reportSyncSuccess();
+      return result;
+    } catch (e) {
+      console.error('[usePaintingSession] Failed to undo stroke:', e);
+      reportSyncFailure(e);
+      return false;
+    }
   }, [sessionId, removeLastStroke, localGuestKey]);
 
   // Redo the last undone stroke
   const redoLastStroke = useCallback(async () => {
     if (!sessionId) return false;
-    
-    return await restoreLastDeletedStroke({ sessionId, guestKey: localGuestKey || undefined });
+
+    try {
+      const result = await restoreLastDeletedStroke({ sessionId, guestKey: localGuestKey || undefined });
+      reportSyncSuccess();
+      return result;
+    } catch (e) {
+      console.error('[usePaintingSession] Failed to redo stroke:', e);
+      reportSyncFailure(e);
+      return false;
+    }
   }, [sessionId, restoreLastDeletedStroke, localGuestKey]);
 
   // Throttle live stroke updates to reduce lag
@@ -479,7 +509,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
         opacity,
         colorMode,
         guestKey: localGuestKey || undefined,
-      });
+      }).catch((e) => reportSyncFailure(e));
       pendingLiveStrokeRef.current = null;
       
       // Clear any pending timeout since we just updated
@@ -512,7 +542,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
           opacity: pending.opacity,
           colorMode: pending.colorMode,
           guestKey: localGuestKey || undefined,
-        });
+        }).catch((e) => reportSyncFailure(e));
         pendingLiveStrokeRef.current = null;
       }
       liveStrokeUpdateRef.current = null;
