@@ -1,12 +1,12 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
+import { assertCanModifySession } from "./sessionAuth";
 
 // Upload an image to storage and create a record
 export const uploadImage = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
-    userId: v.optional(v.id("users")),
     storageId: v.id("_storage"),
     filename: v.string(),
     mimeType: v.string(),
@@ -16,8 +16,23 @@ export const uploadImage = mutation({
     y: v.number(),
     canvasWidth: v.optional(v.number()),
     canvasHeight: v.optional(v.number()),
+    guestKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const uploadSession = await ctx.db.get(args.sessionId);
+    if (!uploadSession) throw new Error("Session not found");
+    await assertCanModifySession(ctx, uploadSession, args.guestKey);
+
+    let userId: Id<"users"> | undefined;
+    const identity = await ctx.auth.getUserIdentity();
+    if (identity) {
+      const user = await ctx.db
+        .query("users")
+        .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
+        .first();
+      userId = user?._id;
+    }
+
     // Get the current max layer order from ALL images (uploaded and AI)
     const uploadedImages = await ctx.db
       .query("uploadedImages")
@@ -30,7 +45,6 @@ export const uploadImage = mutation({
       .collect();
     
     // Get painting session to check paint layer order
-    const uploadSession = await ctx.db.get(args.sessionId);
     const paintLayerOrder = uploadSession?.paintLayerOrder ?? 0;
     // Compute scale to fit original image within canvas without altering the stored pixels
     const canvasWidth = args.canvasWidth ?? uploadSession?.canvasWidth ?? args.width;
@@ -57,7 +71,7 @@ export const uploadImage = mutation({
     // Create the image record
     const imageId = await ctx.db.insert("uploadedImages", {
       sessionId: args.sessionId,
-      userId: args.userId,
+      userId,
       storageId: args.storageId,
       filename: args.filename,
       mimeType: args.mimeType,
@@ -86,8 +100,13 @@ export const addAIGeneratedImage = mutation({
     height: v.number(),
     canvasWidth: v.optional(v.number()),
     canvasHeight: v.optional(v.number()),
+    guestKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) throw new Error("Session not found");
+    await assertCanModifySession(ctx, session, args.guestKey);
+
     // Get the current max layer order from ALL images (uploaded and AI)
     const uploadedImages = await ctx.db
       .query("uploadedImages")
@@ -103,7 +122,6 @@ export const addAIGeneratedImage = mutation({
     let canvasWidth = args.canvasWidth || 800;
     let canvasHeight = args.canvasHeight || 600;
     
-    const session = await ctx.db.get(args.sessionId);
     const paintLayerOrder = session?.paintLayerOrder ?? 0;
     
     // Find max layer order across all images
@@ -245,9 +263,15 @@ export const updateImageTransform = mutation({
     scaleY: v.optional(v.number()),
     rotation: v.optional(v.number()),
     opacity: v.optional(v.number()),
+    guestKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const { imageId, ...updates } = args;
+    const { imageId, guestKey, ...updates } = args;
+    const image = await ctx.db.get(imageId);
+    if (!image) throw new Error("Image not found");
+    const session = await ctx.db.get(image.sessionId);
+    if (!session) throw new Error("Session not found");
+    await assertCanModifySession(ctx, session, guestKey);
     
     // Only update provided fields
     const updateFields: any = {};
@@ -280,9 +304,15 @@ export const updateAIImageTransform = mutation({
     scaleY: v.optional(v.number()),
     rotation: v.optional(v.number()),
     opacity: v.optional(v.number()),
+    guestKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const { imageId, ...updates } = args;
+    const { imageId, guestKey, ...updates } = args;
+    const image = await ctx.db.get(imageId);
+    if (!image) throw new Error("AI image not found");
+    const session = await ctx.db.get(image.sessionId);
+    if (!session) throw new Error("Session not found");
+    await assertCanModifySession(ctx, session, guestKey);
     
     // Only update provided fields
     const updateFields: any = {};
@@ -307,10 +337,14 @@ export const updateImageLayerOrder = mutation({
   args: {
     imageId: v.id("uploadedImages"),
     newLayerOrder: v.number(),
+    guestKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const image = await ctx.db.get(args.imageId);
     if (!image) throw new Error("Image not found");
+    const session = await ctx.db.get(image.sessionId);
+    if (!session) throw new Error("Session not found");
+    await assertCanModifySession(ctx, session, args.guestKey);
 
     // Get all images (uploaded and AI) for the session to maintain unique ordering
     const uploadedImages = await ctx.db
@@ -371,10 +405,16 @@ export const updateImageLayerOrder = mutation({
 
 // Delete an image
 export const deleteImage = mutation({
-  args: { imageId: v.id("uploadedImages") },
+  args: {
+    imageId: v.id("uploadedImages"),
+    guestKey: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
     const image = await ctx.db.get(args.imageId);
     if (!image) throw new Error("Image not found");
+    const session = await ctx.db.get(image.sessionId);
+    if (!session) throw new Error("Session not found");
+    await assertCanModifySession(ctx, session, args.guestKey);
 
     // Delete any strokes attached to this image layer
     const attachedStrokes = await ctx.db
@@ -416,7 +456,6 @@ export const deleteImage = mutation({
       .collect();
     
     // Get paint layer order
-    const session = await ctx.db.get(image.sessionId);
     const paintLayerOrder = session?.paintLayerOrder ?? 0;
     
     // Combine all layers and filter out the deleted one
@@ -446,8 +485,17 @@ export const deleteImage = mutation({
 });
 
 // Generate upload URL for client-side upload
-export const generateUploadUrl = mutation(async (ctx) => {
-  return await ctx.storage.generateUploadUrl();
+export const generateUploadUrl = mutation({
+  args: {
+    sessionId: v.id("paintingSessions"),
+    guestKey: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) throw new Error("Session not found");
+    await assertCanModifySession(ctx, session, args.guestKey);
+    return await ctx.storage.generateUploadUrl();
+  },
 });
 
 // Get AI-generated images for a session
@@ -484,10 +532,14 @@ export const updateAIImageLayerOrder = mutation({
   args: {
     imageId: v.id("aiGeneratedImages"),
     newLayerOrder: v.number(),
+    guestKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const image = await ctx.db.get(args.imageId);
     if (!image) throw new Error("AI image not found");
+    const session = await ctx.db.get(image.sessionId);
+    if (!session) throw new Error("Session not found");
+    await assertCanModifySession(ctx, session, args.guestKey);
 
     // Get all images (uploaded and AI) for the session to maintain unique ordering
     const uploadedImages = await ctx.db
@@ -548,7 +600,10 @@ export const updateAIImageLayerOrder = mutation({
 
 // Delete an AI-generated image
 export const deleteAIImage = mutation({
-  args: { imageId: v.id("aiGeneratedImages") },
+  args: {
+    imageId: v.id("aiGeneratedImages"),
+    guestKey: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
     console.log('[deleteAIImage] Attempting to delete AI image:', args.imageId);
     
@@ -557,6 +612,10 @@ export const deleteAIImage = mutation({
       console.error('[deleteAIImage] AI image not found:', args.imageId);
       throw new Error("AI image not found");
     }
+
+    const session = await ctx.db.get(image.sessionId);
+    if (!session) throw new Error("Session not found");
+    await assertCanModifySession(ctx, session, args.guestKey);
     
     console.log('[deleteAIImage] Found image to delete:', image);
 
@@ -598,7 +657,6 @@ export const deleteAIImage = mutation({
       .collect();
     
     // Get paint layer order
-    const session = await ctx.db.get(image.sessionId);
     const paintLayerOrder = session?.paintLayerOrder ?? 0;
     
     // Combine all layers and filter out the deleted one

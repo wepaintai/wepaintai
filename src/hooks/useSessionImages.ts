@@ -26,10 +26,12 @@ export interface SessionImage {
 }
 
 export function useSessionImages(sessionId: Id<"paintingSessions"> | null) {
+  const guestKey = getGuestKey(sessionId) || undefined;
+
   // Query images for the session
   const images = useQuery(
     api.images.getSessionImages,
-    sessionId ? { sessionId, guestKey: getGuestKey(sessionId) || undefined } : "skip"
+    sessionId ? { sessionId, guestKey } : "skip"
   );
 
   // Mutations
@@ -43,32 +45,32 @@ export function useSessionImages(sessionId: Id<"paintingSessions"> | null) {
     x: number,
     y: number
   ) => {
-    await updateTransform({ imageId, x, y });
-  }, [updateTransform]);
+    await updateTransform({ imageId, x, y, guestKey });
+  }, [updateTransform, guestKey]);
 
   // Update image scale
   const scaleImage = useCallback(async (
     imageId: Id<"uploadedImages">,
     scale: number
   ) => {
-    await updateTransform({ imageId, scale });
-  }, [updateTransform]);
+    await updateTransform({ imageId, scale, guestKey });
+  }, [updateTransform, guestKey]);
 
   // Update image rotation
   const rotateImage = useCallback(async (
     imageId: Id<"uploadedImages">,
     rotation: number
   ) => {
-    await updateTransform({ imageId, rotation });
-  }, [updateTransform]);
+    await updateTransform({ imageId, rotation, guestKey });
+  }, [updateTransform, guestKey]);
 
   // Update image opacity
   const setImageOpacity = useCallback(async (
     imageId: Id<"uploadedImages">,
     opacity: number
   ) => {
-    await updateTransform({ imageId, opacity });
-  }, [updateTransform]);
+    await updateTransform({ imageId, opacity, guestKey });
+  }, [updateTransform, guestKey]);
 
   // Update full transform
   const updateImageTransform = useCallback(async (
@@ -86,24 +88,24 @@ export function useSessionImages(sessionId: Id<"paintingSessions"> | null) {
     try {
       console.log('[useSessionImages] updateImageTransform called', { imageId, transform })
     } catch {}
-    await updateTransform({ imageId, ...transform });
+    await updateTransform({ imageId, ...transform, guestKey });
     try {
       console.log('[useSessionImages] updateImageTransform completed', { imageId, transform })
     } catch {}
-  }, [updateTransform]);
+  }, [updateTransform, guestKey]);
 
   // Change layer order
   const changeLayerOrder = useCallback(async (
     imageId: Id<"uploadedImages">,
     newLayerOrder: number
   ) => {
-    await updateLayerOrder({ imageId, newLayerOrder });
-  }, [updateLayerOrder]);
+    await updateLayerOrder({ imageId, newLayerOrder, guestKey });
+  }, [updateLayerOrder, guestKey]);
 
   // Delete image
   const deleteImage = useCallback(async (imageId: Id<"uploadedImages">) => {
-    await deleteImageMutation({ imageId });
-  }, [deleteImageMutation]);
+    await deleteImageMutation({ imageId, guestKey });
+  }, [deleteImageMutation, guestKey]);
 
   return {
     images: images || [],
