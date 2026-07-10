@@ -1,130 +1,109 @@
-import { action } from "./_generated/server";
-import { v } from "convex/values";
-import { api, internal } from "./_generated/api";
+import { action, query } from './_generated/server'
+import { api, internal } from './_generated/api'
+import { getPublicTokenPackages, getTokenPackage, tokenPackageKeyValidator } from './polarPackages'
 
 interface PolarCheckoutResponse {
-  id: string;
-  checkout_url?: string;
-  url?: string;
-  amount: number;
-  currency: string;
+  id: string
+  checkout_url?: string
+  url?: string
+  amount: number
+  currency: string
+  product_id: string | null
+  external_customer_id: string | null
 }
 
 interface CheckoutResult {
-  checkoutUrl: string;
-  checkoutId: string;
+  checkoutUrl: string
+  checkoutId: string
 }
 
-// Create a Polar checkout session
 export const createCheckout = action({
   args: {
-    productId: v.string(), // Polar product UUID from environment variables
-    tokens: v.number(),
+    packageKey: tokenPackageKeyValidator,
   },
   handler: async (ctx, args): Promise<CheckoutResult> => {
-    const identity = await ctx.auth.getUserIdentity();
+    const identity = await ctx.auth.getUserIdentity()
     if (!identity) {
-      throw new Error("Not authenticated");
+      throw new Error('Not authenticated')
     }
 
-    const user = await ctx.runQuery(api.auth.getCurrentUser);
+    const user = await ctx.runQuery(api.auth.getCurrentUser)
     if (!user) {
-      throw new Error("User not found");
+      throw new Error('User not found')
     }
 
-    // Get Polar API key from environment
-    const polarApiKey = process.env.POLAR_API_KEY;
+    const tokenPackage = getTokenPackage(args.packageKey)
+    const polarApiKey = process.env.POLAR_API_KEY
     if (!polarApiKey) {
-      throw new Error("Polar API key not configured");
+      throw new Error('Polar API key not configured')
     }
 
-    // Get API base URL (defaults to sandbox if not set)
-    const polarApiBaseUrl = process.env.POLAR_API_BASE_URL || 'https://sandbox-api.polar.sh';
+    const siteUrl = process.env.SITE_URL?.replace(/\/$/, '')
+    if (!siteUrl) {
+      throw new Error('SITE_URL not configured')
+    }
+
+    const polarApiBaseUrl = process.env.POLAR_API_BASE_URL || 'https://sandbox-api.polar.sh'
+    const externalCustomerId = String(user._id)
 
     try {
-      // Create checkout session with Polar
       const response = await fetch(`${polarApiBaseUrl}/v1/checkouts`, {
-        method: "POST",
+        method: 'POST',
         headers: {
-          "Authorization": `Bearer ${polarApiKey}`,
-          "Content-Type": "application/json",
+          Authorization: `Bearer ${polarApiKey}`,
+          'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          product_id: args.productId,
-          metadata: {
-            userId: user._id,
-            tokens: args.tokens,
-          },
-          success_url: `${process.env.VITE_APP_URL || 'http://localhost:3000'}?purchase=success`,
-          cancel_url: `${process.env.VITE_APP_URL || 'http://localhost:3000'}?purchase=cancelled`,
+          products: [tokenPackage.productId],
+          external_customer_id: externalCustomerId,
+          customer_email: user.email,
+          allow_discount_codes: false,
+          success_url: `${siteUrl}?purchase=success&checkout_id={CHECKOUT_ID}`,
+          return_url: `${siteUrl}?purchase=cancelled`,
         }),
-      });
+      })
 
       if (!response.ok) {
-        const error = await response.text();
-        console.error("Polar API error:", error);
-        throw new Error("Failed to create checkout session");
+        console.error('Polar checkout creation failed', {
+          status: response.status,
+        })
+        throw new Error('Failed to create checkout session')
       }
 
-      const data: PolarCheckoutResponse = await response.json();
-      
-      // Create pending purchase record
+      const data: PolarCheckoutResponse = await response.json()
+      const checkoutUrl = data.checkout_url || data.url || ''
+
+      if (
+        !data.id?.trim() ||
+        !checkoutUrl ||
+        data.product_id !== tokenPackage.productId ||
+        data.amount !== tokenPackage.amount ||
+        data.currency.toLowerCase() !== tokenPackage.currency ||
+        data.external_customer_id !== externalCustomerId
+      ) {
+        throw new Error('Polar returned an invalid checkout')
+      }
+
       await ctx.runMutation(internal.polarWebhook.createPendingPurchase, {
         userId: user._id,
         checkoutId: data.id,
-        productId: args.productId,
-        productName: `${args.tokens} Token Pack`,
-        amount: data.amount,
-        currency: data.currency,
-        tokens: args.tokens,
-      });
+        packageKey: args.packageKey,
+      })
 
       return {
-        checkoutUrl: data.checkout_url || data.url || '',
+        checkoutUrl,
         checkoutId: data.id,
-      };
+      }
     } catch (error) {
-      console.error("Error creating Polar checkout:", error);
-      throw new Error("Failed to create checkout session");
+      console.error('Error creating Polar checkout:', error)
+      // Convex's TypeScript target does not include the ErrorOptions `cause` overload.
+      // eslint-disable-next-line preserve-caught-error
+      throw new Error('Failed to create checkout session')
     }
   },
-});
+})
 
-interface TokenPackage {
-  id: string;
-  name: string;
-  tokens: number;
-  price: number;
-  currency: string;
-  description: string;
-  pricePerToken: number;
-}
-
-// Get available token packages
-export const getTokenPackages = action({
+export const getTokenPackages = query({
   args: {},
-  handler: async (ctx): Promise<TokenPackage[]> => {
-    // For now, return hardcoded packages. Later this could fetch from Polar
-    // These are display-only - actual product IDs come from environment variables
-    return [
-      {
-        id: "50_tokens",
-        name: "50 Token Pack",
-        tokens: 50,
-        price: 499, // in cents
-        currency: "USD",
-        description: "",
-        pricePerToken: 0.10, // $4.99 / 50 tokens
-      },
-      {
-        id: "125_tokens",
-        name: "125 Token Pack",
-        tokens: 125,
-        price: 999, // in cents
-        currency: "USD",
-        description: "",
-        pricePerToken: 0.08, // $9.99 / 125 tokens
-      },
-    ];
-  },
-});
+  handler: () => getPublicTokenPackages(),
+})

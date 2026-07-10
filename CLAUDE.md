@@ -31,6 +31,7 @@ Note: No test runner is configured yet.
 ## Architecture
 
 ### Tech Stack
+
 - **Frontend**: TanStack Start (React 19 + file-based routing), TypeScript, Tailwind CSS
 - **Backend**: Convex (real-time serverless database with WebSocket support)
 - **Authentication**: Better Auth (self-hosted, via @convex-dev/better-auth component)
@@ -47,7 +48,7 @@ Note: No test runner is configured yet.
    - URL-based session sharing
 
 2. **Canvas Architecture**
-   - **Dual Implementation**: 
+   - **Dual Implementation**:
      - `Canvas.tsx`: Traditional HTML5 Canvas implementation (legacy)
      - `KonvaCanvas.tsx`: Konva.js implementation with advanced features (recommended)
    - **Konva Features**:
@@ -65,6 +66,7 @@ Note: No test runner is configured yet.
    - Session state managed via URL parameters
 
 ### Directory Structure
+
 - `/app`: React components and routes
   - `/routes`: File-based routing pages
   - `/components`: UI components (Canvas, ToolPanel, etc.)
@@ -74,6 +76,7 @@ Note: No test runner is configured yet.
   - Database schema defined in `schema.ts`
 
 ### Environment Variables
+
 - `VITE_CONVEX_URL`: Backend URL (auto-set by dev commands)
 - `VITE_CONVEX_SITE_URL`: Convex HTTP actions URL (`.convex.site` for cloud, `https://site.wepaint.ai` for self-hosted prod) — used by the Better Auth server proxy
 - `VITE_INTERNAL_HIDE_ADMIN_PANEL`: Hide debug panel in production
@@ -82,12 +85,16 @@ Note: No test runner is configured yet.
 - Frontend env vars must be prefixed with `VITE_`
 
 #### Convex Backend Environment Variables
+
 Set these in the Convex dashboard (Settings > Environment Variables):
+
 - `REPLICATE_API_TOKEN`: Your Replicate API token for AI image generation
 - `REPLICATE_MODEL_VERSION`: Replicate model version ID (default: `15589a1a9e6b240d246752fc688267b847db4858910cc390794703384b6a5443` for Flux Kontext Pro)
 - `REPLICATE_TIMEOUT_SECONDS`: Timeout for Replicate API calls in seconds (default: 180) - applies to AI generation, background removal, and image merge operations
 - `POLAR_API_KEY`: Your Polar API key for payment processing
 - `POLAR_WEBHOOK_SECRET`: Webhook secret from Polar for signature verification
+- `POLAR_PRODUCT_ID_50`: Polar product ID for the fixed $4.99 / 50-token package
+- `POLAR_PRODUCT_ID_125`: Polar product ID for the fixed $9.99 / 125-token package
 - `POLAR_API_BASE_URL`: (Optional) API base URL
   - For sandbox (default): Leave empty or set to `https://sandbox-api.polar.sh`
   - For production: Set to `https://api.polar.sh`
@@ -97,6 +104,7 @@ Set these in the Convex dashboard (Settings > Environment Variables):
   (authorized redirect URI: `<SITE_URL>/api/auth/callback/google`)
 
 ### Authentication Setup (Better Auth)
+
 Authentication is self-hosted with [Better Auth](https://www.better-auth.com) via the
 [`@convex-dev/better-auth`](https://labs.convex.dev/better-auth) component.
 **Google OAuth is the only sign-in method** — no password accounts. `/sign-up`
@@ -114,9 +122,11 @@ redirects to `/login`; both are a single "Continue with Google" button.
   The `clerkId` field is vestigial from the pre-migration era; old rows keep it, new rows never set it.
 
 ### PR Previews
+
 Every open same-repo PR is served at `https://preview-pr-<N>.wepaint.ai` (a sticky PR comment carries the URL). It's the prod frontend build of the branch against the **live production Convex backend** — `convex/` changes are not deployed, and sign-in is effectively guest-only. Built on the Mac mini's self-hosted runner; redeployed on every push, torn down on PR close. Details: `selfhost/preview/README.md`.
 
 ### Development Notes
+
 - Use `pnpm dev` for local development with free local backend
 - The admin panel (bottom-left debug info) is hidden in production
 - When modifying Convex schema, the backend will auto-migrate
@@ -195,6 +205,7 @@ Every open same-repo PR is served at `https://preview-pr-<N>.wepaint.ai` (a stic
    - Eraser masks are cleaned up when layers are deleted
 
 ### AI Image Generation
+
 - Uses Replicate's Flux Kontext Pro model for AI image editing
 - The model takes the canvas content as input along with a text prompt
 - Weight parameter controls canvas influence (0-1 in UI, mapped to 0-2 for Replicate API)
@@ -215,12 +226,15 @@ For testing payments without real money:
 1. **Create Sandbox Account**: Go to https://sandbox.polar.sh/start (separate from production)
 2. **Set Environment Variables** in Convex for development:
    - `POLAR_API_KEY`: Your sandbox API key
-   - `POLAR_WEBHOOK_SECRET`: Your sandbox webhook secret  
+   - `POLAR_WEBHOOK_SECRET`: Your sandbox webhook secret
+   - `POLAR_PRODUCT_ID_50`: Your sandbox 50-token product ID
+   - `POLAR_PRODUCT_ID_125`: Your sandbox 125-token product ID
    - `POLAR_API_BASE_URL`: `https://sandbox-api.polar.sh`
 3. **Test Card**: Use `4242 4242 4242 4242` with any future date and CVC
-4. **Product ID**: Create the same product in sandbox and update `VITE_POLAR_PRODUCT_ID` in `.env.local`
+4. **Product IDs**: Keep the IDs in the Convex environment; they must never use a `VITE_` prefix
 
 ### Debugging Tips
+
 - For noisy Convex logs, use the `[AI-GEN]` prefix to filter AI generation logs
 - Check both development and production deployments - they use different URLs
 - Production logs: https://dashboard.convex.dev/t/travis-irby/wepaintai-core/graceful-blackbird-369/logs
@@ -237,7 +251,7 @@ The AI generation feature (`/convex/aiGeneration.ts`) integrates with Replicate'
 
 2. **Image Storage**: Generated images are downloaded and stored in Convex storage to ensure reliable serving and avoid CORS issues.
 
-3. **Error Handling**: 
+3. **Error Handling**:
    - Content moderation can flag benign content (error E005)
    - Single character URLs (just "h") indicate the Replicate bug
    - Proper error messages guide users to try different prompts

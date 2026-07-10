@@ -1,7 +1,49 @@
-import { httpAction, internalMutation, internalQuery } from "./_generated/server";
-import { v } from "convex/values";
-import { internal } from "./_generated/api";
-import { Id } from "./_generated/dataModel";
+import { httpAction, internalMutation } from './_generated/server'
+import { v } from 'convex/values'
+import { internal } from './_generated/api'
+import {
+  getTokenPackage,
+  getTokenPackageDefinition,
+  isTokenPackageKey,
+  tokenPackageKeyValidator,
+} from './polarPackages'
+import { assertPositiveTokenAmount, assertValidTokenBalance } from './tokenPolicy'
+
+interface CheckoutUpdateData {
+  id: string
+  status: string
+  productId: string
+  amount: number
+  currency: string
+  externalCustomerId: string | null
+}
+
+function parseCheckoutUpdateData(value: unknown): CheckoutUpdateData {
+  if (!value || typeof value !== 'object') {
+    throw new Error('Invalid checkout payload')
+  }
+
+  const data = value as Record<string, unknown>
+  if (
+    typeof data.id !== 'string' ||
+    typeof data.status !== 'string' ||
+    typeof data.product_id !== 'string' ||
+    typeof data.amount !== 'number' ||
+    typeof data.currency !== 'string' ||
+    (data.external_customer_id !== null && typeof data.external_customer_id !== 'string')
+  ) {
+    throw new Error('Invalid checkout payload')
+  }
+
+  return {
+    id: data.id,
+    status: data.status,
+    productId: data.product_id,
+    amount: data.amount,
+    currency: data.currency,
+    externalCustomerId: data.external_customer_id,
+  }
+}
 
 // Custom webhook verification for Convex environment following Standard Webhooks spec
 async function verifyPolarWebhook(body: string, headers: Record<string, string>, secret: string) {
@@ -62,7 +104,6 @@ async function verifyPolarWebhook(body: string, headers: Record<string, string>,
   
   // Try each secret format
   let isValid = false;
-  let validSignature = '';
   
   for (let i = 0; i < secretsToTry.length; i++) {
     try {
@@ -92,7 +133,6 @@ async function verifyPolarWebhook(body: string, headers: Record<string, string>,
       for (const sig of signatures) {
         if (sig === expectedSig) {
           isValid = true;
-          validSignature = expectedSig;
           console.log(`[Polar Webhook] Signature matched with secret format ${i + 1}`);
           break;
         }
@@ -125,141 +165,212 @@ async function verifyPolarWebhook(body: string, headers: Record<string, string>,
 // Polar webhook handler
 export const handlePolarWebhook = httpAction(async (ctx, request) => {
   // Get the raw body for signature verification
-  const rawBody = await request.text();
-  
+  const rawBody = await request.text()
+
   try {
     // Parse headers into a plain object
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = {}
     request.headers.forEach((value, key) => {
-      headers[key] = value;
-    });
-    
+      headers[key] = value
+    })
+
     // Log all headers for debugging
-    console.log("[Polar Webhook] Received headers:", headers);
-    
+    console.log('[Polar Webhook] Received headers:', headers)
+
     // Verify webhook signature and parse the event
-    const event = await verifyPolarWebhook(
-      rawBody,
-      headers,
-      process.env.POLAR_WEBHOOK_SECRET || ''
-    );
-    
-    console.log("[Polar Webhook] Received event:", event);
-    
-    const { type, data } = event;
-    
-    if (type === "checkout.created") {
+    const event = await verifyPolarWebhook(rawBody, headers, process.env.POLAR_WEBHOOK_SECRET || '')
+
+    console.log('[Polar Webhook] Received event:', event)
+
+    const { type, data } = event
+
+    if (type === 'checkout.created') {
       // Just log and acknowledge - purchase record already created in polar.ts
-      console.log("[Polar Webhook] Checkout created:", data.id);
-      return new Response("OK", { status: 200 });
+      console.log('[Polar Webhook] Checkout created:', data.id)
+      return new Response('OK', { status: 200 })
     }
-    
-    if (type === "checkout.updated") {
-      const checkoutData = data as any;
-      
-      // Only process if checkout is succeeded/confirmed
-      if (checkoutData.status === "succeeded" || checkoutData.status === "confirmed") {
-        console.log("[Polar Webhook] Checkout succeeded:", checkoutData.id);
-        
-        // Find the pending purchase
-        const purchase = await ctx.runQuery(internal.polarWebhook.getPendingPurchase, {
-          checkoutId: checkoutData.id,
-        });
-        
-        if (!purchase) {
-          console.error("[Polar Webhook] Purchase record not found for checkout:", checkoutData.id);
-          return new Response("Purchase not found", { status: 404 });
-        }
-        
-        // Check if already completed (idempotency check)
-        if (purchase.status === "completed") {
-          console.log(`[Polar Webhook] Purchase already completed for checkout: ${checkoutData.id}`);
-          return new Response("OK", { status: 200 });
-        }
-        
-        // Mark purchase as completed
-        await ctx.runMutation(internal.polarWebhook.completePurchase, {
-          purchaseId: purchase._id,
-        });
-        
-        // Credit tokens to user
-        await ctx.runMutation(internal.tokens.creditTokensFromPurchase, {
-          userId: purchase.userId,
-          tokens: purchase.tokens,
-          polarCheckoutId: checkoutData.id,
-          polarProductId: purchase.productId,
-          description: `Purchased ${purchase.productName}`,
-        });
-        
-        console.log(`[Polar Webhook] Credited ${purchase.tokens} tokens to user ${purchase.userId}`);
+
+    if (type === 'checkout.updated') {
+      const checkoutData = parseCheckoutUpdateData(data)
+
+      if (checkoutData.status !== 'succeeded' && checkoutData.status !== 'confirmed') {
+        return new Response('OK', { status: 200 })
       }
-      
-      return new Response("OK", { status: 200 });
+
+      const result = await ctx.runMutation(internal.polarWebhook.validateAndCompletePurchase, {
+        checkoutId: checkoutData.id,
+        status: checkoutData.status,
+        productId: checkoutData.productId,
+        amount: checkoutData.amount,
+        currency: checkoutData.currency,
+        externalCustomerId: checkoutData.externalCustomerId,
+      })
+
+      if (result.outcome === 'rejected') {
+        const status = result.reason === 'checkout' ? 404 : 400
+        return new Response('Checkout validation failed', { status })
+      }
+
+      return new Response('OK', { status: 200 })
     }
-    
+
     // Unknown event type
-    console.log("[Polar Webhook] Unhandled event type:", type);
-    return new Response("OK", { status: 200 });
-    
+    console.log('[Polar Webhook] Unhandled event type:', type)
+    return new Response('OK', { status: 200 })
   } catch (error) {
-    if (error instanceof Error && (error.message.includes('signature') || error.message.includes('Invalid signature'))) {
-      console.error("[Polar Webhook] Verification failed:", error.message);
-      return new Response("Unauthorized", { status: 401 });
+    if (
+      error instanceof Error &&
+      (error.message.includes('signature') || error.message.includes('Invalid signature'))
+    ) {
+      console.error('[Polar Webhook] Verification failed:', error.message)
+      return new Response('Unauthorized', { status: 401 })
     }
-    console.error("[Polar Webhook] Error processing webhook:", error);
-    return new Response("Internal Server Error", { status: 500 });
+    console.error('[Polar Webhook] Error processing webhook:', error)
+    return new Response('Internal Server Error', { status: 500 })
   }
-});
+})
 
 // Internal mutation to create a pending purchase
 export const createPendingPurchase = internalMutation({
   args: {
-    userId: v.id("users"),
+    userId: v.id('users'),
     checkoutId: v.string(),
-    productId: v.string(),
-    productName: v.string(),
-    amount: v.number(),
-    currency: v.string(),
-    tokens: v.number(),
+    packageKey: tokenPackageKeyValidator,
   },
   handler: async (ctx, args) => {
-    return await ctx.db.insert("polarPurchases", {
+    const tokenPackage = getTokenPackage(args.packageKey)
+    const existingPurchase = await ctx.db
+      .query('polarPurchases')
+      .withIndex('by_checkout', (q) => q.eq('checkoutId', args.checkoutId))
+      .first()
+
+    if (existingPurchase) {
+      throw new Error('Checkout already registered')
+    }
+
+    return await ctx.db.insert('polarPurchases', {
       userId: args.userId,
       checkoutId: args.checkoutId,
-      productId: args.productId,
-      productName: args.productName,
-      amount: args.amount,
-      currency: args.currency,
-      tokens: args.tokens,
-      status: "pending",
+      packageKey: tokenPackage.key,
+      productId: tokenPackage.productId,
+      productName: tokenPackage.name,
+      amount: tokenPackage.amount,
+      currency: tokenPackage.currency,
+      tokens: tokenPackage.tokens,
+      status: 'pending',
       createdAt: Date.now(),
-    });
+    })
   },
-});
+})
 
-// Internal query to get a pending purchase by checkout ID
-export const getPendingPurchase = internalQuery({
+export const validateAndCompletePurchase = internalMutation({
   args: {
     checkoutId: v.string(),
+    status: v.string(),
+    productId: v.string(),
+    amount: v.number(),
+    currency: v.string(),
+    externalCustomerId: v.union(v.string(), v.null()),
   },
   handler: async (ctx, args) => {
-    return await ctx.db
-      .query("polarPurchases")
-      .withIndex("by_checkout", (q) => q.eq("checkoutId", args.checkoutId))
-      .filter((q) => q.eq(q.field("status"), "pending"))
-      .first();
-  },
-});
+    const purchase = await ctx.db
+      .query('polarPurchases')
+      .withIndex('by_checkout', (q) => q.eq('checkoutId', args.checkoutId))
+      .first()
 
-// Internal mutation to mark a purchase as completed
-export const completePurchase = internalMutation({
-  args: {
-    purchaseId: v.id("polarPurchases"),
-  },
-  handler: async (ctx, args) => {
-    return await ctx.db.patch(args.purchaseId, {
-      status: "completed",
+    if (!purchase) {
+      return { outcome: 'rejected' as const, reason: 'checkout' as const }
+    }
+
+    if (args.status !== 'succeeded' && args.status !== 'confirmed') {
+      return { outcome: 'rejected' as const, reason: 'status' as const }
+    }
+
+    if (!purchase.packageKey || !isTokenPackageKey(purchase.packageKey)) {
+      return { outcome: 'rejected' as const, reason: 'package' as const }
+    }
+
+    const definition = getTokenPackageDefinition(purchase.packageKey)
+    if (
+      purchase.tokens !== definition.tokens ||
+      purchase.amount !== definition.amount ||
+      purchase.currency.toLowerCase() !== definition.currency ||
+      !purchase.productId.trim()
+    ) {
+      return { outcome: 'rejected' as const, reason: 'package' as const }
+    }
+
+    if (args.productId !== purchase.productId) {
+      return { outcome: 'rejected' as const, reason: 'product' as const }
+    }
+
+    if (args.amount !== purchase.amount) {
+      return { outcome: 'rejected' as const, reason: 'amount' as const }
+    }
+
+    if (args.currency.toLowerCase() !== purchase.currency.toLowerCase()) {
+      return { outcome: 'rejected' as const, reason: 'currency' as const }
+    }
+
+    if (args.externalCustomerId !== String(purchase.userId)) {
+      return { outcome: 'rejected' as const, reason: 'user' as const }
+    }
+
+    if (purchase.status === 'failed') {
+      return { outcome: 'rejected' as const, reason: 'status' as const }
+    }
+
+    const existingTransaction = await ctx.db
+      .query('tokenTransactions')
+      .withIndex('by_user', (q) => q.eq('userId', purchase.userId))
+      .filter((q) =>
+        q.and(
+          q.eq(q.field('type'), 'purchase'),
+          q.eq(q.field('metadata.polarCheckoutId'), args.checkoutId)
+        )
+      )
+      .first()
+
+    if (existingTransaction) {
+      if (purchase.status !== 'completed') {
+        await ctx.db.patch(purchase._id, {
+          status: 'completed',
+          completedAt: Date.now(),
+        })
+      }
+      return { outcome: 'duplicate' as const }
+    }
+
+    const tokens = assertPositiveTokenAmount(purchase.tokens, 'Purchase tokens')
+    const user = await ctx.db.get(purchase.userId)
+    if (!user) {
+      throw new Error('Purchase user not found')
+    }
+
+    const currentTokens = assertValidTokenBalance(user.tokens ?? 0)
+    const newBalance = assertValidTokenBalance(currentTokens + tokens)
+
+    await ctx.db.patch(purchase.userId, {
+      tokens: newBalance,
+      updatedAt: Date.now(),
+    })
+    await ctx.db.insert('tokenTransactions', {
+      userId: purchase.userId,
+      type: 'purchase',
+      amount: tokens,
+      balance: newBalance,
+      description: `Purchased ${definition.name}`,
+      metadata: {
+        polarCheckoutId: args.checkoutId,
+        polarProductId: purchase.productId,
+      },
+      createdAt: Date.now(),
+    })
+    await ctx.db.patch(purchase._id, {
+      status: 'completed',
       completedAt: Date.now(),
-    });
+    })
+
+    return { outcome: 'credited' as const, newBalance }
   },
-});
+})
