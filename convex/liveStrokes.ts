@@ -1,6 +1,6 @@
 import { mutation, query, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
-import { assertCanModifySession } from "./strokes";
+import { assertCanModifySession } from "./sessionAuth";
 
 /**
  * Update or create a live stroke for a user

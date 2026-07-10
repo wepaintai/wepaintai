@@ -2,6 +2,7 @@ import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { createUserWithWelcomeTokens } from "./users";
+import { assertCanModifySession } from "./sessionAuth";
 
 /**
  * Create a new painting session
@@ -375,12 +376,15 @@ export const updateSessionThumbnail = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
     thumbnailUrl: v.string(),
+    guestKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
     if (!session) {
       throw new Error("Session not found");
     }
+
+    await assertCanModifySession(ctx, session, args.guestKey);
 
     await ctx.db.patch(args.sessionId, {
       thumbnailUrl: args.thumbnailUrl,
