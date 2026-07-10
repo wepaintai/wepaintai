@@ -251,6 +251,7 @@ export function PaintingView() {
   // a malformed URL id would otherwise throw validation errors in every query.
   const sessionReady = !!sessionId && sessionStatus === 'ok'
   const validSessionId = sessionReady ? sessionId : null
+  const imageGuestKey = getGuestKey(validSessionId) || undefined
   const sessionError: 'not_found' | 'unauthorized' | null =
     sessionId && (sessionStatus === 'not_found' || sessionStatus === 'unauthorized') ? sessionStatus : null
 
@@ -708,6 +709,7 @@ export function PaintingView() {
         // Add the AI-generated image to Convex
         const newImageId = await addAIGeneratedImage({
           sessionId,
+          guestKey: getGuestKey(sessionId) || undefined,
           imageUrl,
           width: img.naturalWidth || img.width,
           height: img.naturalHeight || img.height,
@@ -915,7 +917,7 @@ export function PaintingView() {
       const aiImage = aiImages?.find(img => img._id === layerId)
       if (aiImage) {
         console.log('[PaintingView] Toggling AI image visibility', { layerId, to: visible })
-        await updateAIImageTransformMutation({ imageId: layerId as Id<'aiGeneratedImages'>, opacity: visible ? 1 : 0 })
+        await updateAIImageTransformMutation({ imageId: layerId as Id<'aiGeneratedImages'>, opacity: visible ? 1 : 0, guestKey: imageGuestKey })
         console.log('[PaintingView] AI image opacity updated OK', { layerId, to: visible ? 1 : 0 })
         return
       }
@@ -924,7 +926,7 @@ export function PaintingView() {
     } catch (err) {
       console.error('[PaintingView] Error toggling layer visibility', { layerId, visible, err })
     }
-  }, [images, aiImages, paintLayers, updateImageTransform, updateAIImageTransformMutation, updatePaintLayer])
+  }, [images, aiImages, paintLayers, updateImageTransform, updateAIImageTransformMutation, updatePaintLayer, imageGuestKey])
 
   const handleLayerDelete = useCallback(async (layerId: string) => {
     // console.log('[PaintingView] handleLayerDelete called with layerId:', layerId)
@@ -972,7 +974,7 @@ export function PaintingView() {
     if (aiImage) {
       // console.log('[PaintingView] Deleting AI image:', layerId)
       try {
-        await deleteAIImageMutation({ imageId: layerId as Id<"aiGeneratedImages"> })
+        await deleteAIImageMutation({ imageId: layerId as Id<"aiGeneratedImages">, guestKey: imageGuestKey })
         // console.log('[PaintingView] AI image deleted successfully')
       } catch (error) {
         console.error('[PaintingView] Error deleting AI image:', error)
@@ -980,7 +982,7 @@ export function PaintingView() {
     } else {
       console.warn('[PaintingView] Layer not found for deletion:', layerId)
     }
-  }, [images, aiImages, paintLayers, clearSession, deleteImage, deletePaintLayer, deleteAIImageMutation])
+  }, [images, aiImages, paintLayers, clearSession, deleteImage, deletePaintLayer, deleteAIImageMutation, imageGuestKey])
 
   const handleLayerReorder = useCallback(async (layerId: string, newOrder: number) => {
     if (!sessionId) return
@@ -1022,10 +1024,11 @@ export function PaintingView() {
     if (aiImage) {
       await updateAIImageTransformMutation({
         imageId: layerId as Id<"aiGeneratedImages">,
-        opacity
+        opacity,
+        guestKey: imageGuestKey,
       })
     }
-  }, [images, aiImages, updateImageTransform, updateAIImageTransformMutation])
+  }, [images, aiImages, updateImageTransform, updateAIImageTransformMutation, imageGuestKey])
 
   // Handle creating new paint layer
   const handleCreatePaintLayer = useCallback(async () => {
@@ -1232,7 +1235,6 @@ export function PaintingView() {
       {showImageUpload && (
         <ImageUploadModal
           sessionId={sessionId}
-          userId={currentUser.id}
           onImageUploaded={handleImageUploaded}
           onClose={() => {
             setShowImageUpload(false)
