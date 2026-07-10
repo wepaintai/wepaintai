@@ -6,6 +6,7 @@ import { type BrushSettings } from './BrushSettingsModal'
 import { AdminPanel } from './AdminPanel' // Import AdminPanel
 import { SessionInfo } from './SessionInfo'
 import { PresenceStrip } from './PresenceStrip'
+import { SyncStatusBanner } from './SyncStatusBanner'
 import { P2PStatus } from './P2PStatus'
 import { P2PDebugPanel } from './P2PDebugPanel'
 import { ImageUploadModal } from './ImageUploadModal'
@@ -1113,6 +1114,8 @@ export function PaintingView() {
           ))}
         </div>
       )}
+      {/* Persistent "changes aren't saving" banner (auth expiry / network) */}
+      <SyncStatusBanner />
       {/* Presence strip + connection indicator — visible to all users */}
       {validSessionId && (
         <PresenceStrip
