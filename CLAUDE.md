@@ -17,6 +17,12 @@ pnpm dev:app          # Frontend only
 pnpm dev:convex:local # Local Convex backend only
 pnpm dev:convex:cloud # Cloud Convex backend only
 
+# First-time setup on a fresh checkout/worktree: the local backend is selected
+# automatically (dev:convex:local runs `convex deployment select local`), but if
+# the project has no local deployment yet, create one first:
+npx convex deployment create travis-irby:wepaint-core:local --select
+# (equivalent alternative: npx convex dev --once --configure=existing --project wepaint-core --team travis-irby)
+
 # Convex deployment
 npx convex deploy     # Deploy backend to production
 
