@@ -52,10 +52,153 @@ function completedCheckout(
   }
 }
 
+const webhookSecret = 'polar-webhook-secret'
+
+function checkoutUpdatedEvent(
+  userId: Id<'users'>,
+  overrides: Partial<{
+    checkoutId: string
+    status: string
+    productId: string | null
+    amount: number
+    currency: string
+    externalCustomerId: string | null
+  }> = {}
+) {
+  const now = new Date().toISOString()
+  const checkout = {
+    checkoutId: 'checkout-50',
+    status: 'succeeded',
+    productId: 'polar-product-50' as string | null,
+    amount: 499,
+    currency: 'usd',
+    externalCustomerId: String(userId) as string | null,
+    ...overrides,
+  }
+
+  return {
+    type: 'checkout.updated',
+    timestamp: now,
+    data: {
+      id: checkout.checkoutId,
+      created_at: now,
+      modified_at: null,
+      custom_field_data: {},
+      payment_processor: 'stripe',
+      status: checkout.status,
+      client_secret: 'checkout-client-secret',
+      url: 'https://sandbox.polar.sh/checkout/checkout-50',
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+      success_url: 'https://wepaint.test?purchase=success',
+      return_url: 'https://wepaint.test?purchase=cancelled',
+      embed_origin: null,
+      amount: checkout.amount,
+      discount_amount: 0,
+      net_amount: checkout.amount,
+      tax_amount: 0,
+      tax_behavior: 'inclusive',
+      total_amount: checkout.amount,
+      currency: checkout.currency,
+      allow_trial: false,
+      active_trial_interval: null,
+      active_trial_interval_count: null,
+      trial_end: null,
+      organization_id: 'polar-organization',
+      product_id: checkout.productId,
+      product_price_id: null,
+      discount_id: null,
+      allow_discount_codes: false,
+      require_billing_address: false,
+      is_discount_applicable: true,
+      is_free_product_price: false,
+      is_payment_required: true,
+      is_payment_setup_required: false,
+      is_payment_form_required: true,
+      customer_id: null,
+      is_business_customer: false,
+      customer_name: null,
+      customer_email: 'polar-test@example.com',
+      customer_ip_address: null,
+      customer_billing_name: null,
+      customer_billing_address: null,
+      customer_tax_id: null,
+      payment_processor_metadata: {},
+      billing_address_fields: {
+        country: 'required',
+        state: 'optional',
+        city: 'optional',
+        postal_code: 'required',
+        line1: 'optional',
+        line2: 'optional',
+      },
+      trial_interval: null,
+      trial_interval_count: null,
+      metadata: {},
+      external_customer_id: checkout.externalCustomerId,
+      products: [],
+      product: null,
+      product_price: null,
+      prices: null,
+      discount: null,
+      subscription_id: null,
+      attached_custom_fields: [],
+      customer_metadata: {},
+    },
+  }
+}
+
+async function createWebhookHeaders(
+  body: string,
+  options: {
+    secret?: string
+    timestamp?: Date
+    webhookId?: string
+  } = {}
+) {
+  const secret = options.secret ?? webhookSecret
+  const timestamp = options.timestamp ?? new Date()
+  const webhookId = options.webhookId ?? 'polar-delivery-1'
+  const timestampSeconds = Math.floor(timestamp.getTime() / 1000).toString()
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  )
+  const signature = await crypto.subtle.sign(
+    'HMAC',
+    key,
+    new TextEncoder().encode(`${webhookId}.${timestampSeconds}.${body}`)
+  )
+  const encodedSignature = btoa(String.fromCharCode(...new Uint8Array(signature)))
+
+  return {
+    'content-type': 'application/json',
+    'webhook-id': webhookId,
+    'webhook-timestamp': timestampSeconds,
+    'webhook-signature': `v1,${encodedSignature}`,
+  }
+}
+
+async function deliverWebhook(
+  t: ReturnType<typeof createTestBackend>,
+  event: unknown,
+  options: Parameters<typeof createWebhookHeaders>[1] = {}
+) {
+  const body = typeof event === 'string' ? event : JSON.stringify(event)
+  return await t.fetch('/webhooks/polar', {
+    method: 'POST',
+    headers: await createWebhookHeaders(body, options),
+    body,
+  })
+}
+
 beforeEach(() => {
   vi.stubEnv('POLAR_PRODUCT_ID_50', 'polar-product-50')
   vi.stubEnv('POLAR_PRODUCT_ID_125', 'polar-product-125')
   vi.stubEnv('POLAR_API_KEY', 'polar-api-key')
+  vi.stubEnv('POLAR_WEBHOOK_SECRET', webhookSecret)
   vi.stubEnv('POLAR_API_BASE_URL', 'https://sandbox-api.polar.sh')
   vi.stubEnv('SITE_URL', 'https://wepaint.test')
 })
@@ -369,5 +512,169 @@ describe('server-authoritative Polar token packages', () => {
     expect(state.user?.tokens).toBe(3)
     expect(state.otherUser?.tokens).toBe(3)
     expect(state.transactions).toHaveLength(0)
+  })
+})
+
+describe('Polar webhook security and delivery handling', () => {
+  test('fails closed when the webhook secret is missing', async () => {
+    const t = createTestBackend()
+    vi.stubEnv('POLAR_WEBHOOK_SECRET', undefined)
+
+    const response = await t.fetch('/webhooks/polar', {
+      method: 'POST',
+      headers: {
+        'webhook-id': 'missing-secret-delivery',
+        'webhook-timestamp': Math.floor(Date.now() / 1000).toString(),
+        'webhook-signature': 'v1,empty-secret-signature',
+      },
+      body: '{}',
+    })
+
+    expect(response.status).toBe(401)
+    expect(await response.text()).toBe('Unauthorized')
+  })
+
+  test('rejects invalid signatures without logging sensitive request data', async () => {
+    const t = createTestBackend()
+    const body = JSON.stringify({ private: 'full-payload-marker' })
+    const headers = await createWebhookHeaders(body, { secret: 'wrong-webhook-secret' })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    const response = await t.fetch('/webhooks/polar', {
+      method: 'POST',
+      headers: {
+        ...headers,
+        authorization: 'Bearer private-authorization-marker',
+      },
+      body,
+    })
+
+    expect(response.status).toBe(401)
+    expect(await response.text()).toBe('Unauthorized')
+    const logged = JSON.stringify([...warn.mock.calls, ...error.mock.calls])
+    expect(logged).not.toContain('full-payload-marker')
+    expect(logged).not.toContain('private-authorization-marker')
+    expect(logged).not.toContain(headers['webhook-signature'])
+    expect(logged).not.toContain(webhookSecret)
+  })
+
+  test('rejects an expired signed delivery before processing it', async () => {
+    const t = createTestBackend()
+    const response = await deliverWebhook(t, '{"not":"processed"}', {
+      timestamp: new Date(Date.now() - 301_000),
+    })
+
+    expect(response.status).toBe(401)
+    expect(await response.text()).toBe('Unauthorized')
+  })
+
+  test('returns a generic bad request for a signed malformed event', async () => {
+    const t = createTestBackend()
+    const response = await deliverWebhook(t, {
+      type: 'checkout.updated',
+      timestamp: new Date().toISOString(),
+      data: { id: 'malformed-checkout', private: 'do-not-return' },
+    })
+
+    expect(response.status).toBe(400)
+    expect(await response.text()).toBe('Bad Request')
+  })
+
+  test('completes and credits a valid signed checkout atomically', async () => {
+    const t = createTestBackend()
+    const userId = await seedUser(t, identity.subject, 'polar-test@example.com')
+    await t.mutation(internal.polarWebhook.createPendingPurchase, {
+      userId,
+      checkoutId: 'checkout-50',
+      packageKey: '50_tokens',
+    })
+
+    const response = await deliverWebhook(t, checkoutUpdatedEvent(userId))
+
+    expect(response.status).toBe(200)
+    expect(await response.text()).toBe('OK')
+    const state = await t.run(async (ctx) => ({
+      user: await ctx.db.get(userId),
+      purchase: await ctx.db
+        .query('polarPurchases')
+        .withIndex('by_checkout', (q) => q.eq('checkoutId', 'checkout-50'))
+        .unique(),
+      transactions: await ctx.db.query('tokenTransactions').collect(),
+    }))
+    expect(state.user?.tokens).toBe(53)
+    expect(state.purchase?.status).toBe('completed')
+    expect(state.transactions).toHaveLength(1)
+  })
+
+  test('treats duplicate signed deliveries idempotently', async () => {
+    const t = createTestBackend()
+    const userId = await seedUser(t, identity.subject, 'polar-test@example.com')
+    await t.mutation(internal.polarWebhook.createPendingPurchase, {
+      userId,
+      checkoutId: 'checkout-50',
+      packageKey: '50_tokens',
+    })
+    const event = checkoutUpdatedEvent(userId)
+
+    const first = await deliverWebhook(t, event)
+    const duplicate = await deliverWebhook(t, event)
+
+    expect(first.status).toBe(200)
+    expect(duplicate.status).toBe(200)
+    const state = await t.run(async (ctx) => ({
+      user: await ctx.db.get(userId),
+      transactions: await ctx.db.query('tokenTransactions').collect(),
+    }))
+    expect(state.user?.tokens).toBe(53)
+    expect(state.transactions).toHaveLength(1)
+  })
+
+  test('leaves a purchase pending after transient processing failure and succeeds on retry', async () => {
+    const t = createTestBackend()
+    const userId = await seedUser(
+      t,
+      identity.subject,
+      'polar-test@example.com',
+      Number.MAX_SAFE_INTEGER - 10
+    )
+    await t.mutation(internal.polarWebhook.createPendingPurchase, {
+      userId,
+      checkoutId: 'checkout-50',
+      packageKey: '50_tokens',
+    })
+    const event = checkoutUpdatedEvent(userId)
+
+    const failed = await deliverWebhook(t, event)
+    expect(failed.status).toBe(500)
+    const afterFailure = await t.run(async (ctx) => ({
+      user: await ctx.db.get(userId),
+      purchase: await ctx.db
+        .query('polarPurchases')
+        .withIndex('by_checkout', (q) => q.eq('checkoutId', 'checkout-50'))
+        .unique(),
+      transactions: await ctx.db.query('tokenTransactions').collect(),
+    }))
+    expect(afterFailure.user?.tokens).toBe(Number.MAX_SAFE_INTEGER - 10)
+    expect(afterFailure.purchase?.status).toBe('pending')
+    expect(afterFailure.transactions).toHaveLength(0)
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(userId, { tokens: 3 })
+    })
+    const retried = await deliverWebhook(t, event)
+
+    expect(retried.status).toBe(200)
+    const afterRetry = await t.run(async (ctx) => ({
+      user: await ctx.db.get(userId),
+      purchase: await ctx.db
+        .query('polarPurchases')
+        .withIndex('by_checkout', (q) => q.eq('checkoutId', 'checkout-50'))
+        .unique(),
+      transactions: await ctx.db.query('tokenTransactions').collect(),
+    }))
+    expect(afterRetry.user?.tokens).toBe(53)
+    expect(afterRetry.purchase?.status).toBe('completed')
+    expect(afterRetry.transactions).toHaveLength(1)
   })
 })

@@ -80,10 +80,12 @@ This document tracks the repository audit findings so work can continue across s
 
 ### AUD-003: Fail closed and sanitize Polar webhook handling
 
-- Status: TODO
+- Status: DONE
 - Area: Payments / Secrets
 - Files:
   - `convex/polarWebhook.ts`
+  - `convex/polar.test.ts`
+  - `docs/POLAR_SETUP.md`
 - Problem: Missing `POLAR_WEBHOOK_SECRET` falls back to an empty HMAC key. Logs also expose headers, computed signatures, event bodies, and a secret prefix.
 - Required changes:
   - Reject requests or deployment initialization when the webhook secret is missing.
@@ -95,8 +97,10 @@ This document tracks the repository audit findings so work can continue across s
   - No sensitive signature or secret material appears in logs.
   - A transient credit failure does not permanently mark a purchase completed.
   - Timestamp and replay protections are tested.
-- Verification: Not run
-- Notes:
+- Verification: `corepack pnpm test:run` PASS (2 files, 21 tests); targeted Polar webhook suite PASS (17 tests); `corepack pnpm typecheck` PASS; targeted ESLint PASS with 0 errors or warnings; targeted Prettier check PASS; `corepack pnpm build` PASS with the pre-existing large-chunk warning; `corepack pnpm audit --prod` PASS with no known vulnerabilities.
+- Notes: Completed 2026-07-09. Replaced the custom multi-format HMAC implementation with Polar SDK's supported `validateEvent` verifier, which applies the Standard Webhooks five-minute timestamp tolerance, constant-time signature verification, JSON parsing, and Polar event schema validation before business logic. Missing or whitespace-only `POLAR_WEBHOOK_SECRET` values fail closed, verification failures return a generic 401, signed malformed events return a generic 400, and processing failures return a generic 500 so Polar can retry. Webhook logs now contain fixed operational messages only; secrets, prefixes, signatures, authorization/request headers, signed content, and event payloads are never logged. The AUD-002 `validateAndCompletePurchase` internal mutation remains the single atomic transaction for package validation, balance credit, transaction insertion, and purchase completion. Tests cover missing configuration, invalid signatures, expired timestamps, malformed events, successful completion, duplicate delivery, sensitive-log redaction, and a transient mutation failure followed by successful retry, in addition to the AUD-002 product/amount/currency/customer/package validation cases.
+
+  Deployment/configuration: set `POLAR_WEBHOOK_SECRET` in every Convex deployment to the exact secret issued for that deployment's Polar webhook endpoint; sandbox and production endpoints require their own secrets. Do not add prefixes, decode the value, or expose it through a `VITE_` variable. Keep the AUD-002 `POLAR_PRODUCT_ID_50`, `POLAR_PRODUCT_ID_125`, `POLAR_API_KEY`, `POLAR_API_BASE_URL`, and `SITE_URL` values configured as documented in `docs/POLAR_SETUP.md`, and deploy the Convex functions after configuration. A missing secret intentionally causes every delivery to return 401. No deployment was performed as part of this change.
 
 ### AUD-004: Enforce authorization on every Convex function
 
