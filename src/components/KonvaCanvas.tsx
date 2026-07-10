@@ -12,6 +12,13 @@ import { api } from '../../convex/_generated/api'
 import { shouldShowAdminFeatures } from '../utils/environment'
 import { uploadImageFile, validateImageFile, ACCEPTED_TYPES } from '../utils/imageUpload'
 import { useClipboardContext } from '../context/ClipboardContext'
+import {
+  calculateCaptureDimensions,
+  getCapturePreset,
+  getRasterExportPixelRatio,
+  type CanvasCapturePreset,
+  type CanvasCaptureResult,
+} from '../utils/canvasCapture'
 
 const average = (a: number, b: number): number => (a + b) / 2
 
@@ -202,10 +209,12 @@ interface KonvaCanvasProps {
 export interface CanvasRef {
   clear: () => void
   undo: () => void
-  getImageData: () => string | undefined
+  captureContent: (preset: CanvasCapturePreset) => CanvasCaptureResult | undefined
   getDimensions: () => { width: number; height: number }
   forceRedraw: () => void
 }
+
+const CAPTURE_OVERLAY_NAME = 'capture-overlay'
 
 const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>) => {
   const {
@@ -1123,64 +1132,53 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     undo: () => {
       // console.warn('KonvaCanvas.undo() is deprecated. Use session-level undo instead.')
     },
-    getImageData: () => {
+    captureContent: (preset) => {
       const stage = stageRef.current
-      if (!stage) {
-        return ''
+      if (!stage || stage.width() <= 0 || stage.height() <= 0) {
+        return undefined
       }
-      
-      try {
-        // Determine export pixel ratio based on the most downscaled visible image
-        const imgScales: number[] = []
-        if (images && Array.isArray(images)) {
-          images.forEach((img: any) => {
-            if (img && typeof img.scale === 'number' && (img.opacity === undefined || img.opacity > 0)) {
-              imgScales.push(img.scale)
-            }
-          })
-        }
-        if (aiImages && Array.isArray(aiImages)) {
-          aiImages.forEach((img: any) => {
-            if (img && typeof img.scale === 'number' && (img.opacity === undefined || img.opacity > 0)) {
-              imgScales.push(img.scale)
-            }
-          })
-        }
-        const minScale = imgScales.length ? Math.min(...imgScales) : 1
-        // Export at native pixels of the smallest-scaled image; never downscale
-        const exportPixelRatio = Math.max(1, (minScale > 0 && isFinite(minScale)) ? (1 / minScale) : 1)
 
-        // Ensure latest render before capture
-        stage.batchDraw()
-        
-        // Render stage to high-res canvas
-        const stageCanvas = stage.toCanvas({ pixelRatio: exportPixelRatio })
-        
-        // Create a temporary canvas with white background at the export size
+      const visibleLayerIds = new Set(layers.filter((layer) => layer.visible).map((layer) => layer.id))
+      const rasterScales = [...(images ?? []), ...(aiImages ?? [])]
+        .filter((image) => visibleLayerIds.has(image._id))
+        .flatMap((image) => [image.scaleX ?? image.scale, image.scaleY ?? image.scale])
+        .filter((scale): scale is number => typeof scale === 'number')
+      const captureDimensions = calculateCaptureDimensions({
+        width: stage.width(),
+        height: stage.height(),
+        preset,
+        desiredPixelRatio: preset === 'export' ? getRasterExportPixelRatio(rasterScales) : undefined,
+      })
+      if (!captureDimensions) return undefined
+
+      const overlayNodes = stage.find(`.${CAPTURE_OVERLAY_NAME}`)
+      const overlayVisibility = overlayNodes.map((node) => node.visible())
+
+      try {
+        overlayNodes.forEach((node) => node.visible(false))
+
+        const stageCanvas = stage.toCanvas({ pixelRatio: captureDimensions.pixelRatio })
         const tempCanvas = document.createElement('canvas')
         tempCanvas.width = stageCanvas.width
         tempCanvas.height = stageCanvas.height
         const tempCtx = tempCanvas.getContext('2d')
-        
-        if (tempCtx) {
-          // Fill with white background (avoid transparent PNG checkerboard look)
-          tempCtx.fillStyle = 'white'
-          tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height)
-          
-          // Draw the stage content on top
-          tempCtx.drawImage(stageCanvas, 0, 0)
-          
-          // Return PNG data URL
-          return tempCanvas.toDataURL('image/png')
+
+        if (!tempCtx) return undefined
+
+        tempCtx.fillStyle = 'white'
+        tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height)
+        tempCtx.drawImage(stageCanvas, 0, 0)
+
+        const config = getCapturePreset(preset)
+        return {
+          dataUrl: tempCanvas.toDataURL(config.mimeType, config.quality),
+          width: tempCanvas.width,
+          height: tempCanvas.height,
         }
-        
-        // Fallback to Konva direct export
-        return stage.toDataURL({ 
-          pixelRatio: exportPixelRatio,
-          mimeType: 'image/png'
-        })
       } catch {
-        return ''
+        return undefined
+      } finally {
+        overlayNodes.forEach((node, index) => node.visible(overlayVisibility[index]))
       }
     },
     getDimensions: () => {
@@ -1206,7 +1204,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
         stageRef.current.batchDraw()
       }
     },
-  }), [dimensions, images, aiImages])
+  }), [dimensions, images, aiImages, layers])
 
   // Find layer info
   const getLayerInfo = (layerId: string) => {
@@ -1613,6 +1611,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                               segments.push(
                                 <Path
                                   key={`live-${segmentStartIdx}`}
+                                  name={CAPTURE_OVERLAY_NAME}
                                   data={pathData}
                                   fill={rainbowColor}
                                   opacity={opacity}
@@ -1631,6 +1630,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       // Normal stroke
                       return (
                         <Path
+                          name={CAPTURE_OVERLAY_NAME}
                           data={strokeResult.pathData}
                           fill={selectedTool === 'eraser' ? '#000000' : color}
                           opacity={opacity}
@@ -1799,6 +1799,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                     {/* Render current eraser stroke if erasing this layer */}
                     {isDrawing && currentStroke.length > 0 && selectedTool === 'eraser' && activeLayerId === layer.id && (
                       <Path
+                        name={CAPTURE_OVERLAY_NAME}
                         data={getStrokePathData({
                           points: currentStroke,
                           color: '#000000',
@@ -1814,6 +1815,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                     {/* Render current brush stroke if painting this image layer */}
                     {isDrawing && currentStroke.length > 0 && selectedTool === 'brush' && activeLayerId === layer.id && (
                       <Path
+                        name={CAPTURE_OVERLAY_NAME}
                         data={getStrokePathData({
                           points: currentStroke,
                           color,
@@ -1987,6 +1989,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                     {/* Render current eraser stroke if erasing this layer */}
                     {isDrawing && currentStroke.length > 0 && selectedTool === 'eraser' && activeLayerId === layer.id && (
                       <Path
+                        name={CAPTURE_OVERLAY_NAME}
                         data={getStrokePathData({
                           points: currentStroke,
                           color: '#000000',
@@ -2002,6 +2005,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                     {/* Render current brush stroke if painting this AI image layer */}
                     {isDrawing && currentStroke.length > 0 && selectedTool === 'brush' && activeLayerId === layer.id && (
                       <Path
+                        name={CAPTURE_OVERLAY_NAME}
                         data={getStrokePathData({
                           points: currentStroke,
                           color,
@@ -2025,7 +2029,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
             })}
 
           {/* Drawing layer for live strokes and cursors */}
-          <Layer ref={drawingLayerRef} listening={false}>
+          <Layer ref={drawingLayerRef} name={CAPTURE_OVERLAY_NAME} listening={false}>
             {/* Current stroke being drawn (only for non-eraser tools on non-paint layers) */}
             {isDrawing && currentStroke.length > 0 && selectedTool === 'brush' && 
               (() => {
@@ -2208,7 +2212,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
           </Layer>
         {/* Shared transformer for transform tool (render on top for hit-testing) */}
         {selectedTool === 'transform' && (
-          <Layer>
+          <Layer name={CAPTURE_OVERLAY_NAME}>
             <Transformer
               ref={transformerRef}
               rotateEnabled

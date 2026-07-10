@@ -58,7 +58,7 @@ function BackgroundRemovalModalWrapper({
         
         setTimeout(() => {
           if (canvasRef.current) {
-            const data = canvasRef.current.getImageData() || ''
+            const data = canvasRef.current.captureContent('processing')?.dataUrl || ''
             setCanvasData(data)
             setIsLoading(false)
           }
@@ -130,7 +130,7 @@ function AIGenerationModalWrapper({
         // Wait a bit after forcing redraw
         setTimeout(() => {
           if (canvasRef.current) {
-            const data = canvasRef.current.getImageData() || ''
+            const data = canvasRef.current.captureContent('processing')?.dataUrl || ''
             const dims = canvasRef.current.getDimensions() || { width: 800, height: 600 }
             
             // console.log('[AIGenerationModalWrapper] Canvas data captured after redraw:', data.length)
@@ -142,7 +142,7 @@ function AIGenerationModalWrapper({
             if (!data || data.length === 0) {
               console.warn('[AIGenerationModalWrapper] Canvas data empty, retrying...')
               setTimeout(() => {
-                const retryData = canvasRef.current?.getImageData() || ''
+                const retryData = canvasRef.current?.captureContent('processing')?.dataUrl || ''
                 if (retryData && retryData.length > 0) {
                   // console.log('[AIGenerationModalWrapper] Retry successful:', retryData.length)
                   setCanvasData(retryData)
@@ -218,8 +218,6 @@ export function PaintingView() {
   const startCap = true
   const endCap = true
 
-  const [history, setHistory] = useState<string[]>([])
-  const [historyIndex, setHistoryIndex] = useState(-1)
   const [sessionId, setSessionId] = useState<Id<"paintingSessions"> | null>(null)
   const [showImageUpload, setShowImageUpload] = useState(false)
   const [showAIGeneration, setShowAIGeneration] = useState(false)
@@ -500,19 +498,9 @@ export function PaintingView() {
   useEffect(() => {
     setHasLocalStrokes(false)
     setPendingUndoStrokeIds(new Set())
-    setHistory([])
-    setHistoryIndex(-1)
   }, [sessionId])
 
   const handleStrokeEnd = () => {
-    // Save canvas state for undo/redo
-    const imageData = canvasRef.current?.getImageData()
-    if (imageData) {
-      const newHistory = history.slice(0, historyIndex + 1)
-      newHistory.push(imageData)
-      setHistory(newHistory)
-      setHistoryIndex(newHistory.length - 1)
-    }
     // Mark that we have at least one local stroke in this session
     setHasLocalStrokes(true)
     
@@ -604,8 +592,6 @@ export function PaintingView() {
   const handleClear = async () => {
     // Clear local canvas immediately for responsiveness
     canvasRef.current?.clear()
-    setHistory([])
-    setHistoryIndex(-1)
     setHasLocalStrokes(false)
     
     // Clear the session in the backend
@@ -617,17 +603,17 @@ export function PaintingView() {
   }
 
   const handleExport = () => {
-    const imageData = canvasRef.current?.getImageData()
-    if (imageData) {
+    const capture = canvasRef.current?.captureContent('export')
+    if (capture) {
       // On iOS, show the export modal instead of direct download
       if (isIOS()) {
-        setExportCanvasDataUrl(imageData)
+        setExportCanvasDataUrl(capture.dataUrl)
         setShowExportModal(true)
       } else {
         // Non-iOS devices: use direct download
         const link = document.createElement('a')
         link.download = `wepaintai-${Date.now()}.png`
-        link.href = imageData
+        link.href = capture.dataUrl
         link.click()
       }
       
