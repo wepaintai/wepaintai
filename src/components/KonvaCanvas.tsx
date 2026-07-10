@@ -1348,7 +1348,9 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
         {/* Content layers render first; transformer should be above them */}
         {/* Render layers in order */}
         {layers
-          .sort((a, b) => a.order - b.order)
+          // On equal order (legacy data), render paint layers above images to
+          // match the layers panel, which lists paint layers on top for ties
+          .sort((a, b) => (a.order - b.order) || ((a.type === 'paint' ? 1 : 0) - (b.type === 'paint' ? 1 : 0)))
           .map((layer, renderIndex) => {
             if (!layer.visible) return null
             
