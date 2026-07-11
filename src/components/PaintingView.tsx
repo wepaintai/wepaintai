@@ -14,7 +14,6 @@ import { AIGenerationModal } from './AIGenerationModal'
 import { BackgroundRemovalModal } from './BackgroundRemovalModal'
 import { MergeTwoModal } from './MergeTwoModal'
 import { ExportModal, buildExportFilename } from './ExportModal'
-import { UserProfile } from './UserProfile'
 import { TokenDisplay } from './TokenDisplay'
 import { usePaintingSession } from '../hooks/usePaintingSession'
 import { useConnectionStatus } from '../hooks/useConnectionStatus'
@@ -1267,7 +1266,11 @@ export function PaintingView() {
               {sessionError === 'unauthorized' && (
                 <button
                   className="px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white text-sm"
-                  onClick={() => { window.location.href = '/login' }}
+                  onClick={() => {
+                    // Come back to this (private) session after signing in
+                    const here = window.location.pathname + window.location.search
+                    window.location.href = `/login?redirect=${encodeURIComponent(here)}`
+                  }}
                 >
                   Sign in
                 </button>
@@ -1355,10 +1358,8 @@ export function PaintingView() {
           onEndCapChange={() => {}} // Cap settings are constant for now
         />
       )}
-      
-      {/* User profile display - only show if admin features are enabled */}
-      {adminFeaturesEnabled && <UserProfile />}
-      
+
+
       {/* Export modal for iOS devices */}
       <ExportModal
         isOpen={showExportModal}

@@ -2,20 +2,33 @@ import { createFileRoute } from '@tanstack/react-router'
 import { GoogleSignInButton } from '../components/GoogleSignInButton'
 
 export const Route = createFileRoute('/login')({
+  validateSearch: (search: Record<string, unknown>): { redirect?: string } => ({
+    redirect: typeof search.redirect === 'string' ? search.redirect : undefined,
+  }),
   component: LoginComponent,
 })
 
 function LoginComponent() {
+  const { redirect } = Route.useSearch()
+  // Only same-origin relative paths, so the param can't redirect off-site
+  const callbackURL =
+    redirect && redirect.startsWith('/') && !redirect.startsWith('//')
+      ? redirect
+      : '/'
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="w-full max-w-md bg-white rounded-lg shadow-xl p-8">
-        <h1 className="text-2xl font-bold text-gray-900 mb-2 text-center">
+    <div className="min-h-screen flex items-center justify-center bg-neutral-950 py-12 px-4 sm:px-6 lg:px-8">
+      <div className="w-full max-w-md bg-black/90 backdrop-blur-md border border-white/20 rounded-lg shadow-xl p-8">
+        <h1 className="text-2xl font-bold text-white mb-2 text-center">
           Sign in to wePaintAI
         </h1>
-        <p className="text-sm text-gray-500 text-center mb-6">
+        <p className="text-white/60 text-sm text-center mb-2">
+          Sign in with your Google account to save your work and use AI
+          features.
+        </p>
+        <p className="text-white/40 text-xs text-center mb-6">
           New here? Signing in with Google creates your account automatically.
         </p>
-        <GoogleSignInButton callbackURL="/" />
+        <GoogleSignInButton callbackURL={callbackURL} />
       </div>
     </div>
   )
