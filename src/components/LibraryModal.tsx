@@ -9,6 +9,8 @@ interface LibraryModalProps {
   isOpen: boolean
   onClose: () => void
   onCreateNew: () => void
+  /** Client-side session switch (avoids a full page reload when provided) */
+  onOpenSession?: (sessionId: Id<'paintingSessions'>) => void
 }
 
 interface SessionWithThumbnail {
@@ -20,7 +22,7 @@ interface SessionWithThumbnail {
   strokeCounter: number
 }
 
-export function LibraryModal({ isOpen, onClose, onCreateNew }: LibraryModalProps) {
+export function LibraryModal({ isOpen, onClose, onCreateNew, onOpenSession }: LibraryModalProps) {
   const navigate = useNavigate()
   const [searchQuery, setSearchQuery] = React.useState('')
   const [editingSessionId, setEditingSessionId] = React.useState<Id<"paintingSessions"> | null>(null)
@@ -45,8 +47,13 @@ export function LibraryModal({ isOpen, onClose, onCreateNew }: LibraryModalProps
   })
 
   const handleOpenSession = (sessionId: Id<"paintingSessions">) => {
-    // Use window.location to force a full page navigation
-    window.location.href = `/?session=${sessionId}`
+    if (onOpenSession) {
+      // Client-side switch — no full page reload
+      onOpenSession(sessionId)
+    } else {
+      // Fallback: full page navigation
+      window.location.href = `/?session=${sessionId}`
+    }
     onClose()
   }
 
@@ -108,9 +115,14 @@ export function LibraryModal({ isOpen, onClose, onCreateNew }: LibraryModalProps
         isPublic: false
       })
       console.log('[LibraryModal] Created session:', newSessionId)
-      
+
       // Navigate to the new session
-      window.location.href = `/?session=${newSessionId}`
+      if (onOpenSession) {
+        onOpenSession(newSessionId)
+        onClose()
+      } else {
+        window.location.href = `/?session=${newSessionId}`
+      }
     } catch (error) {
       console.error('[LibraryModal] Error creating session:', error)
       // Fallback to the original behavior

@@ -26,7 +26,8 @@ import {
   Library,
   Sliders,
   Merge,
-  Scan
+  Scan,
+  Loader2
 } from 'lucide-react'
 import { AuthModal } from './AuthModal'
 import { LibraryModal } from './LibraryModal'
@@ -63,6 +64,10 @@ interface ToolPanelProps {
   onRedo: () => void
   onClear: () => void
   onExport: () => void
+  isClearing?: boolean
+  isExporting?: boolean
+  onNewCanvas?: () => void
+  onOpenSession?: (sessionId: Id<'paintingSessions'>) => void
   onImageUpload?: () => void
   onAIGenerate?: () => void
   onBackgroundRemoval?: () => void
@@ -266,20 +271,22 @@ const ActionButton = React.memo(({
   onClick,
   isPrimary = false,
   isDanger = false,
-  disabled = false
+  disabled = false,
+  busy = false
 }: {
   icon: React.ElementType,
   label: string,
   onClick: () => void,
   isPrimary?: boolean,
   isDanger?: boolean,
-  disabled?: boolean
+  disabled?: boolean,
+  busy?: boolean
 }) => (
   <button
     onClick={onClick}
-    disabled={disabled}
+    disabled={disabled || busy}
     className={`w-8 h-8 flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-blue-400 ${
-      disabled
+      disabled || busy
         ? 'bg-white/5 text-white/30 cursor-not-allowed'
         : isDanger
         ? 'bg-red-500 text-white hover:bg-red-600'
@@ -290,7 +297,7 @@ const ActionButton = React.memo(({
     title={label}
     aria-label={label}
   >
-    <Icon className="w-4 h-4" />
+    {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Icon className="w-4 h-4" />}
   </button>
 ))
 
@@ -620,6 +627,10 @@ export function ToolPanel({
   onRedo,
   onClear,
   onExport,
+  isClearing = false,
+  isExporting = false,
+  onNewCanvas,
+  onOpenSession,
   onImageUpload,
   onAIGenerate,
   onBackgroundRemoval,
@@ -1045,15 +1056,29 @@ export function ToolPanel({
 
       {/* Sliders */}
       <div className="border-b border-white/20 mb-2 pb-1">
-        <Slider
-          value={size}
-          min={1}
-          max={100}
-          onChange={onSizeChange}
-          icon={Circle}
-          label="Brush Size"
-          color="hsl(var(--primary))"
-        />
+        <div className="flex items-center gap-1">
+          <div className="flex-1 min-w-0">
+            <Slider
+              value={size}
+              min={1}
+              max={100}
+              onChange={onSizeChange}
+              icon={Circle}
+              label="Brush Size"
+              color="hsl(var(--primary))"
+            />
+          </div>
+          {brushSettings && onBrushSettingsChange && (
+            <button
+              onClick={() => setShowBrushSettings(true)}
+              className="p-1 shrink-0 text-white/60 hover:text-white hover:bg-white/10 rounded transition-colors"
+              title="Brush settings (smoothing, taper, stroke feel)"
+              aria-label="Open brush settings"
+            >
+              <Sliders className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
         <Slider
           value={opacity * 100}
           min={0}
@@ -1076,17 +1101,18 @@ export function ToolPanel({
         <div className="flex justify-center">
           <ActionButton
             icon={X}
-            label={confirmingClear ? 'Click again to confirm' : 'Clear Canvas'}
+            label={isClearing ? 'Clearing…' : confirmingClear ? 'Click again to confirm' : 'Clear Canvas'}
             onClick={handleClearClick}
             isDanger={confirmingClear}
+            busy={isClearing}
           />
         </div>
         <div className="flex justify-center">
-          <ActionButton icon={Save} label="Export" onClick={onExport} />
+          <ActionButton icon={Save} label={isExporting ? 'Exporting…' : 'Export'} onClick={onExport} busy={isExporting} />
         </div>
       </div>
     </>
-  ), [selectedTool, handleToolSelect, effectiveIsSignedIn, color, onColorChange, colorMode, onColorModeChange, size, onSizeChange, opacity, onOpacityChange, onUndo, canUndo, onRedo, canRedo, confirmingClear, handleClearClick, onExport])
+  ), [selectedTool, handleToolSelect, effectiveIsSignedIn, color, onColorChange, colorMode, onColorModeChange, size, onSizeChange, opacity, onOpacityChange, onUndo, canUndo, onRedo, canRedo, confirmingClear, handleClearClick, isClearing, onExport, isExporting, brushSettings, onBrushSettingsChange])
 
   const renderLayersTab = React.useCallback(() => (
     <div className="space-y-2">
@@ -1308,7 +1334,9 @@ export function ToolPanel({
             className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors flex items-center gap-2"
             onClick={() => {
               setShowMenu(false)
-              startNewCanvas()
+              // Client-side session switch when available; full navigation as fallback
+              if (onNewCanvas) onNewCanvas()
+              else startNewCanvas()
             }}
           >
             <PlusCircle className="w-4 h-4" />
@@ -1474,7 +1502,8 @@ export function ToolPanel({
       <LibraryModal
         isOpen={isLibraryModalOpen}
         onClose={closeLibrary}
-        onCreateNew={startNewCanvas}
+        onCreateNew={onNewCanvas ?? startNewCanvas}
+        onOpenSession={onOpenSession}
       />
       <GuestRecentModal
         isOpen={showGuestRecent}

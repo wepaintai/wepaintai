@@ -29,7 +29,6 @@ import { api } from '../../convex/_generated/api'
 import { useThumbnailGenerator } from '../hooks/useThumbnailGenerator'
 import { ClipboardProvider } from '../context/ClipboardContext'
 import { getCurrentGuestSession, setCurrentGuestSession, clearCurrentGuestSession, getGuestKey, touchRecentGuestSession, removeRecentGuestSession } from '../utils/guestKey'
-import { startNewCanvas } from '../utils/newCanvas'
 
 // Wrapper component for background removal modal
 function BackgroundRemovalModalWrapper({ 
@@ -234,6 +233,20 @@ export function PaintingView() {
   // Mutation state to prevent concurrent operations
   const [isMutating, setIsMutating] = useState(false)
   const lastMutationTime = useRef(0)
+  // Busy states so async action buttons disable instead of eating clicks
+  const [isClearing, setIsClearing] = useState(false)
+  const [isExporting, setIsExporting] = useState(false)
+
+  // Keep isMutating true through the undo/redo rate-limit window so the
+  // buttons' disabled state matches the guard instead of eating clicks
+  const releaseMutationLock = useCallback(() => {
+    const remaining = lastMutationTime.current + 100 - Date.now()
+    if (remaining > 0) {
+      setTimeout(() => setIsMutating(false), remaining)
+    } else {
+      setIsMutating(false)
+    }
+  }, [])
   
   // Optimistic UI state for undo operations
   const [pendingUndoStrokeIds, setPendingUndoStrokeIds] = useState<Set<string>>(new Set())
@@ -459,10 +472,26 @@ export function PaintingView() {
     }
   }, [sessionId, sessionStatus, effectiveIsSignedIn, session?.name])
 
-  // Leave the broken session behind so a fresh painting is created
-  const startNewPainting = useCallback(() => {
-    startNewCanvas()
+  // Switch to another session (or null to create a fresh one) without a full
+  // page reload: update the URL via history and let React state drive the swap.
+  const switchToSession = useCallback((newSessionId: Id<"paintingSessions"> | null) => {
+    try {
+      const url = new URL(window.location.href)
+      if (newSessionId) {
+        url.searchParams.set('session', newSessionId)
+      } else {
+        url.searchParams.delete('session')
+      }
+      window.history.replaceState({}, '', url.toString())
+    } catch {}
+    setSessionId(newSessionId)
   }, [])
+
+  // Leave the current session behind so a fresh painting is created
+  const startNewPainting = useCallback(() => {
+    clearCurrentGuestSession()
+    switchToSession(null)
+  }, [switchToSession])
 
   // Keep URL masked for guest-owned sessions; show for others and signed-in users
   useEffect(() => {
@@ -495,10 +524,12 @@ export function PaintingView() {
     } catch {}
   }, [sessionId, currentUser.id])
 
-  // Reset transient undo state when switching sessions
+  // Reset transient per-session state when switching sessions
   useEffect(() => {
     setHasLocalStrokes(false)
     setPendingUndoStrokeIds(new Set())
+    setActiveLayerId(undefined)
+    setActivePaintLayerId(null)
   }, [sessionId])
 
   const handleStrokeEnd = () => {
@@ -557,7 +588,7 @@ export function PaintingView() {
         })
       }
     } finally {
-      setIsMutating(false)
+      releaseMutationLock()
       // Clear pending undo set after operation completes
       if (lastStrokeId) {
         setPendingUndoStrokeIds(prev => {
@@ -586,40 +617,52 @@ export function PaintingView() {
       console.error('Failed to redo stroke:', error)
       // The UI will automatically update based on the query state
     } finally {
-      setIsMutating(false)
+      releaseMutationLock()
     }
   }
 
   const handleClear = async () => {
+    if (isClearing) return
+    setIsClearing(true)
     // Clear local canvas immediately for responsiveness
     canvasRef.current?.clear()
     setHasLocalStrokes(false)
-    
+
     // Clear the session in the backend
     try {
       await clearSession()
     } catch (error) {
       console.error('Failed to clear session:', error)
+    } finally {
+      setIsClearing(false)
     }
   }
 
   const handleExport = () => {
-    const capture = canvasRef.current?.captureContent('export')
-    if (capture) {
-      // On iOS, show the export modal instead of direct download
-      if (isIOS()) {
-        setExportCanvasDataUrl(capture.dataUrl)
-        setShowExportModal(true)
-      } else {
-        // Non-iOS devices: use direct download
-        const link = document.createElement('a')
-        link.download = `wepaintai-${Date.now()}.png`
-        link.href = capture.dataUrl
-        link.click()
+    if (isExporting) return
+    setIsExporting(true)
+    try {
+      const capture = canvasRef.current?.captureContent('export')
+      if (capture) {
+        // On iOS, show the export modal instead of direct download
+        if (isIOS()) {
+          setExportCanvasDataUrl(capture.dataUrl)
+          setShowExportModal(true)
+        } else {
+          // Non-iOS devices: use direct download
+          const link = document.createElement('a')
+          link.download = `wepaintai-${Date.now()}.png`
+          link.href = capture.dataUrl
+          link.click()
+        }
+
+        // Generate thumbnail after export
+        generateThumbnail()
       }
-      
-      // Generate thumbnail after export
-      generateThumbnail()
+    } finally {
+      // Capture is synchronous; hold the busy state briefly so a double-click
+      // can't trigger a second download
+      setTimeout(() => setIsExporting(false), 600)
     }
   }
 
@@ -1173,6 +1216,10 @@ export function PaintingView() {
         onRedo={handleRedo}
         onClear={handleClear}
         onExport={handleExport}
+        isClearing={isClearing}
+        isExporting={isExporting}
+        onNewCanvas={startNewPainting}
+        onOpenSession={(id) => switchToSession(id)}
         onImageUpload={handleImageUpload}
         onAIGenerate={handleAIGenerate}
         onBackgroundRemoval={handleBackgroundRemoval}
