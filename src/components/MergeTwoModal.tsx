@@ -210,7 +210,7 @@ export function MergeTwoModal({
                   </div>
                 )}
                 <p className="text-xs text-white/60 mt-1">
-                  Optional control image for guiding the merge process
+                  Optional: the merged result will follow this layer's shapes and composition — pick one when you want the output to keep a specific layout
                 </p>
               </div>
 

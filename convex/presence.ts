@@ -176,6 +176,70 @@ export const leaveSession = mutation({
 });
 
 /**
+ * Best-effort leave fired via navigator.sendBeacon on pagehide (tab close /
+ * navigation away), routed through an HTTP action. Takes raw strings because
+ * beacon payloads are untyped; invalid ids are ignored. Removes the caller's
+ * presence row and any in-progress live stroke so collaborators don't see a
+ * ghost user or a frozen partial stroke.
+ */
+export const beaconLeave = internalMutation({
+  args: {
+    sessionId: v.string(),
+    userId: v.optional(v.string()),
+    guestId: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const sessionId = ctx.db.normalizeId("paintingSessions", args.sessionId);
+    if (!sessionId) return null;
+    const userId = args.userId
+      ? ctx.db.normalizeId("users", args.userId)
+      : null;
+    if (args.userId && !userId) return null;
+
+    const presence = userId
+      ? await ctx.db
+          .query("userPresence")
+          .withIndex("by_user_session", (q) =>
+            q.eq("userId", userId).eq("sessionId", sessionId)
+          )
+          .first()
+      : args.guestId
+        ? await ctx.db
+            .query("userPresence")
+            .withIndex("by_guest_session", (q) =>
+              q.eq("guestId", args.guestId).eq("sessionId", sessionId)
+            )
+            .first()
+        : null;
+    if (presence) {
+      await ctx.db.delete(presence._id);
+    }
+
+    const liveStroke = userId
+      ? await ctx.db
+          .query("liveStrokes")
+          .withIndex("by_user_session", (q) =>
+            q.eq("userId", userId).eq("sessionId", sessionId)
+          )
+          .first()
+      : args.guestId
+        ? await ctx.db
+            .query("liveStrokes")
+            .withIndex("by_guest_session", (q) =>
+              q.eq("guestId", args.guestId).eq("sessionId", sessionId)
+            )
+            .first()
+        : null;
+    if (liveStroke) {
+      await ctx.db.delete(liveStroke._id);
+    }
+
+    return null;
+  },
+});
+
+/**
  * Clean up old presence records (internal function)
  */
 export const cleanupOldPresence = mutation({

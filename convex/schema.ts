@@ -69,6 +69,7 @@ const schema = defineSchema({
   liveStrokes: defineTable({
     sessionId: v.id("paintingSessions"),
     userId: v.optional(v.id("users")),
+    guestId: v.optional(v.string()), // Stable per-browser id so guests don't collide on userId=undefined
     userColor: v.string(),
     userName: v.string(),
     points: v.array(v.object({
@@ -82,7 +83,8 @@ const schema = defineSchema({
     colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))), // Color mode for special effects
     lastUpdated: v.number(),
   }).index("by_session", ["sessionId"])
-    .index("by_user_session", ["userId", "sessionId"]),
+    .index("by_user_session", ["userId", "sessionId"])
+    .index("by_guest_session", ["guestId", "sessionId"]),
 
   users: defineTable({
     // Better Auth user id (identity.subject)
