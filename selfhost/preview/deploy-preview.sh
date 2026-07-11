@@ -123,10 +123,14 @@ GOOGLE_CLIENT_SECRET=$PREVIEW_GOOGLE_CLIENT_SECRET
 EOF
 
   append_preview_env() {
+    local target_name source_name value
     target_name="$1"
     source_name="$2"
     value="${!source_name:-}"
-    [ -n "$value" ] && printf '%s=%s\n' "$target_name" "$value" >> "$backend_env"
+    if [ -n "$value" ]; then
+      printf '%s=%s\n' "$target_name" "$value" >> "$backend_env"
+    fi
+    return 0
   }
   append_preview_env REPLICATE_API_TOKEN PREVIEW_REPLICATE_API_TOKEN
   append_preview_env REPLICATE_MODEL_VERSION PREVIEW_REPLICATE_MODEL_VERSION
