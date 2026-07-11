@@ -1,6 +1,7 @@
 import { Id } from '../../convex/_generated/dataModel'
 
 export const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB
+export const MAX_IMAGE_DIMENSION = 4096 // Longest edge; larger images are downscaled client-side
 export const ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp']
 
 export interface ImageUploadOptions {
@@ -121,6 +122,57 @@ export function resizeImageToFitCanvas(
   })
 }
 
+export function downscaleImage(
+  file: File,
+  maxDimension: number = MAX_IMAGE_DIMENSION
+): Promise<{ blob: Blob; width: number; height: number; mimeType: string }> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+
+      const scale = maxDimension / Math.max(img.width, img.height)
+      const newWidth = Math.floor(img.width * scale)
+      const newHeight = Math.floor(img.height * scale)
+
+      const canvas = document.createElement('canvas')
+      canvas.width = newWidth
+      canvas.height = newHeight
+
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        reject(new Error('Failed to get canvas context'))
+        return
+      }
+
+      ctx.drawImage(img, 0, 0, newWidth, newHeight)
+
+      // Canvas can't re-encode GIFs; fall back to PNG for anything it can't produce
+      const outputType = file.type === 'image/gif' ? 'image/png' : file.type
+      canvas.toBlob(
+        (blob) => {
+          if (blob) {
+            resolve({ blob, width: newWidth, height: newHeight, mimeType: blob.type || outputType })
+          } else {
+            reject(new Error('Failed to create blob'))
+          }
+        },
+        outputType,
+        0.9 // Quality for JPEG/WebP
+      )
+    }
+
+    img.onerror = () => {
+      URL.revokeObjectURL(url)
+      reject(new Error('Failed to load image for resizing'))
+    }
+
+    img.src = url
+  })
+}
+
 export async function uploadImageFile(
   file: File,
   options: ImageUploadOptions,
@@ -141,18 +193,26 @@ export async function uploadImageFile(
 
     // Get image dimensions
     const originalDimensions = await getImageDimensions(file)
-    
-    // Preserve original resolution: always upload the original file and record its natural dimensions
-    const fileToUpload: File | Blob = file
-    const finalDimensions = originalDimensions
-    
+
+    // Preserve original resolution up to MAX_IMAGE_DIMENSION; downscale anything larger
+    // so huge images don't flood the canvas/AI pipeline at full resolution
+    let fileToUpload: File | Blob = file
+    let finalDimensions = originalDimensions
+    let mimeType = file.type
+    if (Math.max(originalDimensions.width, originalDimensions.height) > MAX_IMAGE_DIMENSION) {
+      const resized = await downscaleImage(file)
+      fileToUpload = resized.blob
+      finalDimensions = { width: resized.width, height: resized.height }
+      mimeType = resized.mimeType
+    }
+
     // Generate upload URL
     const uploadUrl = await generateUploadUrl({ sessionId, guestKey })
-    
+
     // Upload to Convex storage
     const response = await fetch(uploadUrl, {
       method: 'POST',
-      headers: { 'Content-Type': file.type },
+      headers: { 'Content-Type': mimeType },
       body: fileToUpload,
     })
 
@@ -171,7 +231,7 @@ export async function uploadImageFile(
       sessionId,
       storageId,
       filename: file.name,
-      mimeType: file.type,
+      mimeType,
       width: finalDimensions.width,
       height: finalDimensions.height,
       x,

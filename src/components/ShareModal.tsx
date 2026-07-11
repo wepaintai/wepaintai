@@ -49,13 +49,13 @@ export function ShareModal({ isOpen, onClose, sessionId }: ShareModalProps) {
             {session?.isPublic ? <Globe className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
             Share
           </h3>
-          <button onClick={onClose} className="p-1 hover:bg-white/20 rounded">
+          <button onClick={onClose} className="p-3 -m-2 hover:bg-white/20 rounded" aria-label="Close share dialog">
             <X className="w-4 h-4 text-white/70" />
           </button>
         </div>
         <div className="p-4 space-y-4">
           <div>
-            <label className="text-xs text-white/60">Session link</label>
+            <label className="text-xs text-white/70">Session link</label>
             <div className="mt-1 flex items-center gap-2">
               <input
                 ref={linkInputRef}
@@ -88,15 +88,17 @@ export function ShareModal({ isOpen, onClose, sessionId }: ShareModalProps) {
           <div className="flex items-center justify-between">
             <div>
               <div className="text-sm text-white/80">Public access</div>
-              <div className="text-xs text-white/50">Allow anyone with the link to view and collaborate</div>
+              <div className="text-xs text-white/70">Allow anyone with the link to view and collaborate</div>
             </div>
-            <label className="inline-flex items-center gap-2 cursor-pointer">
-              <span className={`text-xs ${isPublic ? 'text-green-400' : 'text-white/60'}`}>
+            <label className="inline-flex items-center gap-2 cursor-pointer min-h-10">
+              <span className={`text-xs flex items-center gap-1 ${isPublic ? 'text-green-400' : 'text-white/70'}`}>
+                {isPublic ? <Globe className="w-3 h-3" aria-hidden="true" /> : <Lock className="w-3 h-3" aria-hidden="true" />}
                 {isPublic ? 'Public' : 'Private'}
               </span>
               <input
                 type="checkbox"
                 className="sr-only peer"
+                aria-label="Public access"
                 checked={isPublic}
                 disabled={!isOwner}
                 onChange={async (e) => {
@@ -116,7 +118,7 @@ export function ShareModal({ isOpen, onClose, sessionId }: ShareModalProps) {
           {currentUser === null && !!localGuestKey && (
             <div className="border-t border-white/10 pt-4">
               <div className="text-sm text-white/80">Keep this painting</div>
-              <div className="text-xs text-white/50 mt-1 mb-3">
+              <div className="text-xs text-white/70 mt-1 mb-3">
                 Right now it's only saved on this device. Sign in to keep it on
                 all your devices.
               </div>

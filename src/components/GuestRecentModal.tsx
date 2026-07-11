@@ -63,7 +63,7 @@ export function GuestRecentModal({ isOpen, onClose }: GuestRecentModalProps) {
         {/* List */}
         <div className="flex-1 overflow-y-auto p-2">
           {sessions.length === 0 ? (
-            <div className="text-center py-8 text-white/40 text-sm px-4">
+            <div className="text-center py-8 text-white/70 text-sm px-4">
               No recent paintings on this device yet. Paintings you open as a
               guest will show up here.
             </div>
@@ -78,16 +78,17 @@ export function GuestRecentModal({ isOpen, onClose }: GuestRecentModalProps) {
                     <div className="text-sm text-white/80 truncate">
                       {entry.name || 'Untitled'}
                     </div>
-                    <div className="text-xs text-white/40">
+                    <div className="text-xs text-white/70">
                       {new Date(entry.lastOpened).toLocaleString()}
                     </div>
                   </button>
                   <button
                     onClick={() => handleRemove(entry.sessionId)}
-                    className="p-1.5 mr-1 opacity-0 group-hover:opacity-100 hover:bg-white/20 rounded transition-all"
+                    className="p-3.5 mr-1 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 hover:bg-white/20 rounded transition-all"
                     title="Remove from list"
+                    aria-label={`Remove ${entry.name || 'Untitled'} from list`}
                   >
-                    <Trash2 className="w-3.5 h-3.5 text-white/60" />
+                    <Trash2 className="w-3.5 h-3.5 text-white/70" />
                   </button>
                 </li>
               ))}
@@ -96,7 +97,7 @@ export function GuestRecentModal({ isOpen, onClose }: GuestRecentModalProps) {
         </div>
 
         {/* Footer note */}
-        <div className="p-3 border-t border-white/10 text-xs text-white/40">
+        <div className="p-3 border-t border-white/10 text-xs text-white/70">
           Saved on this device only. Sign in to keep your paintings in a
           library that follows you everywhere.
         </div>

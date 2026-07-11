@@ -34,6 +34,12 @@ export function BackgroundRemovalModal({
 
   // Filter layers to only show image and AI image layers
   const selectableLayers = layers.filter(layer => layer.type === 'image' || layer.type === 'ai-image')
+
+  // Preview the selected layer's image when one is chosen, otherwise the full canvas
+  const selectedLayer = selectedLayerId && selectedLayerId !== 'canvas'
+    ? layers.find(l => l.id === selectedLayerId)
+    : undefined
+  const previewUrl = selectedLayer?.thumbnailUrl || canvasDataUrl
   
   // Debug: Log available layers
   console.log('BackgroundRemovalModal - All layers:', layers)
@@ -170,9 +176,9 @@ export function BackgroundRemovalModal({
 
           {/* Preview */}
           <div className="border border-white/20 rounded-lg overflow-hidden bg-checkered">
-            <img 
-              src={canvasDataUrl} 
-              alt="Canvas preview" 
+            <img
+              src={previewUrl}
+              alt={selectedLayer ? `${selectedLayer.name} preview` : 'Canvas preview'}
               className="w-full h-48 object-contain"
             />
           </div>

@@ -54,7 +54,7 @@ const SettingsSlider = ({ label, value, min, max, step, onChange, description }:
         }}
       />
       {description && (
-        <p className="text-xs text-white/50">{description}</p>
+        <p className="text-xs text-white/70">{description}</p>
       )}
     </div>
   )

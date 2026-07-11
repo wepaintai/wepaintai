@@ -13,7 +13,7 @@ import { ImageUploadModal } from './ImageUploadModal'
 import { AIGenerationModal } from './AIGenerationModal'
 import { BackgroundRemovalModal } from './BackgroundRemovalModal'
 import { MergeTwoModal } from './MergeTwoModal'
-import { ExportModal } from './ExportModal'
+import { ExportModal, buildExportFilename } from './ExportModal'
 import { TokenDisplay } from './TokenDisplay'
 import { usePaintingSession } from '../hooks/usePaintingSession'
 import { useConnectionStatus } from '../hooks/useConnectionStatus'
@@ -612,7 +612,7 @@ export function PaintingView() {
       } else {
         // Non-iOS devices: use direct download
         const link = document.createElement('a')
-        link.download = `wepaintai-${Date.now()}.png`
+        link.download = `${buildExportFilename(session?.name)}.png`
         link.href = capture.dataUrl
         link.click()
       }
@@ -1058,6 +1058,7 @@ export function PaintingView() {
             onClick={toggleAdminPanel} 
             className="absolute top-2 right-28 z-50 bg-black/90 backdrop-blur-md border border-white/20 hover:bg-black/80 text-white font-bold py-1 px-2 rounded text-xs"
             title="Toggle Admin Panel (Ctrl+Shift+A)"
+            aria-label={`${isAdminPanelVisible ? 'Hide' : 'Show'} admin panel (Ctrl+Shift+A)`}
           >
             {isAdminPanelVisible ? 'Hide' : 'Show'} Admin
           </button>
@@ -1115,7 +1116,7 @@ export function PaintingView() {
           ) : (
             <div className="text-center">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-              <p className="text-gray-600">{sessionId ? 'Loading painting session...' : 'Creating painting session...'}</p>
+              <p className="text-gray-600">{sessionId || (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('session')) ? 'Loading session...' : 'Creating painting session...'}</p>
             </div>
           ))}
         </div>
@@ -1317,7 +1318,7 @@ export function PaintingView() {
         isOpen={showExportModal}
         onClose={() => setShowExportModal(false)}
         canvasDataUrl={exportCanvasDataUrl}
-        defaultFilename={`wepaintai-${Date.now()}`}
+        defaultFilename={buildExportFilename(session?.name)}
       />
     </div>
       </ClipboardProvider>

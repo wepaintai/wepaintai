@@ -31,6 +31,7 @@ export function MergeTwoModal({
   
   const mergeImages = useAction(api.imageMerger.mergeImages)
   const tokenBalance = useQuery(api.tokens.getTokenBalance)
+  const hasNoTokens = tokenBalance != null && tokenBalance.tokens < 1
 
   // Filter layers to only show image and ai-image layers (not stroke layers)
   const availableLayers = layers.filter(layer => 
@@ -118,7 +119,7 @@ export function MergeTwoModal({
               <p className="text-sm text-white/60 mb-2">
                 You need at least 2 image layers to merge
               </p>
-              <p className="text-xs text-white/40">
+              <p className="text-xs text-white/70">
                 Upload images or generate AI images first
               </p>
             </div>
@@ -210,7 +211,7 @@ export function MergeTwoModal({
                   </div>
                 )}
                 <p className="text-xs text-white/60 mt-1">
-                  Optional control image for guiding the merge process
+                  Optional: the merged result will follow this layer's shapes and composition — pick one when you want the output to keep a specific layout
                 </p>
               </div>
 
@@ -285,6 +286,12 @@ export function MergeTwoModal({
                 </button>
               </div>
 
+              {hasNoTokens && (
+                <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-md">
+                  <p className="text-sm text-red-400">Insufficient tokens. You need at least 1 token.</p>
+                </div>
+              )}
+
               {/* Error message */}
               {error && (
                 <div className="mb-4 p-2 bg-red-500/20 border border-red-500/40 rounded-md">
@@ -342,7 +349,7 @@ export function MergeTwoModal({
             </button>
             <button
               onClick={handleMerge}
-              disabled={isMerging || !firstLayerId || !secondLayerId || availableLayers.length < 2}
+              disabled={isMerging || !firstLayerId || !secondLayerId || availableLayers.length < 2 || hasNoTokens}
               className="px-4 py-2 text-sm font-medium text-white bg-purple-500 hover:bg-purple-600 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {isMerging ? (
