@@ -139,7 +139,7 @@ export function LibraryModal({ isOpen, onClose, onCreateNew }: LibraryModalProps
           </h2>
           <button
             onClick={onClose}
-            className="p-1 hover:bg-white/20 rounded transition-colors"
+            className="p-3 -m-2 hover:bg-white/20 rounded transition-colors"
             aria-label="Close modal"
           >
             <X className="w-5 h-5 text-white/60" />
@@ -153,9 +153,10 @@ export function LibraryModal({ isOpen, onClose, onCreateNew }: LibraryModalProps
             <input
               type="text"
               placeholder="Search paintings..."
+              aria-label="Search paintings"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:border-white/40 transition-colors"
+              className="w-full pl-10 pr-4 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/60 focus:outline-none focus:border-white/40 transition-colors"
             />
           </div>
           
@@ -186,13 +187,13 @@ export function LibraryModal({ isOpen, onClose, onCreateNew }: LibraryModalProps
             onClick={handleCreateNew}
             className="w-full mb-4 p-8 bg-white/5 hover:bg-white/10 border-2 border-dashed border-white/20 hover:border-white/40 rounded-lg transition-all flex flex-col items-center justify-center gap-2 group"
           >
-            <Plus className="w-8 h-8 text-white/40 group-hover:text-white/60 transition-colors" />
-            <span className="text-white/60 group-hover:text-white/80 transition-colors">Create New Canvas</span>
+            <Plus className="w-8 h-8 text-white/60 group-hover:text-white/80 transition-colors" />
+            <span className="text-white/70 group-hover:text-white/90 transition-colors">Create New Canvas</span>
           </button>
 
           {/* Sessions Grid */}
           {filteredSessions.length === 0 ? (
-            <div className="text-center py-8 text-white/40">
+            <div className="text-center py-8 text-white/70">
               {searchQuery ? 'No paintings found matching your search.' : 'No paintings yet. Create your first one!'}
             </div>
           ) : (
@@ -237,13 +238,15 @@ export function LibraryModal({ isOpen, onClose, onCreateNew }: LibraryModalProps
                         />
                         <button
                           onClick={handleSaveEdit}
-                          className="p-1 hover:bg-white/20 rounded text-green-400"
+                          className="p-3 -m-2 hover:bg-white/20 rounded text-green-400"
+                          aria-label="Save name"
                         >
                           ✓
                         </button>
                         <button
                           onClick={handleCancelEdit}
-                          className="p-1 hover:bg-white/20 rounded text-red-400"
+                          className="p-3 -m-2 hover:bg-white/20 rounded text-red-400"
+                          aria-label="Cancel rename"
                         >
                           ✗
                         </button>
@@ -253,7 +256,7 @@ export function LibraryModal({ isOpen, onClose, onCreateNew }: LibraryModalProps
                         <h3 className="font-medium text-white/80 truncate mb-1">
                           {session.name || 'Untitled'}
                         </h3>
-                        <p className="text-xs text-white/40">
+                        <p className="text-xs text-white/70">
                           {new Date(session._creationTime).toLocaleDateString()}
                         </p>
                       </>
@@ -262,30 +265,36 @@ export function LibraryModal({ isOpen, onClose, onCreateNew }: LibraryModalProps
 
                   {/* Actions */}
                   {editingSessionId !== session._id && (
-                    <div className="absolute top-2 left-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+                    <div className="absolute top-2 left-2 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity flex gap-1">
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
                           handleStartEdit(session)
                         }}
-                        className="p-1.5 bg-black/60 backdrop-blur-sm hover:bg-black/80 rounded transition-colors"
+                        className="p-3.5 bg-black/60 backdrop-blur-sm hover:bg-black/80 rounded transition-colors"
                         title="Rename"
+                        aria-label={`Rename ${session.name || 'Untitled'}`}
                       >
-                        <Edit2 className="w-3.5 h-3.5 text-white/60" />
+                        <Edit2 className="w-3.5 h-3.5 text-white/70" />
                       </button>
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
                           handleDelete(session._id)
                         }}
-                        className={`p-1.5 backdrop-blur-sm rounded transition-colors ${
+                        className={`p-3.5 backdrop-blur-sm rounded transition-colors ${
                           deletingSessionId === session._id
                             ? 'bg-red-600/80 hover:bg-red-600'
                             : 'bg-black/60 hover:bg-black/80'
                         }`}
                         title={deletingSessionId === session._id ? 'Click again to confirm' : 'Delete'}
+                        aria-label={
+                          deletingSessionId === session._id
+                            ? 'Click again to confirm delete'
+                            : `Delete ${session.name || 'Untitled'}`
+                        }
                       >
-                        <Trash2 className="w-3.5 h-3.5 text-white/60" />
+                        <Trash2 className="w-3.5 h-3.5 text-white/70" />
                       </button>
                     </div>
                   )}
@@ -297,7 +306,7 @@ export function LibraryModal({ isOpen, onClose, onCreateNew }: LibraryModalProps
 
         {/* Footer note: contributed-to sessions are looked up from recent
             activity only, so old collaborations may be missing */}
-        <div className="px-4 py-2 border-t border-white/10 text-xs text-white/40">
+        <div className="px-4 py-2 border-t border-white/10 text-xs text-white/70">
           Shows your paintings and recent collaborations. Older canvases you
           contributed to (but don't own) may not appear.
         </div>

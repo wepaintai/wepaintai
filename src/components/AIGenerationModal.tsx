@@ -164,7 +164,7 @@ export function AIGenerationModal({
             <div className="relative w-full h-24 sm:h-32 bg-white/10 rounded border border-white/20 overflow-hidden">
               {canvasDataUrl ? (
                 canvasDataUrl === 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=' ? (
-                  <div className="w-full h-full flex items-center justify-center text-white/40">
+                  <div className="w-full h-full flex items-center justify-center text-white/70">
                     <p className="text-sm">Empty canvas - add some content first</p>
                   </div>
                 ) : (
@@ -175,7 +175,7 @@ export function AIGenerationModal({
                   />
                 )
               ) : (
-                <div className="w-full h-full flex items-center justify-center text-white/40">
+                <div className="w-full h-full flex items-center justify-center text-white/70">
                   <p className="text-sm">Loading canvas...</p>
                 </div>
               )}

@@ -118,7 +118,7 @@ export function MergeTwoModal({
               <p className="text-sm text-white/60 mb-2">
                 You need at least 2 image layers to merge
               </p>
-              <p className="text-xs text-white/40">
+              <p className="text-xs text-white/70">
                 Upload images or generate AI images first
               </p>
             </div>
