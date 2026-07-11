@@ -3,6 +3,13 @@ import { mutation, action, query } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 
+// Verbose logging of prompts and image-data samples is a privacy concern in
+// shared logs; opt in with AI_GEN_DEBUG=true on the deployment.
+const AI_GEN_DEBUG = process.env.AI_GEN_DEBUG === "true";
+function debugLog(...args: unknown[]) {
+  if (AI_GEN_DEBUG) console.log(...args);
+}
+
 // Mutation to store AI generation requests and results
 export const createGenerationRequest = mutation({
   args: {
@@ -61,12 +68,10 @@ export const generateImage = action({
     canvasHeight: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    console.log('[AI-GEN] generateImage action called with prompt:', args.prompt);
-    console.log('[AI-GEN] Weight parameter (UI):', args.weight ?? 0.85);
-    console.log('[AI-GEN] Weight parameter (Replicate):', (args.weight ?? 0.85) * 2);
-    console.log('[AI-GEN] Image data length:', args.imageData.length);
-    console.log('[AI-GEN] Image data starts with:', args.imageData.substring(0, 50));
-    console.log('[AI-GEN] Image data type:', typeof args.imageData);
+    debugLog('[AI-GEN] generateImage action called with prompt:', args.prompt);
+    debugLog('[AI-GEN] Weight parameter (UI):', args.weight ?? 0.85);
+    debugLog('[AI-GEN] Weight parameter (Replicate):', (args.weight ?? 0.85) * 2);
+    debugLog('[AI-GEN] Image data length:', args.imageData.length);
     
     // Check if imageData is empty or too small
     if (!args.imageData || args.imageData.length < 100) {
@@ -116,30 +121,17 @@ export const generateImage = action({
         ? args.imageData 
         : `data:image/png;base64,${args.imageData}`;
       
-      console.log('[AI-GEN] Image data URL starts with:', imageDataUrl.substring(0, 100));
-      console.log('[AI-GEN] Image data URL length:', imageDataUrl.length);
-      
-      // Check if the image is blank/empty by examining the base64 data
-      const base64Part = imageDataUrl.split(',')[1] || args.imageData;
       // A blank canvas typically has a very small base64 string
+      const base64Part = imageDataUrl.split(',')[1] || args.imageData;
       if (base64Part.length < 1000) {
         console.warn('[AI-GEN] WARNING: Image data seems very small, might be blank canvas');
-        console.log('[AI-GEN] Base64 data sample:', base64Part.substring(0, 200));
       }
-      
-      // Check if it's a large image that might still be blank (all white/transparent)
-      // Large blank PNGs can still have significant size due to PNG headers and compression
-      console.log('[AI-GEN] Base64 length check:', {
-        totalLength: base64Part.length,
-        isLikelyBlank: base64Part.length < 5000,
-        sample: base64Part.substring(1000, 1100) // Sample from middle to check pattern
-      })
 
       // Convert base64 to URL by storing in Convex
       let imageUrl: string;
       try {
-        console.log('[AI-GEN] Converting base64 to URL for Replicate...');
-        
+        debugLog('[AI-GEN] Converting base64 to URL for Replicate...');
+
         // Extract base64 data
         const base64Data = imageDataUrl.startsWith('data:') 
           ? imageDataUrl.split(',')[1] 
@@ -166,8 +158,7 @@ export const generateImage = action({
         
         imageUrl = url;
         
-        console.log('[AI-GEN] Canvas image stored, URL:', imageUrl);
-        console.log('[AI-GEN] Convex public URL being sent to Replicate:', imageUrl);
+        debugLog('[AI-GEN] Canvas image stored, URL:', imageUrl);
       } catch (error) {
         console.error('[AI-GEN] Failed to store canvas image:', error);
         return { success: false, error: 'Failed to store canvas image' };
@@ -184,8 +175,7 @@ export const generateImage = action({
         else if (ratio < 1.5) aspectRatio = "3:2";
         else aspectRatio = "16:9";
         
-        console.log('[AI-GEN] Canvas dimensions:', args.canvasWidth, 'x', args.canvasHeight);
-        console.log('[AI-GEN] Calculated ratio:', ratio, '-> aspect_ratio:', aspectRatio);
+        debugLog('[AI-GEN] Canvas dimensions:', args.canvasWidth, 'x', args.canvasHeight, '-> aspect_ratio:', aspectRatio);
       }
 
       // Get model version from environment or use default
@@ -204,31 +194,13 @@ export const generateImage = action({
         },
       };
       
-      console.log('[AI-GEN] Sending to Replicate:', {
+      debugLog('[AI-GEN] Sending to Replicate:', {
         ...requestBody,
         input: {
           ...requestBody.input,
           input_image: requestBody.input.input_image.substring(0, 100) + '...' // Log only first 100 chars
         }
       });
-      
-      // Verify the URL is a valid Convex URL
-      console.log('[AI-GEN] Image URL validation:', {
-        isConvexUrl: imageUrl.includes('convex.cloud'),
-        urlLength: imageUrl.length,
-        hasHttps: imageUrl.startsWith('https://')
-      });
-      
-      // Log the full API call for debugging
-      console.log('[AI-GEN] Full Replicate API call:', JSON.stringify({
-        url: 'https://api.replicate.com/v1/predictions',
-        method: 'POST',
-        headers: {
-          'Authorization': 'Token [REDACTED]',
-          'Content-Type': 'application/json',
-        },
-        body: requestBody
-      }, null, 2));
 
       const response = await fetch("https://api.replicate.com/v1/predictions", {
         method: "POST",
@@ -251,7 +223,7 @@ export const generateImage = action({
       }
 
       const prediction = await response.json();
-      console.log('[AI-GEN] Created prediction:', prediction);
+      debugLog('[AI-GEN] Created prediction:', prediction.id);
       
       // Update with Replicate ID
       await ctx.runMutation(api.aiGeneration.updateGenerationStatus, {
@@ -264,7 +236,7 @@ export const generateImage = action({
       let attempts = 0;
       const maxAttempts = parseInt(process.env.REPLICATE_TIMEOUT_SECONDS || "180"); // Default 180 seconds timeout
       
-      console.log('[AI-GEN] Starting to poll for prediction:', prediction.id);
+      debugLog('[AI-GEN] Starting to poll for prediction:', prediction.id);
       
       while (attempts < maxAttempts) {
         const statusResponse = await fetch(
@@ -282,45 +254,35 @@ export const generateImage = action({
         }
 
         const status = await statusResponse.json();
-        console.log('[AI-GEN] Poll attempt', attempts, 'status:', status.status);
+        debugLog('[AI-GEN] Poll attempt', attempts, 'status:', status.status);
 
         if (status.status === "succeeded") {
-          console.log('[AI-GEN] Prediction succeeded');
-          // Log the raw output to debug
-          console.log('[AI-GEN] Raw status.output:', JSON.stringify(status.output));
-          console.log('[AI-GEN] Status output type:', typeof status.output);
-          console.log('[AI-GEN] Is output an array?', Array.isArray(status.output));
-          
-          // If output is array, log first few elements
-          if (Array.isArray(status.output)) {
-            console.log('[AI-GEN] First 10 elements:', status.output.slice(0, 10));
-            console.log('[AI-GEN] Array length:', status.output.length);
-          }
-          
+          debugLog('[AI-GEN] Prediction succeeded, raw output:', JSON.stringify(status.output)?.substring(0, 200));
+
           let imageUrl;
           if (Array.isArray(status.output)) {
             // Check if it's an array of characters (Replicate bug)
             if (status.output.length > 10 && status.output.every((item: any) => typeof item === 'string' && item.length === 1)) {
               // It's an array of characters, join them
               imageUrl = status.output.join('');
-              console.log('Joined character array into URL:', imageUrl);
+              debugLog('Joined character array into URL:', imageUrl);
             } else {
               // Normal array, take first element
               imageUrl = status.output[0];
-              console.log('Extracted from array[0]:', imageUrl);
+              debugLog('Extracted from array[0]:', imageUrl);
             }
           } else if (typeof status.output === 'string') {
             imageUrl = status.output;
-            console.log('Using string directly:', imageUrl);
+            debugLog('Using string directly:', imageUrl);
           } else if (status.output && typeof status.output === 'object') {
             // Check if output is an object with a property
-            console.log('Output is object, keys:', Object.keys(status.output));
+            debugLog('Output is object, keys:', Object.keys(status.output));
             imageUrl = status.output.url || status.output.image || status.output[0];
           } else {
             console.error('Unexpected output format:', status.output);
           }
           
-          console.log('Final extracted image URL:', imageUrl);
+          debugLog('Final extracted image URL:', imageUrl);
           if (imageUrl) {
             try {
               // Download the image from Replicate
@@ -331,26 +293,26 @@ export const generateImage = action({
               
               // Get the image as a blob
               const imageBlob = await imageResponse.blob();
-              console.log('Image blob size:', imageBlob.size);
-              console.log('Image blob type:', imageBlob.type);
+              debugLog('Image blob size:', imageBlob.size);
+              debugLog('Image blob type:', imageBlob.type);
               
               // Store the image in Convex storage
               const storageId = await ctx.storage.store(imageBlob);
-              console.log('Storage ID:', storageId);
+              debugLog('Storage ID:', storageId);
               
               const storageUrl = await ctx.storage.getUrl(storageId);
-              console.log('Storage URL:', storageUrl);
-              console.log('Storage URL type:', typeof storageUrl);
-              console.log('Original URL:', imageUrl);
+              debugLog('Storage URL:', storageUrl);
+              debugLog('Storage URL type:', typeof storageUrl);
+              debugLog('Original URL:', imageUrl);
               
               if (!storageUrl) {
                 console.warn('Storage URL is null, using original URL');
               }
               
               const finalUrl = storageUrl || imageUrl;
-              console.log('Final URL to return:', finalUrl);
-              console.log('Final URL type:', typeof finalUrl);
-              console.log('Final URL length:', finalUrl?.length);
+              debugLog('Final URL to return:', finalUrl);
+              debugLog('Final URL type:', typeof finalUrl);
+              debugLog('Final URL length:', finalUrl?.length);
               
               await ctx.runMutation(api.aiGeneration.updateGenerationStatus, {
                 generationId,
@@ -365,7 +327,7 @@ export const generateImage = action({
               });
               
               const result = { success: true, imageUrl: finalUrl };
-              console.log('Returning result:', JSON.stringify(result));
+              debugLog('Returning result:', JSON.stringify(result));
               return result;
             } catch (error) {
               console.error("Error storing image:", error);
@@ -391,12 +353,12 @@ export const generateImage = action({
                 operationType: "ai-generation",
               });
               
-              console.log('ERROR: Using fallback due to storage error');
-              console.log('Fallback imageUrl value:', imageUrl);
-              console.log('Fallback imageUrl type:', typeof imageUrl);
-              console.log('Fallback imageUrl length:', imageUrl?.length);
+              debugLog('ERROR: Using fallback due to storage error');
+              debugLog('Fallback imageUrl value:', imageUrl);
+              debugLog('Fallback imageUrl type:', typeof imageUrl);
+              debugLog('Fallback imageUrl length:', imageUrl?.length);
               const result = { success: true, imageUrl: imageUrl || "error-no-url" };
-              console.log('Returning fallback result:', JSON.stringify(result));
+              debugLog('Returning fallback result:', JSON.stringify(result));
               return result;
             }
           }
@@ -430,16 +392,46 @@ export const generateImage = action({
   },
 });
 
-// Query to get AI generations for a session
-export const getSessionGenerations = mutation({
+// Query to get recent completed AI generations for a session (newest first)
+export const getSessionGenerations = query({
   args: {
     sessionId: v.id("paintingSessions"),
+    guestKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    return await ctx.db
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) {
+      return [];
+    }
+    if (!session.isPublic) {
+      const identity = await ctx.auth.getUserIdentity();
+      let authorized = false;
+      if (identity) {
+        const user = await ctx.db
+          .query("users")
+          .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
+          .first();
+        authorized = !!user && session.createdBy === user._id;
+      }
+      if (!authorized) {
+        if (!(session.guestOwnerKey && args.guestKey && session.guestOwnerKey === args.guestKey)) {
+          return [];
+        }
+      }
+    }
+    const generations = await ctx.db
       .query("aiGenerations")
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
       .order("desc")
       .take(10);
+    return generations
+      .filter((g) => g.status === "completed" && g.resultImageUrl)
+      .map((g) => ({
+        _id: g._id,
+        prompt: g.prompt,
+        resultImageUrl: g.resultImageUrl as string,
+        provider: g.provider,
+        createdAt: g.createdAt,
+      }));
   },
 });
