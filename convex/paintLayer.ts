@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { assertCanModifySession } from "./sessionAuth";
 
 // Get paint layer settings for a session
 export const getPaintLayerSettings = query({
@@ -35,10 +36,12 @@ export const updatePaintLayerOrder = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
     newLayerOrder: v.number(),
+    guestKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
     if (!session) throw new Error("Session not found");
+    await assertCanModifySession(ctx, session, args.guestKey);
     
     // Get all images to validate order range
     const uploadedImages = await ctx.db
@@ -108,10 +111,12 @@ export const updatePaintLayerVisibility = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
     visible: v.boolean(),
+    guestKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
     if (!session) throw new Error("Session not found");
+    await assertCanModifySession(ctx, session, args.guestKey);
     
     await ctx.db.patch(args.sessionId, {
       paintLayerVisible: args.visible,
@@ -121,10 +126,14 @@ export const updatePaintLayerVisibility = mutation({
 
 // Normalize layer orders for a session (ensures sequential 0...n-1 ordering)
 export const normalizeLayerOrders = mutation({
-  args: { sessionId: v.id("paintingSessions") },
+  args: {
+    sessionId: v.id("paintingSessions"),
+    guestKey: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
     if (!session) throw new Error("Session not found");
+    await assertCanModifySession(ctx, session, args.guestKey);
     
     // Get all images
     const uploadedImages = await ctx.db

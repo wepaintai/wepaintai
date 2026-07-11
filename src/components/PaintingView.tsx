@@ -270,9 +270,6 @@ export function PaintingView() {
   const aiGeneratedImages = images.filter(img => (img as any).type === 'ai-generated')
   
   // Paint layer mutations
-  const updatePaintLayerOrder = useMutation(api.paintLayer.updatePaintLayerOrder)
-  const updatePaintLayerVisibility = useMutation(api.paintLayer.updatePaintLayerVisibility)
-  
   // Thumbnail generation
   const { generateNow: generateThumbnail } = useThumbnailGenerator({
     sessionId: validSessionId || undefined,
@@ -280,10 +277,10 @@ export function PaintingView() {
     interval: 30000, // Generate thumbnail every 30 seconds
     enabled: sessionReady
   })
-  const paintLayerSettings = useQuery(api.paintLayer.getPaintLayerSettings, validSessionId ? { sessionId: validSessionId, guestKey: (typeof window !== 'undefined' ? (JSON.parse(localStorage.getItem('wepaint_guest_keys_v1') || '{}') || {})[validSessionId as any] : undefined) } : 'skip')
+  const paintLayerSettings = useQuery(api.paintLayer.getPaintLayerSettings, validSessionId ? { sessionId: validSessionId, guestKey: getGuestKey(validSessionId) || undefined } : 'skip')
 
   // Multiple paint layers support
-  const paintLayers = useQuery(api.paintLayers.getPaintLayers, validSessionId ? { sessionId: validSessionId, guestKey: (typeof window !== 'undefined' ? (JSON.parse(localStorage.getItem('wepaint_guest_keys_v1') || '{}') || {})[validSessionId as any] : undefined) } : 'skip')
+  const paintLayers = useQuery(api.paintLayers.getPaintLayers, validSessionId ? { sessionId: validSessionId, guestKey: getGuestKey(validSessionId) || undefined } : 'skip')
   const createPaintLayer = useMutation(api.paintLayers.createPaintLayer)
   const updatePaintLayer = useMutation(api.paintLayers.updatePaintLayer)
   const deletePaintLayer = useMutation(api.paintLayers.deletePaintLayer)
@@ -343,12 +340,15 @@ export function PaintingView() {
 
   // Ensure default paint layer exists
   useEffect(() => {
-    if (sessionId && paintLayers !== undefined) {
+    if (validSessionId && paintLayers !== undefined) {
       if (!paintLayers || paintLayers.length === 0) {
-        ensureDefaultPaintLayer({ sessionId })
+        ensureDefaultPaintLayer({
+          sessionId: validSessionId,
+          guestKey: getGuestKey(validSessionId) || undefined,
+        })
       }
     }
-  }, [sessionId, paintLayers, ensureDefaultPaintLayer])
+  }, [validSessionId, paintLayers, ensureDefaultPaintLayer])
 
   // Remove duplicate warming query - it's already called in usePaintingSession
 
@@ -883,7 +883,11 @@ export function PaintingView() {
       const paintLayer = paintLayers?.find(layer => layer._id === layerId)
       if (paintLayer) {
         console.log('[PaintingView] Toggling paint layer visibility', { layerId, name: paintLayer.name, to: visible })
-        await updatePaintLayer({ layerId: layerId as any, visible })
+        await updatePaintLayer({
+          layerId: layerId as any,
+          visible,
+          guestKey: getGuestKey(sessionId) || undefined,
+        })
         console.log('[PaintingView] Paint layer visibility updated OK', { layerId, to: visible })
         // Force canvas redraw
         canvasRef.current?.forceRedraw?.()
@@ -912,7 +916,7 @@ export function PaintingView() {
     } catch (err) {
       console.error('[PaintingView] Error toggling layer visibility', { layerId, visible, err })
     }
-  }, [images, aiImages, paintLayers, updateImageTransform, updateAIImageTransformMutation, updatePaintLayer, imageGuestKey])
+  }, [images, aiImages, paintLayers, sessionId, updateImageTransform, updateAIImageTransformMutation, updatePaintLayer, imageGuestKey])
 
   const handleLayerDelete = useCallback(async (layerId: string) => {
     // console.log('[PaintingView] handleLayerDelete called with layerId:', layerId)
@@ -932,7 +936,10 @@ export function PaintingView() {
       
       // console.log('[PaintingView] Deleting paint layer:', layerId)
       try {
-        await deletePaintLayer({ layerId: layerId as Id<"paintLayers"> })
+        await deletePaintLayer({
+          layerId: layerId as Id<"paintLayers">,
+          guestKey: getGuestKey(sessionId) || undefined,
+        })
         // console.log('[PaintingView] Paint layer deleted successfully')
       } catch (error) {
         console.error('[PaintingView] Error deleting paint layer:', error)
@@ -968,7 +975,7 @@ export function PaintingView() {
     } else {
       console.warn('[PaintingView] Layer not found for deletion:', layerId)
     }
-  }, [images, aiImages, paintLayers, clearSession, deleteImage, deletePaintLayer, deleteAIImageMutation, imageGuestKey])
+  }, [images, aiImages, paintLayers, sessionId, clearSession, deleteImage, deletePaintLayer, deleteAIImageMutation, imageGuestKey])
 
   const handleLayerReorder = useCallback(async (layerId: string, newOrder: number) => {
     if (!sessionId) return
@@ -981,7 +988,8 @@ export function PaintingView() {
     await reorderLayer({
       sessionId,
       layerId,
-      newOrder: clampedOrder
+      newOrder: clampedOrder,
+      guestKey: getGuestKey(sessionId) || undefined,
     })
     
     // Force canvas redraw to reflect new layer order
@@ -992,7 +1000,11 @@ export function PaintingView() {
     // Check if it's a paint layer
     const paintLayer = paintLayers?.find(layer => layer._id === layerId)
     if (paintLayer) {
-      await updatePaintLayer({ layerId: layerId as any, opacity })
+      await updatePaintLayer({
+        layerId: layerId as any,
+        opacity,
+        guestKey: getGuestKey(sessionId) || undefined,
+      })
       // Force canvas redraw
       canvasRef.current?.forceRedraw?.()
       return
@@ -1014,7 +1026,7 @@ export function PaintingView() {
         guestKey: imageGuestKey,
       })
     }
-  }, [images, aiImages, updateImageTransform, updateAIImageTransformMutation, imageGuestKey])
+  }, [images, aiImages, paintLayers, sessionId, updateImageTransform, updateAIImageTransformMutation, updatePaintLayer, imageGuestKey])
 
   // Handle creating new paint layer
   const handleCreatePaintLayer = useCallback(async () => {
@@ -1024,7 +1036,11 @@ export function PaintingView() {
     const paintLayerCount = paintLayers?.filter(l => l.name.startsWith('Layer')).length || 0
     const newLayerName = `Layer ${paintLayerCount + 2}` // +2 because we already have Layer 1
     
-    const layerId = await createPaintLayer({ sessionId, name: newLayerName })
+    const layerId = await createPaintLayer({
+      sessionId,
+      name: newLayerName,
+      guestKey: getGuestKey(sessionId) || undefined,
+    })
     
     // Set the new layer as active
     if (layerId) {

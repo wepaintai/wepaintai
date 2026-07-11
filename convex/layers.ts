@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
+import { assertCanModifySession } from "./sessionAuth";
 
 // Unified layer reordering that handles paint, uploaded images, and AI images
 export const reorderLayer = mutation({
@@ -8,10 +9,12 @@ export const reorderLayer = mutation({
     sessionId: v.id("paintingSessions"),
     layerId: v.string(), // Can be 'painting-layer' or an image ID
     newOrder: v.number(),
+    guestKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
     if (!session) throw new Error("Session not found");
+    await assertCanModifySession(ctx, session, args.guestKey);
 
     // Get all layers
     const uploadedImages = await ctx.db
