@@ -13,7 +13,7 @@ import { ImageUploadModal } from './ImageUploadModal'
 import { AIGenerationModal } from './AIGenerationModal'
 import { BackgroundRemovalModal } from './BackgroundRemovalModal'
 import { MergeTwoModal } from './MergeTwoModal'
-import { ExportModal } from './ExportModal'
+import { ExportModal, buildExportFilename } from './ExportModal'
 import { UserProfile } from './UserProfile'
 import { TokenDisplay } from './TokenDisplay'
 import { usePaintingSession } from '../hooks/usePaintingSession'
@@ -613,7 +613,7 @@ export function PaintingView() {
       } else {
         // Non-iOS devices: use direct download
         const link = document.createElement('a')
-        link.download = `wepaintai-${Date.now()}.png`
+        link.download = `${buildExportFilename(session?.name)}.png`
         link.href = capture.dataUrl
         link.click()
       }
@@ -1316,7 +1316,7 @@ export function PaintingView() {
         isOpen={showExportModal}
         onClose={() => setShowExportModal(false)}
         canvasDataUrl={exportCanvasDataUrl}
-        defaultFilename={`wepaintai-${Date.now()}`}
+        defaultFilename={buildExportFilename(session?.name)}
       />
     </div>
       </ClipboardProvider>

@@ -61,19 +61,19 @@ export function TokenDisplay({ className = '' }: TokenDisplayProps) {
       </div>
 
       {showPurchaseModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <h2 className="text-xl font-bold mb-4">Purchase Tokens</h2>
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-black/90 backdrop-blur-md border border-white/20 rounded-lg shadow-lg p-6 max-w-md w-full mx-4">
+            <h2 className="text-xl font-semibold text-white mb-4">Purchase Tokens</h2>
 
             <div className="space-y-4">
-              <div className="bg-gray-50 p-4 rounded-lg">
+              <div className="bg-white/5 border border-white/10 p-4 rounded-lg">
                 <div className="flex justify-between items-center mb-2">
-                  <span className="font-medium">Current Balance</span>
-                  <span className="text-lg font-bold text-gray-700">
+                  <span className="font-medium text-white/90">Current Balance</span>
+                  <span className="text-lg font-bold text-white">
                     {tokenBalance.tokens} tokens
                   </span>
                 </div>
-                <div className="text-sm text-gray-600">
+                <div className="text-sm text-white/60">
                   Lifetime used: {tokenBalance.lifetimeUsed} tokens
                 </div>
               </div>
@@ -85,23 +85,30 @@ export function TokenDisplay({ className = '' }: TokenDisplayProps) {
                     onClick={() => setSelectedPackageKey(tokenPackage.id)}
                     className={`w-full border-2 rounded-lg p-4 transition-all ${
                       selectedPackageKey === tokenPackage.id
-                        ? 'border-blue-500 bg-blue-50'
-                        : 'border-gray-300 bg-white hover:border-gray-400'
+                        ? 'border-blue-500 bg-blue-500/20'
+                        : 'border-white/20 bg-white/5 hover:border-white/40'
                     }`}
                   >
                     <div className="flex justify-between items-center">
                       <div className="text-left">
-                        <h3 className="font-semibold">{tokenPackage.name}</h3>
+                        <h3 className="font-semibold text-white">{tokenPackage.name}</h3>
                         {tokenPackage.id === '125_tokens' && (
-                          <p className="text-sm text-green-600 font-medium">Best Value</p>
+                          <p className="text-sm text-green-400 font-medium">Best Value</p>
                         )}
                       </div>
                       <div className="text-right">
-                        <div className="text-2xl font-bold text-blue-600">
+                        <div className="text-2xl font-bold text-blue-400">
                           {new Intl.NumberFormat(undefined, {
                             style: 'currency',
                             currency: tokenPackage.currency,
                           }).format(tokenPackage.price / 100)}
+                        </div>
+                        <div className="text-xs text-white/60">
+                          {new Intl.NumberFormat(undefined, {
+                            style: 'currency',
+                            currency: tokenPackage.currency,
+                          }).format(tokenPackage.pricePerToken)}{' '}
+                          per token
                         </div>
                       </div>
                     </div>
@@ -109,7 +116,7 @@ export function TokenDisplay({ className = '' }: TokenDisplayProps) {
                 ))}
                 {!tokenPackages && (
                   <div className="flex justify-center py-6">
-                    <Loader2 className="w-5 h-5 animate-spin text-blue-500" />
+                    <Loader2 className="w-5 h-5 animate-spin text-blue-400" />
                   </div>
                 )}
               </div>
@@ -117,14 +124,14 @@ export function TokenDisplay({ className = '' }: TokenDisplayProps) {
               <div className="flex gap-3">
                 <button
                   onClick={() => setShowPurchaseModal(false)}
-                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                  className="flex-1 px-4 py-2 border border-white/20 text-white/70 hover:text-white hover:border-white/30 rounded-lg transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handlePurchase}
                   disabled={purchasing || !tokenPackages}
-                  className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-colors"
                 >
                   {purchasing ? (
                     <>
