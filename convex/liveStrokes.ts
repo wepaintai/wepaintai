@@ -9,6 +9,7 @@ export const updateLiveStroke = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
     userId: v.optional(v.id("users")),
+    guestId: v.optional(v.string()),
     userColor: v.string(),
     userName: v.string(),
     points: v.array(v.object({
@@ -32,13 +33,29 @@ export const updateLiveStroke = mutation({
 
     const now = Date.now();
 
-    // Find existing live stroke for this user in this session
-    const existingLiveStroke = await ctx.db
-      .query("liveStrokes")
-      .withIndex("by_user_session", (q) => 
-        q.eq("userId", args.userId).eq("sessionId", args.sessionId)
-      )
-      .first();
+    // Find existing live stroke for this user in this session. Guests all have
+    // userId undefined, so they are keyed by their stable per-browser guestId.
+    const existingLiveStroke = args.userId
+      ? await ctx.db
+          .query("liveStrokes")
+          .withIndex("by_user_session", (q) =>
+            q.eq("userId", args.userId).eq("sessionId", args.sessionId)
+          )
+          .first()
+      : args.guestId
+        ? await ctx.db
+            .query("liveStrokes")
+            .withIndex("by_guest_session", (q) =>
+              q.eq("guestId", args.guestId).eq("sessionId", args.sessionId)
+            )
+            .first()
+        : await ctx.db
+            .query("liveStrokes")
+            .withIndex("by_user_session", (q) =>
+              q.eq("userId", undefined).eq("sessionId", args.sessionId)
+            )
+            .filter((q) => q.eq(q.field("guestId"), undefined))
+            .first();
 
     if (existingLiveStroke) {
       // Update existing live stroke
@@ -57,6 +74,7 @@ export const updateLiveStroke = mutation({
       await ctx.db.insert("liveStrokes", {
         sessionId: args.sessionId,
         userId: args.userId,
+        guestId: args.guestId,
         userColor: args.userColor,
         userName: args.userName,
         points: args.points,
@@ -85,6 +103,7 @@ export const getLiveStrokes = query({
     _creationTime: v.number(),
     sessionId: v.id("paintingSessions"),
     userId: v.optional(v.id("users")),
+    guestId: v.optional(v.string()),
     userColor: v.string(),
     userName: v.string(),
     points: v.array(v.object({
@@ -132,6 +151,7 @@ export const clearLiveStroke = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
     userId: v.optional(v.id("users")),
+    guestId: v.optional(v.string()),
     guestKey: v.optional(v.string()),
   },
   returns: v.null(),
@@ -159,12 +179,27 @@ export const clearLiveStroke = mutation({
       }
     }
 
-    const liveStroke = await ctx.db
-      .query("liveStrokes")
-      .withIndex("by_user_session", (q) => 
-        q.eq("userId", args.userId).eq("sessionId", args.sessionId)
-      )
-      .first();
+    const liveStroke = args.userId
+      ? await ctx.db
+          .query("liveStrokes")
+          .withIndex("by_user_session", (q) =>
+            q.eq("userId", args.userId).eq("sessionId", args.sessionId)
+          )
+          .first()
+      : args.guestId
+        ? await ctx.db
+            .query("liveStrokes")
+            .withIndex("by_guest_session", (q) =>
+              q.eq("guestId", args.guestId).eq("sessionId", args.sessionId)
+            )
+            .first()
+        : await ctx.db
+            .query("liveStrokes")
+            .withIndex("by_user_session", (q) =>
+              q.eq("userId", undefined).eq("sessionId", args.sessionId)
+            )
+            .filter((q) => q.eq(q.field("guestId"), undefined))
+            .first();
 
     if (liveStroke) {
       await ctx.db.delete(liveStroke._id);

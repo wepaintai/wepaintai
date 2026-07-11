@@ -1116,7 +1116,7 @@ export function PaintingView() {
           ) : (
             <div className="text-center">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-              <p className="text-gray-600">{sessionId ? 'Loading painting session...' : 'Creating painting session...'}</p>
+              <p className="text-gray-600">{sessionId || (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('session')) ? 'Loading session...' : 'Creating painting session...'}</p>
             </div>
           ))}
         </div>

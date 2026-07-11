@@ -75,9 +75,13 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
             </div>
           ) : (
             <div className="py-2">
-              <p className="text-white/60 text-sm text-center mb-4">
+              <p className="text-white/60 text-sm text-center mb-2">
                 Sign in with your Google account to save your work and use AI
                 features.
+              </p>
+              <p className="text-white/40 text-xs text-center mb-4">
+                New here? Signing in with Google creates your account
+                automatically.
               </p>
               <GoogleSignInButton callbackURL={typeof window !== 'undefined' ? window.location.href : '/'} />
             </div>
