@@ -1059,6 +1059,7 @@ export function PaintingView() {
             onClick={toggleAdminPanel} 
             className="absolute top-2 right-28 z-50 bg-black/90 backdrop-blur-md border border-white/20 hover:bg-black/80 text-white font-bold py-1 px-2 rounded text-xs"
             title="Toggle Admin Panel (Ctrl+Shift+A)"
+            aria-label={`${isAdminPanelVisible ? 'Hide' : 'Show'} admin panel (Ctrl+Shift+A)`}
           >
             {isAdminPanelVisible ? 'Hide' : 'Show'} Admin
           </button>

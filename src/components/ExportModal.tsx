@@ -205,7 +205,7 @@ export function ExportModal({
               </button>
 
               {isIOSDevice && (
-                <p className="text-xs text-white/50 text-center">
+                <p className="text-xs text-white/70 text-center">
                   Tip: For best results on iOS, use the long-press method to save directly to Photos
                 </p>
               )}

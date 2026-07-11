@@ -24,14 +24,14 @@ export function P2PStatus({ isConnected, connectionMode, metrics, className = ''
   };
 
   return (
-    <div className={`flex items-center gap-2 text-sm ${className}`}>
+    <div className={`flex items-center gap-2 text-sm ${className}`} role="status">
       <div className="flex items-center gap-1">
-        <div className={`w-2 h-2 rounded-full ${getStatusColor()}`} />
-        <span className="text-gray-600">{getStatusText()}</span>
+        <div className={`w-2 h-2 rounded-full ${getStatusColor()}`} aria-hidden="true" />
+        <span className="text-gray-700">{getStatusText()}</span>
       </div>
-      
+
       {metrics && isConnected && (
-        <div className="flex items-center gap-3 text-xs text-gray-500">
+        <div className="flex items-center gap-3 text-xs text-gray-600">
           <span>Peers: {metrics.connectedPeers}</span>
           <span>Latency: {metrics.latency}ms</span>
           <span>Sent: {metrics.packetsSent}</span>

@@ -53,7 +53,7 @@ export function TokenDisplay({ className = '' }: TokenDisplayProps) {
         <span className="text-sm font-medium">{tokenBalance.tokens} tokens</span>
         <button
           onClick={() => setShowPurchaseModal(true)}
-          className="text-xs text-blue-500 hover:text-blue-600 underline"
+          className="text-xs text-blue-600 hover:text-blue-700 underline py-2.5 -my-2.5 px-1 -mx-1"
           data-token-buy-more
         >
           Buy more
