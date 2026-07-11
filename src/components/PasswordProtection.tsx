@@ -1,21 +1,31 @@
 import React, { useState, useEffect } from 'react'
+import { useLocation } from '@tanstack/react-router'
 import { Lock, AlertCircle } from 'lucide-react'
 
 interface PasswordProtectionProps {
   children: React.ReactNode
 }
 
+// NOTE: This gate is friction-gating for early access, NOT security — the
+// password ships in the client bundle and anyone can read it from the source.
 const CORRECT_PASSWORD = 'renderatl'
 const AUTH_STORAGE_KEY = 'wepaintai-auth'
+
+// Auth-related paths must stay reachable without the gate: /login is where
+// sign-in starts and /api/auth/* handles the OAuth callback round-trip.
+const GATE_EXEMPT_PREFIXES = ['/login', '/sign-up', '/api/auth']
 
 export function PasswordProtection({ children }: PasswordProtectionProps) {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(true)
+  const pathname = useLocation({ select: (location) => location.pathname })
 
   // Check if password protection is enabled via environment variable
   const isPasswordProtectionEnabled = import.meta.env.VITE_PASSWORD_PROTECTION_ENABLED === 'true'
+
+  const isExemptPath = GATE_EXEMPT_PREFIXES.some((prefix) => pathname.startsWith(prefix))
 
   useEffect(() => {
     // If password protection is disabled, authenticate immediately
@@ -25,8 +35,9 @@ export function PasswordProtection({ children }: PasswordProtectionProps) {
       return
     }
 
-    // Check if user is already authenticated
-    const authStatus = sessionStorage.getItem(AUTH_STORAGE_KEY)
+    // Check if user is already authenticated (localStorage so the gate is
+    // passed once per browser, not once per tab)
+    const authStatus = localStorage.getItem(AUTH_STORAGE_KEY)
     if (authStatus === 'authenticated') {
       setIsAuthenticated(true)
     }
@@ -35,9 +46,9 @@ export function PasswordProtection({ children }: PasswordProtectionProps) {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    
+
     if (password === CORRECT_PASSWORD) {
-      sessionStorage.setItem(AUTH_STORAGE_KEY, 'authenticated')
+      localStorage.setItem(AUTH_STORAGE_KEY, 'authenticated')
       setIsAuthenticated(true)
       setError('')
     } else {
@@ -51,6 +62,11 @@ export function PasswordProtection({ children }: PasswordProtectionProps) {
     if (error) {
       setError('')
     }
+  }
+
+  // Auth flow pages bypass the gate entirely
+  if (isExemptPath) {
+    return <>{children}</>
   }
 
   // Don't render anything while checking auth status

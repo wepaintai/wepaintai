@@ -347,12 +347,19 @@ export function AIGenerationModal({
                 {error.includes('Please sign in') && (
                   <span>
                     {' '}
-                    <a
-                      href="/login"
+                    <button
+                      onClick={() => {
+                        // Open the in-place auth modal instead of navigating
+                        // away from the canvas
+                        onClose()
+                        const signInBtn = document.querySelector('[data-auth-sign-in]') as HTMLButtonElement
+                        if (signInBtn) signInBtn.click()
+                        else window.location.href = '/login'
+                      }}
                       className="underline hover:text-red-300"
                     >
                       Sign in
-                    </a>
+                    </button>
                   </span>
                 )}
               </p>

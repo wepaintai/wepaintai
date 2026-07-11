@@ -1453,10 +1453,23 @@ export function ToolPanel({
 
       {/* Auth Modal - Only show if auth is not disabled */}
       {!authDisabled && (
-        <AuthModal 
-          isOpen={showAuthModal} 
-          onClose={() => setShowAuthModal(false)} 
-        />
+        <>
+          {/* Hidden trigger so other components (e.g. AI modals' sign-in
+              errors) can open the auth modal in place, same idiom as
+              [data-token-buy-more] */}
+          <button
+            type="button"
+            data-auth-sign-in
+            className="hidden"
+            aria-hidden="true"
+            tabIndex={-1}
+            onClick={() => setShowAuthModal(true)}
+          />
+          <AuthModal
+            isOpen={showAuthModal}
+            onClose={() => setShowAuthModal(false)}
+          />
+        </>
       )}
       <LibraryModal
         isOpen={isLibraryModalOpen}

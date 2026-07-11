@@ -25,13 +25,19 @@ function GoogleLogo() {
   )
 }
 
+// If the browser hasn't navigated to Google within this window (popup/redirect
+// blocked, network stall), give up on the spinner and let the user retry.
+const REDIRECT_TIMEOUT_MS = 15_000
+
 /**
  * The only way to sign in / sign up: Google OAuth.
- * After the OAuth round-trip, Better Auth redirects back to `callbackURL`.
+ * After the OAuth round-trip, Better Auth redirects back to `callbackURL`
+ * (or back here with an `error` query param if the round-trip failed).
  */
 export function GoogleSignInButton({ callbackURL }: { callbackURL?: string }) {
   const [error, setError] = React.useState<string | null>(null)
   const [submitting, setSubmitting] = React.useState(false)
+  const redirectTimeoutRef = React.useRef<number | undefined>(undefined)
   // PR previews share the prod backend but aren't a trusted auth origin, so
   // sign-in can't work there (see selfhost/preview/README.md). Detected in an
   // effect to keep server and client renders identical.
@@ -40,20 +46,56 @@ export function GoogleSignInButton({ callbackURL }: { callbackURL?: string }) {
     setIsPreviewHost(/^preview-pr-\d+\.wepaint\.ai$/.test(window.location.hostname))
   }, [])
 
+  // Surface OAuth round-trip failures: Better Auth sends the user back with
+  // an `error` query param, e.g. `access_denied` when they cancel at Google.
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const oauthError = params.get('error')
+    if (!oauthError) return
+    setError(
+      oauthError === 'access_denied'
+        ? 'Sign-in was cancelled.'
+        : 'Sign-in failed. Please try again.'
+    )
+    // Drop the param so a refresh doesn't re-show a stale error
+    params.delete('error')
+    const query = params.toString()
+    window.history.replaceState(
+      null,
+      '',
+      window.location.pathname + (query ? `?${query}` : '') + window.location.hash
+    )
+  }, [])
+
+  React.useEffect(() => {
+    return () => window.clearTimeout(redirectTimeoutRef.current)
+  }, [])
+
   const handleClick = async () => {
     setError(null)
     setSubmitting(true)
+    window.clearTimeout(redirectTimeoutRef.current)
+    redirectTimeoutRef.current = window.setTimeout(() => {
+      setSubmitting(false)
+      setError(
+        "Couldn't reach Google. Check your connection and pop-up blocker, then try again."
+      )
+    }, REDIRECT_TIMEOUT_MS)
     try {
       const result = await authClient.signIn.social({
         provider: 'google',
         callbackURL: callbackURL ?? '/',
+        errorCallbackURL: callbackURL ?? '/',
       })
       if (result.error) {
+        window.clearTimeout(redirectTimeoutRef.current)
         setError(result.error.message || 'Sign-in failed. Please try again.')
         setSubmitting(false)
       }
-      // On success the browser navigates to Google; leave the spinner running.
+      // On success the browser navigates to Google; the spinner keeps running
+      // until then, with the timeout above as the safety net.
     } catch (err) {
+      window.clearTimeout(redirectTimeoutRef.current)
       console.error('[GoogleSignInButton] Error:', err)
       setError('Sign-in failed. Please try again.')
       setSubmitting(false)
