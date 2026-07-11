@@ -35,6 +35,8 @@ export function AIGenerationModal({
   const generateImage = useAction(api.aiGeneration.generateImage)
   const generateImageGemini = useAction(api.geminiGeneration.generateImage)
   const tokenBalance = useQuery(api.tokens.getTokenBalance)
+  const recentGenerations = useQuery(api.aiGeneration.getSessionGenerations, { sessionId, guestKey: getGuestKey(sessionId) || undefined })
+  const hasNoTokens = tokenBalance != null && tokenBalance.tokens < 1
   const previousPrompts = useQuery(api.paintingSessions.getAIPrompts, { sessionId, guestKey: getGuestKey(sessionId) || undefined })
   const userPrompts = useQuery(api.userPrompts.getUserPrompts, { limit: 20 })
   const addAIPrompt = useMutation(api.paintingSessions.addAIPrompt)
@@ -157,7 +159,36 @@ export function AIGenerationModal({
                 Gemini 2.5
               </button>
             </div>
+            <p className="text-xs text-white/60 mt-1.5">
+              {provider === 'replicate'
+                ? 'Best for preserving your drawing — adjustable strength below, but slower.'
+                : 'Faster and more creative — may take more liberties with your drawing.'}
+            </p>
           </div>
+
+          {/* Canvas strength slider (Flux only — Gemini has no equivalent control) */}
+          {provider === 'replicate' && (
+            <div className="mb-3">
+              <label htmlFor="canvas-strength" className="block text-sm font-medium text-white mb-1">
+                How closely to follow your drawing: {Math.round(weight * 100)}%
+              </label>
+              <input
+                id="canvas-strength"
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={weight}
+                onChange={(e) => setWeight(parseFloat(e.target.value))}
+                disabled={isGenerating}
+                className="w-full accent-blue-500"
+              />
+              <div className="flex justify-between text-xs text-white/50">
+                <span>Ignore canvas</span>
+                <span>Keep my drawing</span>
+              </div>
+            </div>
+          )}
           {/* Preview */}
           <div className="mb-3 mt-3">
             <p className="text-sm text-white/70 mb-1">Current canvas:</p>
@@ -297,6 +328,40 @@ export function AIGenerationModal({
             </button>
           </div>
 
+          {/* Recent generations */}
+          {recentGenerations && recentGenerations.length > 0 && (
+            <div className="mb-3">
+              <label className="block text-sm font-medium text-white mb-1">
+                <History className="w-4 h-4 inline mr-1" />
+                Recent generations:
+              </label>
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {recentGenerations.map((gen) => (
+                  <button
+                    key={gen._id}
+                    onClick={() => {
+                      onGenerationComplete(gen.resultImageUrl)
+                      onClose()
+                    }}
+                    disabled={isGenerating}
+                    className="relative flex-shrink-0 w-16 h-16 rounded border border-white/20 overflow-hidden bg-white/10 hover:border-blue-400 transition-colors group"
+                    title={`${gen.prompt} — click to add back as a layer`}
+                  >
+                    <img
+                      src={gen.resultImageUrl}
+                      alt={gen.prompt}
+                      className="w-full h-full object-cover"
+                    />
+                    <span className="absolute inset-x-0 bottom-0 bg-black/70 text-[10px] text-white opacity-0 group-hover:opacity-100 transition-opacity leading-tight py-0.5">
+                      Add as layer
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-white/50 mt-1">Click a thumbnail to add it back as a layer.</p>
+            </div>
+          )}
+
           {/* Token balance */}
           <div className="mb-3 p-2 sm:p-3 bg-white/10 rounded-md border border-white/20">
             <div className="flex items-center justify-between">
@@ -322,6 +387,12 @@ export function AIGenerationModal({
               Buy more tokens
             </button>
           </div>
+
+          {hasNoTokens && (
+            <div className="mb-3 p-3 bg-red-500/10 border border-red-500/20 rounded-md">
+              <p className="text-sm text-red-400">Insufficient tokens. You need at least 1 token.</p>
+            </div>
+          )}
 
           {/* Error message */}
           {error && (
@@ -372,7 +443,7 @@ export function AIGenerationModal({
             </button>
             <button
               onClick={handleGenerate}
-              disabled={isGenerating || !prompt.trim()}
+              disabled={isGenerating || !prompt.trim() || hasNoTokens}
               className="px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {isGenerating ? (
