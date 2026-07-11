@@ -1,0 +1,29 @@
+services:
+  backend:
+    image: ${PREVIEW_CONVEX_IMAGE:?PREVIEW_CONVEX_IMAGE must identify the production Convex image}
+    container_name: wepaintai-preview-slot-${PREVIEW_SLOT:?PREVIEW_SLOT is required}
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    ports:
+      - "127.0.0.1:${PREVIEW_API_PORT:?PREVIEW_API_PORT is required}:3210"
+      - "127.0.0.1:${PREVIEW_SITE_PORT:?PREVIEW_SITE_PORT is required}:3211"
+    volumes:
+      - ${PREVIEW_DATA_DIR:?PREVIEW_DATA_DIR is required}:/convex/data
+    environment:
+      INSTANCE_NAME: wepaintai-preview-slot-${PREVIEW_SLOT}
+      INSTANCE_SECRET: ${PREVIEW_INSTANCE_SECRET:?PREVIEW_INSTANCE_SECRET is required}
+      CONVEX_CLOUD_ORIGIN: https://preview-api-${PREVIEW_SLOT}.wepaint.ai
+      CONVEX_SITE_ORIGIN: https://preview-site-${PREVIEW_SLOT}.wepaint.ai
+      DO_NOT_REQUIRE_SSL: "true"
+      DISABLE_BEACON: "true"
+      DOCUMENT_RETENTION_DELAY: "86400"
+      RUST_LOG: ${PREVIEW_RUST_LOG:-warn}
+    mem_limit: ${PREVIEW_MEMORY_LIMIT:-768m}
+    cpus: ${PREVIEW_CPU_LIMIT:-1.5}
+    healthcheck:
+      test: curl -f http://localhost:3210/version
+      interval: 5s
+      start_period: 15s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped

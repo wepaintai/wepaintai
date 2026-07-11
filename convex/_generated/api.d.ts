@@ -28,6 +28,7 @@ import type * as polar from "../polar.js";
 import type * as polarPackages from "../polarPackages.js";
 import type * as polarWebhook from "../polarWebhook.js";
 import type * as presence from "../presence.js";
+import type * as previewSeed from "../previewSeed.js";
 import type * as strokes from "../strokes.js";
 import type * as tokenPolicy from "../tokenPolicy.js";
 import type * as tokens from "../tokens.js";
@@ -63,6 +64,7 @@ declare const fullApi: ApiFromModules<{
   polarPackages: typeof polarPackages;
   polarWebhook: typeof polarWebhook;
   presence: typeof presence;
+  previewSeed: typeof previewSeed;
   strokes: typeof strokes;
   tokenPolicy: typeof tokenPolicy;
   tokens: typeof tokens;

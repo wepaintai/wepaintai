@@ -4,6 +4,10 @@ Everything runs locally: the TanStack Start app as a launchd service, the
 Convex backend + dashboard in Docker, exposed publicly via Cloudflare Tunnel.
 External SaaS that remains: Replicate/Gemini (AI generation), Polar (payments).
 
+Full-stack PR previews use a separate bounded pool of disposable Convex
+containers. See [`preview/README.md`](preview/README.md); previews must never
+point at this production deployment.
+
 ```
 Internet ──▶ Cloudflare Tunnel ──▶ app.YOUR_DOMAIN         → localhost:3000 (node server)
                                  ├▶ convex.YOUR_DOMAIN      → localhost:3210 (Convex API/WS)

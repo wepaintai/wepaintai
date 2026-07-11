@@ -129,7 +129,7 @@ redirects to `/login`; both are a single "Continue with Google" button.
 
 ### PR Previews
 
-Every open same-repo PR is served at `https://preview-pr-<N>.wepaint.ai` (a sticky PR comment carries the URL). It's the prod frontend build of the branch against the **live production Convex backend** — `convex/` changes are not deployed, and sign-in is effectively guest-only. Built on the Mac mini's self-hosted runner; redeployed on every push, torn down on PR close. Details: `selfhost/preview/README.md`.
+Every open same-repo PR can be served at `https://preview-pr-<N>.wepaint.ai` from a bounded pool of isolated self-hosted Convex slots. Each slot runs the branch's frontend, functions, schema, database, file storage, and preview-only Google auth; production data and sessions are never shared. When all slots are occupied, PRs queue until cleanup releases capacity. Built on the Mac mini's self-hosted runner; redeployed on every push, torn down on PR close. Details: `selfhost/preview/README.md`.
 
 ### Development Notes
 

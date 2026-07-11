@@ -9,7 +9,7 @@ services:
   backend:
     # Pin to a specific tag before relying on this in production:
     # https://github.com/get-convex/convex-backend/pkgs/container/convex-backend
-    image: ghcr.io/get-convex/convex-backend:latest
+    image: ${CONVEX_BACKEND_IMAGE:-ghcr.io/get-convex/convex-backend:latest}
     stop_grace_period: 10s
     stop_signal: SIGINT
     ports:
@@ -35,7 +35,7 @@ services:
     restart: unless-stopped
 
   dashboard:
-    image: ghcr.io/get-convex/convex-dashboard:latest
+    image: ${CONVEX_DASHBOARD_IMAGE:-ghcr.io/get-convex/convex-dashboard:latest}
     stop_grace_period: 10s
     stop_signal: SIGINT
     ports:
