@@ -12,6 +12,10 @@ export async function assertCanModifySession(
   guestKey: string | undefined,
   opts?: { ownerOnly?: boolean },
 ): Promise<void> {
+  if (session.deletedAt !== undefined) {
+    throw new Error("Session not found");
+  }
+
   if (session.isPublic && !opts?.ownerOnly) return;
 
   const identity = await ctx.auth.getUserIdentity();

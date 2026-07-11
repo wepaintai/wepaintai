@@ -12,6 +12,7 @@ import { api } from '../../convex/_generated/api'
 import { shouldShowAdminFeatures } from '../utils/environment'
 import { uploadImageFile, validateImageFile, ACCEPTED_TYPES } from '../utils/imageUpload'
 import { useClipboardContext } from '../context/ClipboardContext'
+import { getGuestKey } from '../utils/guestKey'
 
 const average = (a: number, b: number): number => (a + b) / 2
 
@@ -296,7 +297,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   // Get AI generated images separately
   const aiImages = useQuery(api.images.getAIGeneratedImages, sessionId ? { sessionId, guestKey: (typeof window !== 'undefined' ? (JSON.parse(localStorage.getItem('wepaint_guest_keys_v1') || '{}') || {})[sessionId as any] : undefined) } : 'skip')
   // Get paint layers for transforms
-  const paintLayersData = useQuery(api.paintLayers.getPaintLayers, sessionId ? { sessionId, guestKey: (typeof window !== 'undefined' ? (JSON.parse(localStorage.getItem('wepaint_guest_keys_v1') || '{}') || {})[sessionId as any] : undefined) } : 'skip')
+  const paintLayersData = useQuery(api.paintLayers.getPaintLayers, sessionId ? { sessionId, guestKey: getGuestKey(sessionId) || undefined } : 'skip')
   
   // Mutations for updating positions
   const updateImageTransform = useMutation(api.images.updateImageTransform)
@@ -1434,6 +1435,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                         layerId: layer.id as any,
                         x: node.x(),
                         y: node.y(),
+                        guestKey: getGuestKey(sessionId) || undefined,
                       })
                     }}
                     onTransformEnd={async (e) => {
@@ -1448,6 +1450,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                         rotation: newRotation,
                         x: node.x(),
                         y: node.y(),
+                        guestKey: getGuestKey(sessionId) || undefined,
                       } as any)
                       // Do not reset node scale here; let controlled props re-render with persisted values
                     }}
