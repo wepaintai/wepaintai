@@ -104,3 +104,150 @@ describe('painting session thumbnails', () => {
     expect(session?.thumbnailUrl).toBe('data:image/jpeg;base64,public')
   })
 })
+
+describe('getUserSessions', () => {
+  test('returns only owned sessions and excludes every contribution source', async () => {
+    const t = createTestBackend()
+    const authId = 'library-owner'
+
+    await t.run(async (ctx) => {
+      const userId = await ctx.db.insert('users', {
+        authId,
+        email: `${authId}@example.com`,
+      })
+      const otherUserId = await ctx.db.insert('users', {
+        authId: 'other-owner',
+        email: 'other-owner@example.com',
+      })
+
+      await ctx.db.insert('paintingSessions', {
+        name: 'Owned canvas',
+        createdBy: userId,
+        isPublic: false,
+        canvasWidth: 800,
+        canvasHeight: 600,
+        strokeCounter: 0,
+        lastModified: 100,
+      })
+      const publicStrokeSessionId = await ctx.db.insert('paintingSessions', {
+        name: 'Contributed public stroke canvas',
+        createdBy: otherUserId,
+        isPublic: true,
+        canvasWidth: 800,
+        canvasHeight: 600,
+        strokeCounter: 1,
+      })
+      const privateUploadSessionId = await ctx.db.insert('paintingSessions', {
+        name: 'Contributed private upload canvas',
+        createdBy: otherUserId,
+        isPublic: false,
+        canvasWidth: 800,
+        canvasHeight: 600,
+        strokeCounter: 0,
+      })
+      const publicLayerSessionId = await ctx.db.insert('paintingSessions', {
+        name: 'Contributed public layer canvas',
+        createdBy: otherUserId,
+        isPublic: true,
+        canvasWidth: 800,
+        canvasHeight: 600,
+        strokeCounter: 0,
+      })
+
+      await ctx.db.insert('strokes', {
+        sessionId: publicStrokeSessionId,
+        userId,
+        userColor: '#000000',
+        points: [{ x: 0, y: 0 }],
+        brushColor: '#000000',
+        brushSize: 5,
+        opacity: 1,
+        strokeOrder: 1,
+      })
+
+      const storageId = await ctx.storage.store(new Blob(['image']))
+      await ctx.db.insert('uploadedImages', {
+        sessionId: privateUploadSessionId,
+        userId,
+        storageId,
+        filename: 'contribution.png',
+        mimeType: 'image/png',
+        width: 100,
+        height: 100,
+        x: 0,
+        y: 0,
+        scale: 1,
+        rotation: 0,
+        opacity: 1,
+        layerOrder: 0,
+      })
+
+      await ctx.db.insert('paintLayers', {
+        sessionId: publicLayerSessionId,
+        name: 'Contributed layer',
+        layerOrder: 0,
+        visible: true,
+        opacity: 1,
+        createdBy: userId,
+        createdAt: Date.now(),
+      })
+    })
+
+    const sessions = await t.withIdentity({ subject: authId }).query(
+      api.paintingSessions.getUserSessions,
+      {},
+    )
+
+    expect(sessions.map((session) => session.name)).toEqual(['Owned canvas'])
+  })
+
+  test('sorts owned sessions by lastModified descending', async () => {
+    const t = createTestBackend()
+    const authId = 'sorted-library-owner'
+
+    await t.run(async (ctx) => {
+      const userId = await ctx.db.insert('users', {
+        authId,
+        email: `${authId}@example.com`,
+      })
+
+      for (const [name, lastModified] of [
+        ['Old canvas', 100],
+        ['Newest canvas', 300],
+        ['Middle canvas', 200],
+      ] as const) {
+        await ctx.db.insert('paintingSessions', {
+          name,
+          createdBy: userId,
+          isPublic: false,
+          canvasWidth: 800,
+          canvasHeight: 600,
+          strokeCounter: 0,
+          lastModified,
+        })
+      }
+
+      await ctx.db.insert('paintingSessions', {
+        name: 'Deleted canvas',
+        createdBy: userId,
+        isPublic: false,
+        canvasWidth: 800,
+        canvasHeight: 600,
+        strokeCounter: 0,
+        lastModified: 400,
+        deletedAt: Date.now(),
+      })
+    })
+
+    const sessions = await t.withIdentity({ subject: authId }).query(
+      api.paintingSessions.getUserSessions,
+      {},
+    )
+
+    expect(sessions.map((session) => session.name)).toEqual([
+      'Newest canvas',
+      'Middle canvas',
+      'Old canvas',
+    ])
+  })
+})

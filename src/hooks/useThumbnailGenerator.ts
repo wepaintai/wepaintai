@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import { Id } from '../../convex/_generated/dataModel'
@@ -6,181 +6,132 @@ import type { CanvasRef } from '../components/KonvaCanvas'
 import { getGuestKey } from '../utils/guestKey'
 
 interface UseThumbnailGeneratorOptions {
-  sessionId?: Id<"paintingSessions">
+  sessionId?: Id<'paintingSessions'>
   canvasRef: React.RefObject<CanvasRef | null>
-  interval?: number // Default: 30 seconds
+  interval?: number
   enabled?: boolean
+}
+
+async function isAllWhiteThumbnail(dataUrl: string): Promise<boolean> {
+  const image = new Image()
+  await new Promise<void>((resolve, reject) => {
+    image.onload = () => resolve()
+    image.onerror = () => reject(new Error('Failed to decode canvas thumbnail'))
+    image.src = dataUrl
+  })
+
+  const canvas = document.createElement('canvas')
+  canvas.width = image.width
+  canvas.height = image.height
+  const context = canvas.getContext('2d')
+  if (!context) return false
+
+  context.drawImage(image, 0, 0)
+  const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
+  for (let index = 0; index < pixels.length; index += 4) {
+    if (pixels[index] !== 255 || pixels[index + 1] !== 255 || pixels[index + 2] !== 255) {
+      return false
+    }
+  }
+
+  return true
 }
 
 export function useThumbnailGenerator({
   sessionId,
   canvasRef,
-  interval = 30000, // 30 seconds default
-  enabled = true
+  interval = 30000,
+  enabled = true,
 }: UseThumbnailGeneratorOptions) {
   const updateThumbnail = useMutation(api.paintingSessions.updateSessionThumbnail)
-  const lastThumbnailRef = useRef<string>('')
-  const intervalRef = useRef<NodeJS.Timeout | undefined>(undefined)
+  const lastThumbnailRef = useRef('')
+  const inFlightRef = useRef<Promise<void> | null>(null)
+  const pendingSkipBlankRef = useRef<boolean | null>(null)
+  const activeSessionRef = useRef(sessionId)
 
   useEffect(() => {
-    if (!enabled || !sessionId) {
-      console.log('[ThumbnailGenerator] Not enabled or no sessionId:', { enabled, sessionId })
-      return
-    }
+    activeSessionRef.current = sessionId
+    lastThumbnailRef.current = ''
+    inFlightRef.current = null
+    pendingSkipBlankRef.current = null
+  }, [sessionId])
 
-    const generateThumbnail = async () => {
-      try {
-        console.log('[ThumbnailGenerator] Generating thumbnail for session:', sessionId)
-        
-        // Check if canvas ref is available
-        if (!canvasRef.current) {
-          console.log('[ThumbnailGenerator] Canvas ref not available yet')
-          return
-        }
-        
-        // Get the canvas image data
-        const imageData = canvasRef.current?.getImageData?.()
-        if (!imageData) {
-          console.log('[ThumbnailGenerator] No image data from canvas')
-          return
-        }
-        
-        console.log('[ThumbnailGenerator] Got image data, creating thumbnail...')
-
-        // Check if the image has changed
-        if (imageData === lastThumbnailRef.current) {
-          return // No changes, skip update
-        }
-
-        // Create a smaller thumbnail (max 400px wide)
-        const img = new Image()
-        img.onload = async () => {
-          // Check if the canvas is not empty (all white)
-          const tempCanvas = document.createElement('canvas')
-          tempCanvas.width = img.width
-          tempCanvas.height = img.height
-          const tempCtx = tempCanvas.getContext('2d')
-          
-          if (tempCtx) {
-            tempCtx.drawImage(img, 0, 0)
-            const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height)
-            const pixels = imageData.data
-            
-            // Check if all pixels are white
-            let isAllWhite = true
-            for (let i = 0; i < pixels.length; i += 4) {
-              // Check RGB values (ignore alpha)
-              if (pixels[i] !== 255 || pixels[i + 1] !== 255 || pixels[i + 2] !== 255) {
-                isAllWhite = false
-                break
-              }
-            }
-            
-            if (isAllWhite) {
-              console.log('[ThumbnailGenerator] Canvas is empty (all white), skipping thumbnail update')
-              return
-            }
-          }
-          const maxWidth = 400
-          const scale = Math.min(1, maxWidth / img.width)
-          const width = img.width * scale
-          const height = img.height * scale
-
-          // Create a small canvas for the thumbnail
-          const thumbnailCanvas = document.createElement('canvas')
-          thumbnailCanvas.width = width
-          thumbnailCanvas.height = height
-          const ctx = thumbnailCanvas.getContext('2d')
-          
-          if (ctx) {
-            // Draw white background
-            ctx.fillStyle = 'white'
-            ctx.fillRect(0, 0, width, height)
-            
-            // Draw the image
-            ctx.drawImage(img, 0, 0, width, height)
-            
-            // Get the thumbnail data URL (JPEG for smaller size)
-            const thumbnailData = thumbnailCanvas.toDataURL('image/jpeg', 0.8)
-            
-            // Update only if changed
-            if (thumbnailData !== lastThumbnailRef.current) {
-              lastThumbnailRef.current = thumbnailData
-              
-              // Update the thumbnail in the database
-              await updateThumbnail({
-                sessionId,
-                thumbnailUrl: thumbnailData,
-                guestKey: getGuestKey(sessionId) || undefined
-              })
-              console.log('[ThumbnailGenerator] Thumbnail updated successfully')
-            }
-          }
-        }
-        img.src = imageData
-      } catch (error) {
-        console.error('[ThumbnailGenerator] Error generating thumbnail:', error)
+  const generateThumbnail = useCallback(
+    async (skipBlank: boolean) => {
+      if (!sessionId || !canvasRef.current) return
+      if (inFlightRef.current) {
+        pendingSkipBlankRef.current =
+          pendingSkipBlankRef.current === null
+            ? skipBlank
+            : pendingSkipBlankRef.current && skipBlank
+        return inFlightRef.current
       }
-    }
 
-    // Delay initial thumbnail generation to allow strokes to load
-    const initialTimer = setTimeout(() => {
-      console.log('[ThumbnailGenerator] Initial thumbnail generation after delay')
-      generateThumbnail()
-    }, 3000) // 3 second delay for initial load
+      const targetSessionId = sessionId
+      pendingSkipBlankRef.current = null
+      let task: Promise<void>
+      task = Promise.resolve().then(async () => {
+        let nextSkipBlank = skipBlank
 
-    // Set up interval for periodic updates
-    intervalRef.current = setInterval(generateThumbnail, interval)
+        try {
+          while (activeSessionRef.current === targetSessionId) {
+            try {
+              const capture = canvasRef.current?.captureContent('thumbnail')
+              if (capture && capture.dataUrl !== lastThumbnailRef.current) {
+                const shouldSkip = nextSkipBlank && (await isAllWhiteThumbnail(capture.dataUrl))
+                if (!shouldSkip && activeSessionRef.current === targetSessionId) {
+                  await updateThumbnail({
+                    sessionId: targetSessionId,
+                    thumbnailUrl: capture.dataUrl,
+                    guestKey: getGuestKey(targetSessionId) || undefined,
+                  })
+
+                  if (activeSessionRef.current === targetSessionId) {
+                    lastThumbnailRef.current = capture.dataUrl
+                  }
+                }
+              }
+            } catch (error) {
+              console.error('[ThumbnailGenerator] Error generating thumbnail:', error)
+            }
+
+            if (activeSessionRef.current !== targetSessionId) return
+
+            const pendingSkipBlank = pendingSkipBlankRef.current
+            if (pendingSkipBlank === null) return
+            pendingSkipBlankRef.current = null
+            nextSkipBlank = pendingSkipBlank
+          }
+        } finally {
+          if (inFlightRef.current === task) {
+            inFlightRef.current = null
+          }
+        }
+      })
+
+      inFlightRef.current = task
+      await task
+    },
+    [canvasRef, sessionId, updateThumbnail]
+  )
+
+  useEffect(() => {
+    if (!enabled || !sessionId) return
+
+    const initialTimer = window.setTimeout(() => {
+      void generateThumbnail(true)
+    }, 3000)
+    const intervalTimer = window.setInterval(() => {
+      void generateThumbnail(true)
+    }, interval)
 
     return () => {
-      clearTimeout(initialTimer)
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current)
-      }
+      window.clearTimeout(initialTimer)
+      window.clearInterval(intervalTimer)
     }
-  }, [sessionId, canvasRef, interval, enabled, updateThumbnail])
+  }, [enabled, generateThumbnail, interval, sessionId])
 
-  // Manual trigger for thumbnail generation (e.g., on significant changes)
-  const generateNow = async () => {
-    if (!sessionId || !canvasRef.current) return
-
-    try {
-      const imageData = canvasRef.current?.getImageData?.()
-      if (!imageData) return
-
-      // Same thumbnail generation logic as above
-      const img = new Image()
-      img.onload = async () => {
-        const maxWidth = 400
-        const scale = Math.min(1, maxWidth / img.width)
-        const width = img.width * scale
-        const height = img.height * scale
-
-        const thumbnailCanvas = document.createElement('canvas')
-        thumbnailCanvas.width = width
-        thumbnailCanvas.height = height
-        const ctx = thumbnailCanvas.getContext('2d')
-        
-        if (ctx) {
-          ctx.fillStyle = 'white'
-          ctx.fillRect(0, 0, width, height)
-          ctx.drawImage(img, 0, 0, width, height)
-          
-          const thumbnailData = thumbnailCanvas.toDataURL('image/jpeg', 0.8)
-          lastThumbnailRef.current = thumbnailData
-          
-          await updateThumbnail({
-            sessionId,
-            thumbnailUrl: thumbnailData,
-            guestKey: getGuestKey(sessionId) || undefined
-          })
-        }
-      }
-      img.src = imageData
-    } catch (error) {
-      console.error('[ThumbnailGenerator] Error generating thumbnail:', error)
-    }
-  }
+  const generateNow = useCallback(() => generateThumbnail(false), [generateThumbnail])
 
   return { generateNow }
 }

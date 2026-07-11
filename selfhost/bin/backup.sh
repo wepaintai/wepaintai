@@ -25,6 +25,28 @@ corepack pnpm exec convex export \
   --include-file-storage \
   --path "$BACKUP_DIR/wepaintai-$STAMP.zip"
 
+# Current self-hosted Convex builds retain hundreds of MiB of anonymous memory
+# after each file-storage export (get-convex/convex-backend#435). Recycle the
+# backend only after the backup is safely downloaded. This causes a few seconds
+# of API unavailability during the nightly maintenance window.
+if [ "${RESTART_CONVEX_AFTER_BACKUP:-true}" = "true" ]; then
+  cd "$REPO_DIR"
+  docker compose -f selfhost/docker-compose.yml restart backend
+  healthy=""
+  for _ in $(seq 1 60); do
+    if curl -fsS http://127.0.0.1:3210/version >/dev/null \
+      && curl -fsS http://127.0.0.1:3211/health >/dev/null; then
+      healthy=1
+      break
+    fi
+    sleep 1
+  done
+  if [ -z "$healthy" ]; then
+    echo "Backup succeeded, but Convex did not recover after restart" >&2
+    exit 1
+  fi
+fi
+
 # Prune: keep the most recent $KEEP backups
 ls -1t "$BACKUP_DIR"/wepaintai-*.zip 2>/dev/null | tail -n +$((KEEP + 1)) | xargs rm -f --
 

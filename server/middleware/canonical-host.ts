@@ -1,11 +1,10 @@
 import { defineEventHandler, getRequestHost, redirect } from 'nitro/h3'
 
 /**
- * Redirect the apex domain to the canonical app host. Auth only trusts
- * SITE_URL (https://app.wepaint.ai): sign-in from https://wepaint.ai fails
- * Better Auth's origin check, and the OAuth session cookie would land on the
- * wrong host anyway. The Cloudflare tunnel routes the apex to this same node
- * server, so canonicalize here.
+ * Redirect the apex domain to the canonical app host. The apex is not a
+ * trusted auth origin, and its host-only OAuth session cookie would land on
+ * the wrong host anyway. The Cloudflare tunnel routes the apex to this same
+ * node server, so canonicalize here.
  */
 export default defineEventHandler((event) => {
   const host = getRequestHost(event, { xForwardedHost: true })

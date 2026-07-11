@@ -38,9 +38,9 @@ export const createCheckout = action({
       throw new Error('Polar API key not configured')
     }
 
-    const siteUrl = process.env.SITE_URL?.replace(/\/$/, '')
-    if (!siteUrl) {
-      throw new Error('SITE_URL not configured')
+    const appUrl = (process.env.APP_URL || process.env.SITE_URL)?.replace(/\/$/, '')
+    if (!appUrl) {
+      throw new Error('APP_URL or SITE_URL not configured')
     }
 
     const polarApiBaseUrl = process.env.POLAR_API_BASE_URL || 'https://sandbox-api.polar.sh'
@@ -58,8 +58,8 @@ export const createCheckout = action({
           external_customer_id: externalCustomerId,
           customer_email: user.email,
           allow_discount_codes: false,
-          success_url: `${siteUrl}?purchase=success&checkout_id={CHECKOUT_ID}`,
-          return_url: `${siteUrl}?purchase=cancelled`,
+          success_url: `${appUrl}?purchase=success&checkout_id={CHECKOUT_ID}`,
+          return_url: `${appUrl}?purchase=cancelled`,
         }),
       })
 
