@@ -30,6 +30,7 @@ import {
 } from 'lucide-react'
 import { AuthModal } from './AuthModal'
 import { LibraryModal } from './LibraryModal'
+import { GuestRecentModal } from './GuestRecentModal'
 import { BrushSettingsModal, type BrushSettings } from './BrushSettingsModal'
 import { useAuthState } from '../lib/auth-client'
 import { useLibrary } from '../hooks/useLibrary'
@@ -667,6 +668,7 @@ export function ToolPanel({
   const [isCollapsed, setIsCollapsed] = React.useState(false)
   const [showMenu, setShowMenu] = React.useState(false)
   const [showAuthModal, setShowAuthModal] = React.useState(false)
+  const [showGuestRecent, setShowGuestRecent] = React.useState(false)
   const [menuPosition, setMenuPosition] = React.useState({ x: 0, y: 0 })
   const [activeTab, setActiveTab] = React.useState<TabId>('tools')
   // Detachable tabs state: when a tab is detached, it won't render in the toolbox
@@ -1335,7 +1337,18 @@ export function ToolPanel({
               <Library className="w-4 h-4" />
               Library
             </button>
-          ) : null}
+          ) : (
+            <button
+              className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors flex items-center gap-2"
+              onClick={() => {
+                setShowMenu(false)
+                setShowGuestRecent(true)
+              }}
+            >
+              <Library className="w-4 h-4" />
+              Recent
+            </button>
+          )}
           <div className="border-t border-white/20 my-1" />
           {/* <button
             className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-white/20 transition-colors"
@@ -1475,6 +1488,10 @@ export function ToolPanel({
         isOpen={isLibraryModalOpen}
         onClose={closeLibrary}
         onCreateNew={startNewCanvas}
+      />
+      <GuestRecentModal
+        isOpen={showGuestRecent}
+        onClose={() => setShowGuestRecent(false)}
       />
       {showShareModal && sessionId && (
         <ShareModal isOpen={showShareModal} onClose={() => setShowShareModal(false)} sessionId={sessionId} />

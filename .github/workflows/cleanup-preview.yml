@@ -1,13 +1,13 @@
 name: Remove PR preview
 
-# Tears down the preview server, build, and Caddy route on the Mac mini when
-# a PR closes (merged or not). Deliberately checks nothing out: it only runs
-# the remover script that deploy-preview.sh installed on the mini.
 on:
-  pull_request:
+  # Run from the trusted default-branch workflow so cleanup still starts when
+  # the PR head branch is deleted immediately after close.
+  pull_request_target:
     types: [closed]
 
 permissions:
+  actions: write
   contents: read
 
 jobs:
@@ -15,11 +15,24 @@ jobs:
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, mini]
     steps:
-      - name: Tear down preview
+      - name: Tear down preview and release pool slot
+        env:
+          PR: ${{ github.event.pull_request.number }}
         run: |
           SCRIPT="$HOME/apps/wepaintai-previews/bin/remove-preview.sh"
           if [ -x "$SCRIPT" ]; then
-            "$SCRIPT" "${{ github.event.number }}"
+            "$SCRIPT" "$PR"
           else
             echo "No remover installed on this machine; nothing to do."
           fi
+
+      - name: Start the oldest queued preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          QUEUE="$HOME/apps/wepaintai-previews/queue"
+          [ -d "$QUEUE" ] || exit 0
+          NEXT_FILE=$(find "$QUEUE" -type f -name 'pr-*' -print0 | xargs -0 stat -f '%m %N' 2>/dev/null | sort -n | head -1 | cut -d' ' -f2-)
+          [ -n "$NEXT_FILE" ] || exit 0
+          NEXT_PR=${NEXT_FILE##*/pr-}
+          gh workflow run deploy-preview.yml -f pr="$NEXT_PR"

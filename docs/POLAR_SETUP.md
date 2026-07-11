@@ -78,11 +78,22 @@ currency. Discount codes are disabled for these checkout sessions.
 
 ## Webhook Security
 
-The webhook handler verifies signatures to ensure requests are from Polar:
+The webhook handler uses Polar SDK's supported event verifier before running any
+purchase logic:
 
-- In production (when `POLAR_WEBHOOK_SECRET` is set), all webhook requests are verified
-- Invalid signatures return a 401 Unauthorized response
-- The signature is verified using HMAC-SHA256
+- `POLAR_WEBHOOK_SECRET` is required in every Convex deployment. If it is
+  missing or blank, all deliveries fail closed with `401 Unauthorized`.
+- Set the exact value issued by Polar for that webhook endpoint. Do not add or
+  remove a prefix and do not base64-decode it.
+- Sandbox and production webhook endpoints have separate secrets; configure the
+  matching value in each Convex deployment.
+- Signature and timestamp verification follows Standard Webhooks with a
+  five-minute timestamp tolerance. Expired, future-dated, missing-header, and
+  invalid-signature deliveries return a generic 401 before business logic.
+- Signed events that do not match Polar's event schema return a generic 400.
+  Transient processing failures return 500 so Polar can retry the delivery.
+- Do not log webhook secrets, signatures, authorization/request headers, or
+  event payloads while troubleshooting.
 
 ## Troubleshooting
 

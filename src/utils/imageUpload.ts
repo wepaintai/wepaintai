@@ -5,7 +5,7 @@ export const ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/gi
 
 export interface ImageUploadOptions {
   sessionId: Id<"paintingSessions">
-  userId?: Id<"users"> | null
+  guestKey?: string
   canvasWidth?: number
   canvasHeight?: number
   onImageUploaded?: (imageId: Id<"uploadedImages">) => void
@@ -15,6 +15,20 @@ export interface ImageUploadResult {
   success: boolean
   error?: string
   imageId?: Id<"uploadedImages">
+}
+
+interface UploadImageMutationArgs {
+  sessionId: Id<"paintingSessions">
+  storageId: Id<"_storage">
+  filename: string
+  mimeType: string
+  width: number
+  height: number
+  x: number
+  y: number
+  canvasWidth?: number
+  canvasHeight?: number
+  guestKey?: string
 }
 
 export function validateImageFile(file: File): { valid: boolean; error?: string } {
@@ -110,10 +124,13 @@ export function resizeImageToFitCanvas(
 export async function uploadImageFile(
   file: File,
   options: ImageUploadOptions,
-  generateUploadUrl: () => Promise<string>,
-  uploadImage: (args: any) => Promise<Id<"uploadedImages">>
+  generateUploadUrl: (args: {
+    sessionId: Id<"paintingSessions">
+    guestKey?: string
+  }) => Promise<string>,
+  uploadImage: (args: UploadImageMutationArgs) => Promise<Id<"uploadedImages">>
 ): Promise<ImageUploadResult> {
-  const { sessionId, userId, canvasWidth = 800, canvasHeight = 600, onImageUploaded } = options
+  const { sessionId, guestKey, canvasWidth = 800, canvasHeight = 600, onImageUploaded } = options
 
   try {
     // Validate file
@@ -126,11 +143,11 @@ export async function uploadImageFile(
     const originalDimensions = await getImageDimensions(file)
     
     // Preserve original resolution: always upload the original file and record its natural dimensions
-    let fileToUpload: File | Blob = file
-    let finalDimensions = originalDimensions
+    const fileToUpload: File | Blob = file
+    const finalDimensions = originalDimensions
     
     // Generate upload URL
-    const uploadUrl = await generateUploadUrl()
+    const uploadUrl = await generateUploadUrl({ sessionId, guestKey })
     
     // Upload to Convex storage
     const response = await fetch(uploadUrl, {
@@ -143,14 +160,14 @@ export async function uploadImageFile(
       throw new Error('Failed to upload file')
     }
 
-    const { storageId } = await response.json()
+    const { storageId } = await response.json() as { storageId: Id<"_storage"> }
 
     // Center the image on the canvas
     const x = canvasWidth / 2
     const y = canvasHeight / 2
 
     // Create image record
-    const uploadArgs: any = {
+    const uploadArgs: UploadImageMutationArgs = {
       sessionId,
       storageId,
       filename: file.name,
@@ -161,11 +178,7 @@ export async function uploadImageFile(
       y,
       canvasWidth,
       canvasHeight,
-    }
-    
-    // Only include userId if it's defined and not null
-    if (userId) {
-      uploadArgs.userId = userId
+      guestKey,
     }
     
     const imageId = await uploadImage(uploadArgs)

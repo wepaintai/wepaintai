@@ -68,6 +68,56 @@ export function clearCurrentGuestSession() {
   } catch {}
 }
 
+// Recent sessions this browser has opened as a guest, newest first. Gives
+// guests (who have no Library) a way back to past paintings after starting
+// a new canvas or losing the URL.
+export const RECENT_GUEST_SESSIONS_STORAGE = 'wepaint_recent_sessions_v1'
+const RECENT_GUEST_SESSIONS_MAX = 15
+
+export interface RecentGuestSession {
+  sessionId: string
+  name?: string
+  lastOpened: number
+}
+
+export function getRecentGuestSessions(): RecentGuestSession[] {
+  if (typeof window === 'undefined') return []
+  try {
+    const raw = window.localStorage.getItem(RECENT_GUEST_SESSIONS_STORAGE)
+    const list = raw ? JSON.parse(raw) : []
+    if (!Array.isArray(list)) return []
+    return list.filter(
+      (e): e is RecentGuestSession => !!e && typeof e.sessionId === 'string' && typeof e.lastOpened === 'number'
+    )
+  } catch {
+    return []
+  }
+}
+
+export function touchRecentGuestSession(sessionId: string, name?: string) {
+  if (typeof window === 'undefined') return
+  try {
+    const list = getRecentGuestSessions()
+    const prev = list.find(e => e.sessionId === sessionId)
+    const existing = list.filter(e => e.sessionId !== sessionId)
+    const entry: RecentGuestSession = {
+      sessionId,
+      name: name ?? prev?.name,
+      lastOpened: Date.now(),
+    }
+    const next = [entry, ...existing].slice(0, RECENT_GUEST_SESSIONS_MAX)
+    window.localStorage.setItem(RECENT_GUEST_SESSIONS_STORAGE, JSON.stringify(next))
+  } catch {}
+}
+
+export function removeRecentGuestSession(sessionId: string) {
+  if (typeof window === 'undefined') return
+  try {
+    const next = getRecentGuestSessions().filter(e => e.sessionId !== sessionId)
+    window.localStorage.setItem(RECENT_GUEST_SESSIONS_STORAGE, JSON.stringify(next))
+  } catch {}
+}
+
 // Stable per-browser client id, used to identify guests in presence records
 // (guests have no userId, so without this they'd all collide on one record).
 export const CLIENT_ID_STORAGE = 'wepaint_client_id_v1'

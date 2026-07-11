@@ -1,7 +1,8 @@
-import { mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { createUserWithWelcomeTokens } from "./users";
+import { assertCanModifySession } from "./sessionAuth";
 
 /**
  * Create a new painting session
@@ -104,6 +105,7 @@ const sessionObjectValidator = v.object({
   lastAction: v.optional(v.string()),
   lastClearBatchId: v.optional(v.string()),
   aiPrompts: v.optional(v.array(v.string())),
+  deletedAt: v.optional(v.number()),
 });
 
 /**
@@ -139,7 +141,9 @@ export const getSession = query({
     if (!sessionId) return { status: "not_found" as const };
 
     const session = await ctx.db.get(sessionId);
-    if (!session) return { status: "not_found" as const };
+    // Soft-deleted sessions look identical to nonexistent ones so shared
+    // links show the not-found state rather than leaking that it existed.
+    if (!session || session.deletedAt !== undefined) return { status: "not_found" as const };
 
     if (session.isPublic) return { status: "ok" as const, session: sanitizeSession(session) };
 
@@ -166,33 +170,16 @@ export const getSession = query({
  */
 export const listRecentSessions = query({
   args: {},
-  returns: v.array(v.object({
-    _id: v.id("paintingSessions"),
-    _creationTime: v.number(),
-    name: v.optional(v.string()),
-    createdBy: v.optional(v.id("users")),
-    hasGuestOwner: v.boolean(),
-    isPublic: v.boolean(),
-    canvasWidth: v.number(),
-    canvasHeight: v.number(),
-    strokeCounter: v.number(),
-    paintLayerOrder: v.optional(v.number()),
-    paintLayerVisible: v.optional(v.boolean()),
-    backgroundImage: v.optional(v.string()),
-    thumbnailUrl: v.optional(v.string()),
-    lastModified: v.optional(v.number()),
-    recentStrokeOrders: v.optional(v.array(v.number())),
-    recentStrokeIds: v.optional(v.array(v.id("strokes"))),
-    deletedStrokeCount: v.optional(v.number()),
-    lastDeletedStrokeOrder: v.optional(v.number()),
-    lastAction: v.optional(v.string()),
-    lastClearBatchId: v.optional(v.string()),
-    aiPrompts: v.optional(v.array(v.string())),
-  })),
+  returns: v.array(sessionObjectValidator),
   handler: async (ctx) => {
     const sessions = await ctx.db
       .query("paintingSessions")
-      .filter((q) => q.eq(q.field("isPublic"), true))
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("isPublic"), true),
+          q.eq(q.field("deletedAt"), undefined),
+        ),
+      )
       .order("desc")
       .take(20);
     return sessions.map(sanitizeSession);
@@ -204,29 +191,7 @@ export const listRecentSessions = query({
  */
 export const getUserSessions = query({
   args: {},
-  returns: v.array(v.object({
-    _id: v.id("paintingSessions"),
-    _creationTime: v.number(),
-    name: v.optional(v.string()),
-    createdBy: v.optional(v.id("users")),
-    hasGuestOwner: v.boolean(),
-    isPublic: v.boolean(),
-    canvasWidth: v.number(),
-    canvasHeight: v.number(),
-    strokeCounter: v.number(),
-    paintLayerOrder: v.optional(v.number()),
-    paintLayerVisible: v.optional(v.boolean()),
-    backgroundImage: v.optional(v.string()),
-    thumbnailUrl: v.optional(v.string()),
-    lastModified: v.optional(v.number()),
-    recentStrokeOrders: v.optional(v.array(v.number())),
-    recentStrokeIds: v.optional(v.array(v.id("strokes"))),
-    deletedStrokeCount: v.optional(v.number()),
-    lastDeletedStrokeOrder: v.optional(v.number()),
-    lastAction: v.optional(v.string()),
-    lastClearBatchId: v.optional(v.string()),
-    aiPrompts: v.optional(v.array(v.string())),
-  })),
+  returns: v.array(sessionObjectValidator),
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) {
@@ -243,49 +208,18 @@ export const getUserSessions = query({
       return [];
     }
 
-    // Collect sessionIds associated with this user through ownership or contributions
-    const sessionIdSet = new Set<Id<"paintingSessions">>();
-
-    // 1) Owned sessions (indexed — avoids scanning every session doc,
-    // which blows the 16MB read limit because thumbnails are stored inline)
+    // Owned sessions only. Contributions to another user's canvas do not
+    // grant ownership and must not expose that canvas in My Library.
+    // The index avoids scanning every session doc, which is especially
+    // important while thumbnails are stored inline.
     const ownedSessions = await ctx.db
       .query("paintingSessions")
       .withIndex("by_creator", (q) => q.eq("createdBy", user._id))
       .order("desc")
       .collect();
-    ownedSessions.forEach((s) => sessionIdSet.add(s._id));
-
-    // 2-4) Sessions contributed to. Stroke docs carry full point arrays, so
-    // reads must stay bounded: only the most recent contributions are
-    // considered. Older contributed-to sessions won't appear unless owned.
-    const userStrokes = await ctx.db
-      .query("strokes")
-      .withIndex("by_user", (q) => q.eq("userId", user._id))
-      .order("desc")
-      .take(300);
-    userStrokes.forEach((st) => sessionIdSet.add(st.sessionId));
-
-    const userUploads = await ctx.db
-      .query("uploadedImages")
-      .withIndex("by_user", (q) => q.eq("userId", user._id))
-      .order("desc")
-      .take(200);
-    userUploads.forEach((img) => sessionIdSet.add(img.sessionId));
-
-    const userLayers = await ctx.db
-      .query("paintLayers")
-      .withIndex("by_user", (q) => q.eq("createdBy", user._id))
-      .order("desc")
-      .take(200);
-    userLayers.forEach((pl) => sessionIdSet.add(pl.sessionId));
-
-    // Fetch session docs for all collected IDs
-    const sessions: Array<Doc<"paintingSessions">> = [];
-
-    for (const sessionId of sessionIdSet) {
-      const session = await ctx.db.get(sessionId);
-      if (session) sessions.push(session);
-    }
+    const sessions = ownedSessions.filter(
+      (session) => session.deletedAt === undefined,
+    );
 
     // Sort by lastModified (fallback to creation time), desc
     sessions.sort((a, b) => {
@@ -335,7 +269,11 @@ export const updateSessionName = mutation({
 });
 
 /**
- * Delete a session (soft delete by marking as deleted)
+ * Delete a session (soft delete by marking as deleted).
+ *
+ * The session and its data stay in the database for a grace window so the
+ * owner can restore it (see restoreSession); a cron hard-deletes expired
+ * sessions and their associated documents (see purgeDeletedSessions).
  */
 export const deleteSession = mutation({
   args: {
@@ -348,7 +286,7 @@ export const deleteSession = mutation({
     }
 
     const session = await ctx.db.get(args.sessionId);
-    if (!session) {
+    if (!session || session.deletedAt !== undefined) {
       throw new Error("Session not found");
     }
 
@@ -363,8 +301,115 @@ export const deleteSession = mutation({
       throw new Error("You can only delete your own sessions");
     }
 
-    // For now, we'll do a hard delete. In the future, we might want to add a "deleted" field
-    await ctx.db.delete(args.sessionId);
+    await ctx.db.patch(args.sessionId, { deletedAt: Date.now() });
+  },
+});
+
+/**
+ * Restore a soft-deleted session (owner only). Only possible until the
+ * purge cron hard-deletes it after the grace window.
+ */
+export const restoreSession = mutation({
+  args: {
+    sessionId: v.id("paintingSessions"),
+  },
+  returns: v.union(v.literal("restored"), v.literal("not_found")),
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Must be logged in to restore sessions");
+    }
+
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) return "not_found";
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
+      .first();
+    if (!user || session.createdBy !== user._id) {
+      throw new Error("You can only restore your own sessions");
+    }
+
+    if (session.deletedAt === undefined) return "restored"; // already live
+    await ctx.db.patch(args.sessionId, { deletedAt: undefined });
+    return "restored";
+  },
+});
+
+// Soft-deleted sessions are restorable for this long before the purge cron
+// hard-deletes them and their associated documents.
+const DELETED_SESSION_GRACE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const PURGE_SESSIONS_PER_RUN = 5;
+const PURGE_DOCS_PER_TABLE = 200;
+
+/**
+ * Hard-delete sessions whose grace window has expired, along with their
+ * associated documents and storage files. Reads/writes are bounded per run;
+ * a session with more documents than the per-table cap is drained across
+ * successive runs and its own doc is only deleted once everything else is
+ * gone (so no orphans are left behind).
+ */
+export const purgeDeletedSessions = internalMutation({
+  args: {},
+  returns: v.null(),
+  handler: async (ctx) => {
+    const cutoff = Date.now() - DELETED_SESSION_GRACE_MS;
+    const expired = await ctx.db
+      .query("paintingSessions")
+      .withIndex("by_deleted", (q) => q.gt("deletedAt", 0).lt("deletedAt", cutoff))
+      .take(PURGE_SESSIONS_PER_RUN);
+
+    for (const session of expired) {
+      let drained = true;
+
+      // Uploaded images carry storage files that must be deleted too
+      const uploads = await ctx.db
+        .query("uploadedImages")
+        .withIndex("by_session", (q) => q.eq("sessionId", session._id))
+        .take(PURGE_DOCS_PER_TABLE);
+      for (const doc of uploads) {
+        await ctx.storage.delete(doc.storageId).catch(() => {});
+        await ctx.db.delete(doc._id);
+      }
+      if (uploads.length === PURGE_DOCS_PER_TABLE) drained = false;
+
+      // AI generation records may reference stored snapshots/results
+      const generations = await ctx.db
+        .query("aiGenerations")
+        .withIndex("by_session", (q) => q.eq("sessionId", session._id))
+        .take(PURGE_DOCS_PER_TABLE);
+      for (const doc of generations) {
+        if (doc.canvasSnapshotId) await ctx.storage.delete(doc.canvasSnapshotId).catch(() => {});
+        if (doc.generatedImageId) await ctx.storage.delete(doc.generatedImageId).catch(() => {});
+        await ctx.db.delete(doc._id);
+      }
+      if (generations.length === PURGE_DOCS_PER_TABLE) drained = false;
+
+      // Remaining tables keyed by sessionId (no storage references)
+      const sessionQueries = [
+        ctx.db.query("strokes").withIndex("by_session", (q) => q.eq("sessionId", session._id)),
+        ctx.db.query("deletedStrokes").withIndex("by_session_deleted", (q) => q.eq("sessionId", session._id)),
+        ctx.db.query("liveStrokes").withIndex("by_session", (q) => q.eq("sessionId", session._id)),
+        ctx.db.query("userPresence").withIndex("by_session", (q) => q.eq("sessionId", session._id)),
+        ctx.db.query("viewerStates").withIndex("by_session_viewer", (q) => q.eq("sessionId", session._id)),
+        ctx.db.query("webrtcSignals").withIndex("by_session_to", (q) => q.eq("sessionId", session._id)),
+        ctx.db.query("paintLayers").withIndex("by_session", (q) => q.eq("sessionId", session._id)),
+        ctx.db.query("aiGeneratedImages").withIndex("by_session", (q) => q.eq("sessionId", session._id)),
+        ctx.db.query("imageMerges").withIndex("by_session", (q) => q.eq("sessionId", session._id)),
+      ];
+      for (const query of sessionQueries) {
+        const docs = await query.take(PURGE_DOCS_PER_TABLE);
+        for (const doc of docs) await ctx.db.delete(doc._id);
+        if (docs.length === PURGE_DOCS_PER_TABLE) drained = false;
+      }
+
+      if (drained) {
+        await ctx.db.delete(session._id);
+        console.log("[purgeDeletedSessions] Hard-deleted session", session._id);
+      }
+    }
+    return null;
   },
 });
 
@@ -375,12 +420,15 @@ export const updateSessionThumbnail = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
     thumbnailUrl: v.string(),
+    guestKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
     if (!session) {
       throw new Error("Session not found");
     }
+
+    await assertCanModifySession(ctx, session, args.guestKey);
 
     await ctx.db.patch(args.sessionId, {
       thumbnailUrl: args.thumbnailUrl,

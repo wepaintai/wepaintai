@@ -1,5 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { assertCanModifySession } from "./sessionAuth";
 
 // Query to get all paint layers for a session
 export const getPaintLayers = query({
@@ -30,30 +31,42 @@ export const getPaintLayers = query({
   },
 });
 
-// Query to get a single paint layer
-export const getPaintLayer = query({
-  args: { layerId: v.id("paintLayers") },
-  handler: async (ctx, args) => {
-    return await ctx.db.get(args.layerId);
-  },
-});
-
 // Mutation to create a new paint layer
 export const createPaintLayer = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
     name: v.string(),
+    guestKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    // Get the highest layer order to put new layer on top
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) throw new Error("Session not found");
+    await assertCanModifySession(ctx, session, args.guestKey);
+
+    // Get the highest layer order across ALL layer types (paint, uploaded, AI)
+    // so the new layer lands on top of images too, not just other paint layers
     const existingLayers = await ctx.db
       .query("paintLayers")
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
       .collect();
-    
-    const maxOrder = existingLayers.reduce((max, layer) => 
+    const uploadedImages = await ctx.db
+      .query("uploadedImages")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+    const aiImages = await ctx.db
+      .query("aiGeneratedImages")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+
+    let maxOrder = existingLayers.reduce((max, layer) =>
       Math.max(max, layer.layerOrder), -1
     );
+    uploadedImages.forEach(img => {
+      maxOrder = Math.max(maxOrder, img.layerOrder);
+    });
+    aiImages.forEach(img => {
+      maxOrder = Math.max(maxOrder, img.layerOrder);
+    });
     
     // Create the new paint layer
     const layerId = await ctx.db.insert("paintLayers", {
@@ -86,9 +99,16 @@ export const updatePaintLayer = mutation({
     scaleX: v.optional(v.number()),
     scaleY: v.optional(v.number()),
     rotation: v.optional(v.number()),
+    guestKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const { layerId, ...updates } = args;
+    const layer = await ctx.db.get(args.layerId);
+    if (!layer) throw new Error("Layer not found");
+    const session = await ctx.db.get(layer.sessionId);
+    if (!session) throw new Error("Session not found");
+    await assertCanModifySession(ctx, session, args.guestKey);
+
+    const { layerId, guestKey: _guestKey, ...updates } = args;
     
     // Remove undefined values
     const cleanUpdates: any = Object.fromEntries(
@@ -121,9 +141,16 @@ export const updatePaintLayerTransform = mutation({
     scaleY: v.optional(v.number()),
     rotation: v.optional(v.number()),
     opacity: v.optional(v.number()),
+    guestKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const { layerId, ...updates } = args;
+    const layer = await ctx.db.get(args.layerId);
+    if (!layer) throw new Error("Layer not found");
+    const session = await ctx.db.get(layer.sessionId);
+    if (!session) throw new Error("Session not found");
+    await assertCanModifySession(ctx, session, args.guestKey);
+
+    const { layerId, guestKey: _guestKey, ...updates } = args;
     const updateFields: any = {};
     if (updates.x !== undefined) updateFields.x = updates.x;
     if (updates.y !== undefined) updateFields.y = updates.y;
@@ -147,6 +174,7 @@ export const updatePaintLayerTransform = mutation({
 export const deletePaintLayer = mutation({
   args: {
     layerId: v.id("paintLayers"),
+    guestKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     // Get the layer to delete
@@ -154,6 +182,9 @@ export const deletePaintLayer = mutation({
     if (!layer) {
       throw new Error("Layer not found");
     }
+    const session = await ctx.db.get(layer.sessionId);
+    if (!session) throw new Error("Session not found");
+    await assertCanModifySession(ctx, session, args.guestKey);
     
     // Check if this is the last paint layer
     const allPaintLayers = await ctx.db
@@ -203,12 +234,16 @@ export const reorderPaintLayer = mutation({
   args: {
     layerId: v.id("paintLayers"),
     newOrder: v.number(),
+    guestKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const layer = await ctx.db.get(args.layerId);
     if (!layer) {
       throw new Error("Layer not found");
     }
+    const session = await ctx.db.get(layer.sessionId);
+    if (!session) throw new Error("Session not found");
+    await assertCanModifySession(ctx, session, args.guestKey);
     
     const oldOrder = layer.layerOrder;
     if (oldOrder === args.newOrder) {
@@ -245,6 +280,7 @@ export const mergePaintLayers = mutation({
   args: {
     sourceLayerId: v.id("paintLayers"),
     targetLayerId: v.id("paintLayers"),
+    guestKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     if (args.sourceLayerId === args.targetLayerId) {
@@ -262,6 +298,9 @@ export const mergePaintLayers = mutation({
     if (sourceLayer.sessionId !== targetLayer.sessionId) {
       throw new Error("Layers must belong to the same session");
     }
+    const session = await ctx.db.get(sourceLayer.sessionId);
+    if (!session) throw new Error("Session not found");
+    await assertCanModifySession(ctx, session, args.guestKey);
     
     // Get all strokes from source layer
     const sourceStrokes = await ctx.db
@@ -299,8 +338,15 @@ export const mergePaintLayers = mutation({
 
 // Mutation to ensure a default paint layer exists for a session
 export const ensureDefaultPaintLayer = mutation({
-  args: { sessionId: v.id("paintingSessions") },
+  args: {
+    sessionId: v.id("paintingSessions"),
+    guestKey: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) throw new Error("Session not found");
+    await assertCanModifySession(ctx, session, args.guestKey);
+
     // Check if any paint layers exist for this session
     const existingLayers = await ctx.db
       .query("paintLayers")

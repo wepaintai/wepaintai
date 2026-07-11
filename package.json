@@ -41,7 +41,7 @@
   },
   "scripts": {
     "dev:app": "vite dev --port 3000",
-    "dev:convex:local": "convex dev --local",
+    "dev:convex:local": "convex deployment select local && convex dev",
     "dev:convex:cloud": "convex dev --prod",
     "dev": "run-p \"dev:app\" \"dev:convex:local\"",
     "dev:cloud": "run-p \"dev:app\" \"dev:convex:cloud\"",

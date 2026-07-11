@@ -1,50 +1,93 @@
 name: Deploy PR preview
 
-# Builds the PR branch on the Mac mini's self-hosted runner and serves it at
-# https://preview-pr-<N>.wepaint.ai, pointed at the LIVE production Convex
-# backend. Frontend-only: changes under convex/ are not deployed anywhere.
 on:
   pull_request:
     types: [opened, reopened, synchronize]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number to deploy when a pool slot becomes free
+        required: true
+        type: string
 
 permissions:
   contents: read
   pull-requests: write
 
 concurrency:
-  group: preview-pr-${{ github.event.number }}
+  group: preview-pr-${{ github.event.pull_request.number || inputs.pr }}
   cancel-in-progress: true
 
 jobs:
   deploy:
-    # Same-repo branches only — fork PRs must never run on the mini.
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, mini]
+    env:
+      PR: ${{ github.event.pull_request.number || inputs.pr }}
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Build and deploy preview
-        run: ./selfhost/preview/deploy-preview.sh "${{ github.event.number }}"
-
-      - name: Comment preview URL on the PR
+      - name: Verify same-repository open PR
         env:
           GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.number }}
         run: |
-          export PATH="/opt/homebrew/bin:$PATH"
+          HEAD_REPO=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq .head.repo.full_name)
+          STATE=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq .state)
+          test "$HEAD_REPO" = "$GITHUB_REPOSITORY"
+          test "$STATE" = "open"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ github.event.pull_request.number || inputs.pr }}/head
+
+      - name: Build and deploy full-stack preview
+        id: deploy
+        run: |
+          LOG=$(mktemp)
+          set +e
+          ./selfhost/preview/deploy-preview.sh "$PR" 2>&1 | tee "$LOG"
+          STATUS=${PIPESTATUS[0]}
+          set -e
+
+          if [ "$STATUS" -eq 0 ]; then
+            SLOT=$(sed -n 's/.*POOL_READY slot=\([0-9][0-9]*\).*/\1/p' "$LOG" | tail -1)
+            echo "status=ready" >> "$GITHUB_OUTPUT"
+            echo "slot=$SLOT" >> "$GITHUB_OUTPUT"
+          elif [ "$STATUS" -eq 75 ]; then
+            OWNER=$(sed -n 's/.*POOL_WAITING owner_pr=\([0-9][0-9]*\).*/\1/p' "$LOG" | tail -1)
+            echo "status=waiting" >> "$GITHUB_OUTPUT"
+            echo "owner=$OWNER" >> "$GITHUB_OUTPUT"
+          else
+            exit "$STATUS"
+          fi
+
+      - name: Update preview comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATUS: ${{ steps.deploy.outputs.status }}
+          SLOT: ${{ steps.deploy.outputs.slot }}
+          OWNER: ${{ steps.deploy.outputs.owner }}
+        run: |
           MARKER="<!-- pr-preview-url -->"
           URL="https://preview-pr-$PR.wepaint.ai/"
-          BODY=$(printf '%s\n🎨 **PR preview:** %s\n\n_Frontend preview of this branch against the **live production Convex backend** — changes under `convex/` are not deployed. Google sign-in redirects to app.wepaint.ai, so use guest mode. Redeploys on every push; torn down when the PR closes._' "$MARKER" "$URL")
+          if [ "$STATUS" = "ready" ]; then
+            BODY=$(printf '%s\n🎨 **Full-stack PR preview:** %s\n\n_Isolated slot %s runs this branch\x27s frontend, Convex functions, schema, database, file storage, and Google sign-in. Preview data is disposable and the environment is torn down when the PR closes._' "$MARKER" "$URL" "$SLOT")
+          else
+            BODY=$(printf '%s\n⏳ **Full-stack preview waiting for capacity**\n\n_All preview slots are occupied (including PR #%s). This PR is queued and will deploy automatically when a slot becomes free._' "$MARKER" "$OWNER")
+          fi
           EXISTING=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --jq "[.[] | select(.body | startswith(\"$MARKER\"))][0].id // empty")
           if [ -n "$EXISTING" ]; then
             gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$EXISTING" -f body="$BODY" > /dev/null
-            echo "Updated existing preview comment on PR #$PR."
           else
             gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -f body="$BODY" > /dev/null
-            echo "Commented preview URL on PR #$PR."
           fi
 
-      - name: Add preview URL to summary
+      - name: Add preview result to summary
+        env:
+          STATUS: ${{ steps.deploy.outputs.status }}
+          SLOT: ${{ steps.deploy.outputs.slot }}
         run: |
-          echo "### 🎨 Preview deployed for PR #${{ github.event.number }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "https://preview-pr-${{ github.event.number }}.wepaint.ai/" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$STATUS" = "ready" ]; then
+            echo "### 🎨 Full-stack preview deployed in slot $SLOT" >> "$GITHUB_STEP_SUMMARY"
+            echo "https://preview-pr-$PR.wepaint.ai/" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ⏳ Preview queued; all pool slots are occupied" >> "$GITHUB_STEP_SUMMARY"
+          fi

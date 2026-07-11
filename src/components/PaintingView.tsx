@@ -6,6 +6,7 @@ import { type BrushSettings } from './BrushSettingsModal'
 import { AdminPanel } from './AdminPanel' // Import AdminPanel
 import { SessionInfo } from './SessionInfo'
 import { PresenceStrip } from './PresenceStrip'
+import { SyncStatusBanner } from './SyncStatusBanner'
 import { P2PStatus } from './P2PStatus'
 import { P2PDebugPanel } from './P2PDebugPanel'
 import { ImageUploadModal } from './ImageUploadModal'
@@ -26,7 +27,7 @@ import { useMutation, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import { useThumbnailGenerator } from '../hooks/useThumbnailGenerator'
 import { ClipboardProvider } from '../context/ClipboardContext'
-import { getCurrentGuestSession, setCurrentGuestSession, clearCurrentGuestSession, getGuestKey } from '../utils/guestKey'
+import { getCurrentGuestSession, setCurrentGuestSession, clearCurrentGuestSession, getGuestKey, touchRecentGuestSession, removeRecentGuestSession } from '../utils/guestKey'
 import { startNewCanvas } from '../utils/newCanvas'
 
 // Wrapper component for background removal modal
@@ -56,7 +57,7 @@ function BackgroundRemovalModalWrapper({
         
         setTimeout(() => {
           if (canvasRef.current) {
-            const data = canvasRef.current.getImageData() || ''
+            const data = canvasRef.current.captureContent('processing')?.dataUrl || ''
             setCanvasData(data)
             setIsLoading(false)
           }
@@ -128,7 +129,7 @@ function AIGenerationModalWrapper({
         // Wait a bit after forcing redraw
         setTimeout(() => {
           if (canvasRef.current) {
-            const data = canvasRef.current.getImageData() || ''
+            const data = canvasRef.current.captureContent('processing')?.dataUrl || ''
             const dims = canvasRef.current.getDimensions() || { width: 800, height: 600 }
             
             // console.log('[AIGenerationModalWrapper] Canvas data captured after redraw:', data.length)
@@ -140,7 +141,7 @@ function AIGenerationModalWrapper({
             if (!data || data.length === 0) {
               console.warn('[AIGenerationModalWrapper] Canvas data empty, retrying...')
               setTimeout(() => {
-                const retryData = canvasRef.current?.getImageData() || ''
+                const retryData = canvasRef.current?.captureContent('processing')?.dataUrl || ''
                 if (retryData && retryData.length > 0) {
                   // console.log('[AIGenerationModalWrapper] Retry successful:', retryData.length)
                   setCanvasData(retryData)
@@ -216,8 +217,6 @@ export function PaintingView() {
   const startCap = true
   const endCap = true
 
-  const [history, setHistory] = useState<string[]>([])
-  const [historyIndex, setHistoryIndex] = useState(-1)
   const [sessionId, setSessionId] = useState<Id<"paintingSessions"> | null>(null)
   const [showImageUpload, setShowImageUpload] = useState(false)
   const [showAIGeneration, setShowAIGeneration] = useState(false)
@@ -249,6 +248,7 @@ export function PaintingView() {
   // a malformed URL id would otherwise throw validation errors in every query.
   const sessionReady = !!sessionId && sessionStatus === 'ok'
   const validSessionId = sessionReady ? sessionId : null
+  const imageGuestKey = getGuestKey(validSessionId) || undefined
   const sessionError: 'not_found' | 'unauthorized' | null =
     sessionId && (sessionStatus === 'not_found' || sessionStatus === 'unauthorized') ? sessionStatus : null
 
@@ -269,9 +269,6 @@ export function PaintingView() {
   const aiGeneratedImages = images.filter(img => (img as any).type === 'ai-generated')
   
   // Paint layer mutations
-  const updatePaintLayerOrder = useMutation(api.paintLayer.updatePaintLayerOrder)
-  const updatePaintLayerVisibility = useMutation(api.paintLayer.updatePaintLayerVisibility)
-  
   // Thumbnail generation
   const { generateNow: generateThumbnail } = useThumbnailGenerator({
     sessionId: validSessionId || undefined,
@@ -279,10 +276,10 @@ export function PaintingView() {
     interval: 30000, // Generate thumbnail every 30 seconds
     enabled: sessionReady
   })
-  const paintLayerSettings = useQuery(api.paintLayer.getPaintLayerSettings, validSessionId ? { sessionId: validSessionId, guestKey: (typeof window !== 'undefined' ? (JSON.parse(localStorage.getItem('wepaint_guest_keys_v1') || '{}') || {})[validSessionId as any] : undefined) } : 'skip')
+  const paintLayerSettings = useQuery(api.paintLayer.getPaintLayerSettings, validSessionId ? { sessionId: validSessionId, guestKey: getGuestKey(validSessionId) || undefined } : 'skip')
 
   // Multiple paint layers support
-  const paintLayers = useQuery(api.paintLayers.getPaintLayers, validSessionId ? { sessionId: validSessionId, guestKey: (typeof window !== 'undefined' ? (JSON.parse(localStorage.getItem('wepaint_guest_keys_v1') || '{}') || {})[validSessionId as any] : undefined) } : 'skip')
+  const paintLayers = useQuery(api.paintLayers.getPaintLayers, validSessionId ? { sessionId: validSessionId, guestKey: getGuestKey(validSessionId) || undefined } : 'skip')
   const createPaintLayer = useMutation(api.paintLayers.createPaintLayer)
   const updatePaintLayer = useMutation(api.paintLayers.updatePaintLayer)
   const deletePaintLayer = useMutation(api.paintLayers.deletePaintLayer)
@@ -342,12 +339,15 @@ export function PaintingView() {
 
   // Ensure default paint layer exists
   useEffect(() => {
-    if (sessionId && paintLayers !== undefined) {
+    if (validSessionId && paintLayers !== undefined) {
       if (!paintLayers || paintLayers.length === 0) {
-        ensureDefaultPaintLayer({ sessionId })
+        ensureDefaultPaintLayer({
+          sessionId: validSessionId,
+          guestKey: getGuestKey(validSessionId) || undefined,
+        })
       }
     }
-  }, [sessionId, paintLayers, ensureDefaultPaintLayer])
+  }, [validSessionId, paintLayers, ensureDefaultPaintLayer])
 
   // Remove duplicate warming query - it's already called in usePaintingSession
 
@@ -449,12 +449,14 @@ export function PaintingView() {
     if (!sessionId || effectiveIsSignedIn) return
     if (sessionStatus === 'ok') {
       setCurrentGuestSession(sessionId)
+      touchRecentGuestSession(sessionId, session?.name)
     } else if (sessionStatus === 'not_found' || sessionStatus === 'unauthorized') {
       if (getCurrentGuestSession() === sessionId) {
         clearCurrentGuestSession()
       }
+      removeRecentGuestSession(sessionId)
     }
-  }, [sessionId, sessionStatus, effectiveIsSignedIn])
+  }, [sessionId, sessionStatus, effectiveIsSignedIn, session?.name])
 
   // Leave the broken session behind so a fresh painting is created
   const startNewPainting = useCallback(() => {
@@ -496,19 +498,9 @@ export function PaintingView() {
   useEffect(() => {
     setHasLocalStrokes(false)
     setPendingUndoStrokeIds(new Set())
-    setHistory([])
-    setHistoryIndex(-1)
   }, [sessionId])
 
   const handleStrokeEnd = () => {
-    // Save canvas state for undo/redo
-    const imageData = canvasRef.current?.getImageData()
-    if (imageData) {
-      const newHistory = history.slice(0, historyIndex + 1)
-      newHistory.push(imageData)
-      setHistory(newHistory)
-      setHistoryIndex(newHistory.length - 1)
-    }
     // Mark that we have at least one local stroke in this session
     setHasLocalStrokes(true)
     
@@ -600,8 +592,6 @@ export function PaintingView() {
   const handleClear = async () => {
     // Clear local canvas immediately for responsiveness
     canvasRef.current?.clear()
-    setHistory([])
-    setHistoryIndex(-1)
     setHasLocalStrokes(false)
     
     // Clear the session in the backend
@@ -613,17 +603,17 @@ export function PaintingView() {
   }
 
   const handleExport = () => {
-    const imageData = canvasRef.current?.getImageData()
-    if (imageData) {
+    const capture = canvasRef.current?.captureContent('export')
+    if (capture) {
       // On iOS, show the export modal instead of direct download
       if (isIOS()) {
-        setExportCanvasDataUrl(imageData)
+        setExportCanvasDataUrl(capture.dataUrl)
         setShowExportModal(true)
       } else {
         // Non-iOS devices: use direct download
         const link = document.createElement('a')
         link.download = `wepaintai-${Date.now()}.png`
-        link.href = imageData
+        link.href = capture.dataUrl
         link.click()
       }
       
@@ -704,6 +694,7 @@ export function PaintingView() {
         // Add the AI-generated image to Convex
         const newImageId = await addAIGeneratedImage({
           sessionId,
+          guestKey: getGuestKey(sessionId) || undefined,
           imageUrl,
           width: img.naturalWidth || img.width,
           height: img.naturalHeight || img.height,
@@ -891,7 +882,11 @@ export function PaintingView() {
       const paintLayer = paintLayers?.find(layer => layer._id === layerId)
       if (paintLayer) {
         console.log('[PaintingView] Toggling paint layer visibility', { layerId, name: paintLayer.name, to: visible })
-        await updatePaintLayer({ layerId: layerId as any, visible })
+        await updatePaintLayer({
+          layerId: layerId as any,
+          visible,
+          guestKey: getGuestKey(sessionId) || undefined,
+        })
         console.log('[PaintingView] Paint layer visibility updated OK', { layerId, to: visible })
         // Force canvas redraw
         canvasRef.current?.forceRedraw?.()
@@ -911,7 +906,7 @@ export function PaintingView() {
       const aiImage = aiImages?.find(img => img._id === layerId)
       if (aiImage) {
         console.log('[PaintingView] Toggling AI image visibility', { layerId, to: visible })
-        await updateAIImageTransformMutation({ imageId: layerId as Id<'aiGeneratedImages'>, opacity: visible ? 1 : 0 })
+        await updateAIImageTransformMutation({ imageId: layerId as Id<'aiGeneratedImages'>, opacity: visible ? 1 : 0, guestKey: imageGuestKey })
         console.log('[PaintingView] AI image opacity updated OK', { layerId, to: visible ? 1 : 0 })
         return
       }
@@ -920,7 +915,7 @@ export function PaintingView() {
     } catch (err) {
       console.error('[PaintingView] Error toggling layer visibility', { layerId, visible, err })
     }
-  }, [images, aiImages, paintLayers, updateImageTransform, updateAIImageTransformMutation, updatePaintLayer])
+  }, [images, aiImages, paintLayers, sessionId, updateImageTransform, updateAIImageTransformMutation, updatePaintLayer, imageGuestKey])
 
   const handleLayerDelete = useCallback(async (layerId: string) => {
     // console.log('[PaintingView] handleLayerDelete called with layerId:', layerId)
@@ -940,7 +935,10 @@ export function PaintingView() {
       
       // console.log('[PaintingView] Deleting paint layer:', layerId)
       try {
-        await deletePaintLayer({ layerId: layerId as Id<"paintLayers"> })
+        await deletePaintLayer({
+          layerId: layerId as Id<"paintLayers">,
+          guestKey: getGuestKey(sessionId) || undefined,
+        })
         // console.log('[PaintingView] Paint layer deleted successfully')
       } catch (error) {
         console.error('[PaintingView] Error deleting paint layer:', error)
@@ -968,7 +966,7 @@ export function PaintingView() {
     if (aiImage) {
       // console.log('[PaintingView] Deleting AI image:', layerId)
       try {
-        await deleteAIImageMutation({ imageId: layerId as Id<"aiGeneratedImages"> })
+        await deleteAIImageMutation({ imageId: layerId as Id<"aiGeneratedImages">, guestKey: imageGuestKey })
         // console.log('[PaintingView] AI image deleted successfully')
       } catch (error) {
         console.error('[PaintingView] Error deleting AI image:', error)
@@ -976,7 +974,7 @@ export function PaintingView() {
     } else {
       console.warn('[PaintingView] Layer not found for deletion:', layerId)
     }
-  }, [images, aiImages, paintLayers, clearSession, deleteImage, deletePaintLayer, deleteAIImageMutation])
+  }, [images, aiImages, paintLayers, sessionId, clearSession, deleteImage, deletePaintLayer, deleteAIImageMutation, imageGuestKey])
 
   const handleLayerReorder = useCallback(async (layerId: string, newOrder: number) => {
     if (!sessionId) return
@@ -989,7 +987,8 @@ export function PaintingView() {
     await reorderLayer({
       sessionId,
       layerId,
-      newOrder: clampedOrder
+      newOrder: clampedOrder,
+      guestKey: getGuestKey(sessionId) || undefined,
     })
     
     // Force canvas redraw to reflect new layer order
@@ -1000,7 +999,11 @@ export function PaintingView() {
     // Check if it's a paint layer
     const paintLayer = paintLayers?.find(layer => layer._id === layerId)
     if (paintLayer) {
-      await updatePaintLayer({ layerId: layerId as any, opacity })
+      await updatePaintLayer({
+        layerId: layerId as any,
+        opacity,
+        guestKey: getGuestKey(sessionId) || undefined,
+      })
       // Force canvas redraw
       canvasRef.current?.forceRedraw?.()
       return
@@ -1018,10 +1021,11 @@ export function PaintingView() {
     if (aiImage) {
       await updateAIImageTransformMutation({
         imageId: layerId as Id<"aiGeneratedImages">,
-        opacity
+        opacity,
+        guestKey: imageGuestKey,
       })
     }
-  }, [images, aiImages, updateImageTransform, updateAIImageTransformMutation])
+  }, [images, aiImages, paintLayers, sessionId, updateImageTransform, updateAIImageTransformMutation, updatePaintLayer, imageGuestKey])
 
   // Handle creating new paint layer
   const handleCreatePaintLayer = useCallback(async () => {
@@ -1031,7 +1035,11 @@ export function PaintingView() {
     const paintLayerCount = paintLayers?.filter(l => l.name.startsWith('Layer')).length || 0
     const newLayerName = `Layer ${paintLayerCount + 2}` // +2 because we already have Layer 1
     
-    const layerId = await createPaintLayer({ sessionId, name: newLayerName })
+    const layerId = await createPaintLayer({
+      sessionId,
+      name: newLayerName,
+      guestKey: getGuestKey(sessionId) || undefined,
+    })
     
     // Set the new layer as active
     if (layerId) {
@@ -1112,6 +1120,8 @@ export function PaintingView() {
           ))}
         </div>
       )}
+      {/* Persistent "changes aren't saving" banner (auth expiry / network) */}
+      <SyncStatusBanner />
       {/* Presence strip + connection indicator — visible to all users */}
       {validSessionId && (
         <PresenceStrip
@@ -1230,7 +1240,6 @@ export function PaintingView() {
       {showImageUpload && (
         <ImageUploadModal
           sessionId={sessionId}
-          userId={currentUser.id}
           onImageUploaded={handleImageUploaded}
           onClose={() => {
             setShowImageUpload(false)
