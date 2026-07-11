@@ -207,8 +207,18 @@ corepack pnpm build
 
 LABEL="com.wepaintai.preview.pr-$PR"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-sleep 1
+SERVICE="gui/$(id -u)/$LABEL"
+launchctl bootout "$SERVICE" 2>/dev/null || true
+
+# launchd may report the service as absent before it has finished unloading.
+# Wait briefly here and also retry bootstrap below so synchronize/reopen
+# deployments cannot fail with launchctl's transient exit 5.
+for _ in $(seq 1 20); do
+  if ! launchctl print "$SERVICE" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.25
+done
 mkdir -p "$DEST"
 rsync -a --delete .output/ "$DEST/output/"
 
@@ -237,7 +247,20 @@ cat > "$PLIST" <<EOF
 </dict>
 </plist>
 EOF
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
+
+frontend_bootstrapped=""
+bootstrap_error=""
+for attempt in $(seq 1 5); do
+  if bootstrap_error="$(launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>&1)"; then
+    frontend_bootstrapped=1
+    break
+  fi
+  sleep "$attempt"
+done
+if [ -z "$frontend_bootstrapped" ]; then
+  echo "Preview frontend launchd bootstrap failed after 5 attempts: $bootstrap_error" >&2
+  exit 1
+fi
 
 cat > "$ROOT/caddy/pr-$PR.caddy.tmp" <<EOF
 @pr$PR host $FRONTEND_HOST
