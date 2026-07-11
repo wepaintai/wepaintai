@@ -1,5 +1,5 @@
-import React, { useState } from 'react'
-import { X, Brush, Sliders, RotateCcw } from 'lucide-react'
+import React from 'react'
+import { X, Sliders, RotateCcw } from 'lucide-react'
 
 export interface BrushSettings {
   smoothing: number
@@ -61,18 +61,15 @@ const SettingsSlider = ({ label, value, min, max, step, onChange, description }:
 }
 
 export function BrushSettingsModal({ isOpen, onClose, settings, onSettingsChange }: BrushSettingsModalProps) {
-  const [localSettings, setLocalSettings] = useState<BrushSettings>(settings)
-
   if (!isOpen) return null
 
+  // Render directly from the settings prop so external changes (or a reopen
+  // after settings changed elsewhere) never desync the sliders
   const handleSettingChange = (key: keyof BrushSettings, value: number) => {
-    const newSettings = { ...localSettings, [key]: value }
-    setLocalSettings(newSettings)
-    onSettingsChange(newSettings)
+    onSettingsChange({ ...settings, [key]: value })
   }
 
   const handleReset = () => {
-    setLocalSettings(DEFAULT_SETTINGS)
     onSettingsChange(DEFAULT_SETTINGS)
   }
 
@@ -96,7 +93,7 @@ export function BrushSettingsModal({ isOpen, onClose, settings, onSettingsChange
         <div className="space-y-6">
           <SettingsSlider
             label="Smoothing"
-            value={localSettings.smoothing}
+            value={settings.smoothing}
             min={0}
             max={1}
             step={0.05}
@@ -106,7 +103,7 @@ export function BrushSettingsModal({ isOpen, onClose, settings, onSettingsChange
 
           <SettingsSlider
             label="Thinning"
-            value={localSettings.thinning}
+            value={settings.thinning}
             min={-1}
             max={1}
             step={0.05}
@@ -116,7 +113,7 @@ export function BrushSettingsModal({ isOpen, onClose, settings, onSettingsChange
 
           <SettingsSlider
             label="Streamline"
-            value={localSettings.streamline}
+            value={settings.streamline}
             min={0}
             max={1}
             step={0.05}
@@ -126,7 +123,7 @@ export function BrushSettingsModal({ isOpen, onClose, settings, onSettingsChange
 
           <SettingsSlider
             label="Start Taper"
-            value={localSettings.startTaper}
+            value={settings.startTaper}
             min={0}
             max={100}
             step={5}
@@ -136,7 +133,7 @@ export function BrushSettingsModal({ isOpen, onClose, settings, onSettingsChange
 
           <SettingsSlider
             label="End Taper"
-            value={localSettings.endTaper}
+            value={settings.endTaper}
             min={0}
             max={100}
             step={5}

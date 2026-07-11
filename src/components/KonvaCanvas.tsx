@@ -20,6 +20,7 @@ import {
   type CanvasCaptureResult,
 } from '../utils/canvasCapture'
 import { getGuestKey } from '../utils/guestKey'
+import { installUnloadGuard, registerUnsavedWorkCounter } from '../lib/unsavedChanges'
 
 const average = (a: number, b: number): number => (a + b) / 2
 
@@ -254,6 +255,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   const aiImageNodeRefs = useRef<Map<string, Konva.Image>>(new Map())
     
   const [isDrawing, setIsDrawing] = useState(false)
+  const isDrawingRef = useRef(false)
   const [currentStroke, setCurrentStroke] = useState<Point[]>([])
   const [pendingStrokes, setPendingStrokes] = useState<Map<string, LocalStroke>>(new Map())
   const strokeEndedRef = useRef(false)
@@ -454,6 +456,16 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       }
     })
   }, [aiImages, dimensions.width, dimensions.height, updateAIImageTransform, guestKey])
+
+  // Warn before tab close while a stroke is mid-draw or still syncing
+  // (in-flight/queued strokes are counted in unsavedChanges/syncStatus)
+  useEffect(() => {
+    isDrawingRef.current = isDrawing
+  }, [isDrawing])
+  useEffect(() => {
+    installUnloadGuard()
+    return registerUnsavedWorkCounter(() => (isDrawingRef.current ? 1 : 0))
+  }, [])
 
   // Remove confirmed strokes from pending when they appear in the strokes array
   useEffect(() => {
@@ -2161,10 +2173,14 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
             {/* Cursor size indicator */}
             {(() => {
               const activeLayer = layers.find(l => l.id === activeLayerId)
-              const isDisabled = !!activeLayer && activeLayer.visible === false && (selectedTool === 'brush' || selectedTool === 'eraser')
+              const hiddenLayer = !!activeLayer && activeLayer.visible === false && (selectedTool === 'brush' || selectedTool === 'eraser')
+              // Mirror the handlePointerDown guard: erasing only works on paint/image/ai-image layers
+              const eraserInvalidLayer = selectedTool === 'eraser' &&
+                (!activeLayer || !['paint', 'image', 'ai-image'].includes(activeLayer.type))
+              const isDisabled = hiddenLayer || eraserInvalidLayer
               if (!cursorPosition || !isMouseOverCanvas || (selectedTool !== 'brush' && selectedTool !== 'eraser')) return null
               if (isDisabled) {
-                // Show a red X to indicate disabled tool on hidden layer
+                // Show a red X to indicate the tool can't act on the active layer
                 const len = Math.max(12, size) // ensure visible even for tiny brush sizes
                 const half = len / 2
                 return (

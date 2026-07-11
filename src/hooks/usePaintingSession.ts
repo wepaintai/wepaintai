@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState, useRef, useMemo } from "react";
 import { p2pLogger } from "../lib/p2p-logger";
 import { convexLow } from "../lib/convex";
 import { reportSyncFailure, reportSyncSuccess } from "../lib/syncStatus";
+import { beginInFlightStroke, endInFlightStroke } from "../lib/unsavedChanges";
 import {
   generateGuestKey,
   getGuestKey,
@@ -297,6 +298,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
       guestKey: localGuestKey || undefined,
     };
 
+    beginInFlightStroke();
     try {
       const strokeId = await addStroke(strokeArgs);
       reportSyncSuccess();
@@ -307,6 +309,8 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
       console.error('[usePaintingSession] Failed to save stroke:', e);
       reportSyncFailure(e, strokeArgs);
       return undefined;
+    } finally {
+      endInFlightStroke();
     }
   }, [sessionId, addStroke, currentUser, localGuestKey]);
 

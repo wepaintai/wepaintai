@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import type { FunctionArgs } from "convex/server";
 import { api } from "../../convex/_generated/api";
 import { convexHigh } from "./convex";
+import { registerUnsavedWorkCounter } from "./unsavedChanges";
 
 /**
  * Module-level sync failure store shared by every usePaintingSession instance
@@ -37,6 +38,9 @@ let state: SyncStatus = {
 };
 
 const listeners = new Set<() => void>();
+
+// Strokes queued for replay are unsaved work — closing the tab would lose them.
+registerUnsavedWorkCounter(() => pendingStrokes.length);
 
 function setState(partial: Partial<SyncStatus>) {
   state = { ...state, ...partial, pendingStrokeCount: pendingStrokes.length };
