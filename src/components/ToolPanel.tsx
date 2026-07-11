@@ -529,7 +529,7 @@ const LayerItem = React.memo(({
             <EyeOff className="w-3.5 h-3.5 text-white/40" />
           )}
         </button>
-        <span className={`flex-1 text-xs truncate ${layer.name.includes('(empty)') ? 'text-white/40' : 'text-white/80'}`}>
+        <span className={`flex-1 text-xs truncate ${layer.name.includes('(empty)') ? 'text-white/60' : 'text-white/80'}`}>
           {layer.name}
           {isActive && <span className="ml-1 text-blue-400">(Active)</span>}
         </span>
@@ -1249,7 +1249,7 @@ export function ToolPanel({
             >
               <MoreVertical className="w-3.5 h-3.5 text-white/60" />
             </button>
-            <span className="text-[10px] font-medium text-white/50 uppercase tracking-wider">Beta</span>
+            <span className="text-[10px] font-medium text-white/70 uppercase tracking-wider">Beta</span>
           </div>
           <button
             onClick={(e) => {

@@ -505,6 +505,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
       updateLiveStroke({
         sessionId,
         userId: currentUser.id || undefined,
+        guestId: currentUser.id ? undefined : getClientId(),
         userColor: currentUser.color,
         userName: currentUser.name,
         points,
@@ -538,6 +539,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
         updateLiveStroke({
           sessionId,
           userId: currentUser.id || undefined,
+          guestId: currentUser.id ? undefined : getClientId(),
           userColor: currentUser.color,
           userName: currentUser.name,
           points: pending.points,
@@ -553,25 +555,47 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     }, 16); // 16ms throttle (~60 FPS)
   }, [sessionId, updateLiveStroke, currentUser, localGuestKey]);
 
-  // Clear live stroke (when finishing drawing)
+  // Clear live stroke (when finishing drawing). Guests are keyed by their
+  // stable per-browser client id instead of a user id.
   const clearLiveStrokeForUser = useCallback(async () => {
     if (!sessionId) return;
-    
-    // Only clear if user has an ID (guest users don't have live strokes)
-    if (currentUser.id) {
-      return await clearLiveStroke({
-        sessionId,
-        userId: currentUser.id,
-        guestKey: localGuestKey || undefined,
-      });
-    }
+
+    return await clearLiveStroke({
+      sessionId,
+      userId: currentUser.id || undefined,
+      guestId: currentUser.id ? undefined : getClientId(),
+      guestKey: localGuestKey || undefined,
+    });
   }, [sessionId, currentUser.id, clearLiveStroke, localGuestKey]);
 
   // Leave session on unmount and cleanup timeouts
   useEffect(() => {
     const currentSessionId = sessionId; // Capture sessionId for cleanup
     const currentViewerId = currentUser.id; // Capture viewerId for cleanup
+
+    // Tab close / navigation away never runs React cleanup reliably, and
+    // WebSocket mutations don't flush during pagehide — use sendBeacon to an
+    // HTTP action so presence and any in-progress live stroke are removed
+    // immediately instead of lingering until the staleness cutoffs.
+    const handlePageHide = () => {
+      if (!currentSessionId) return;
+      const siteUrl = import.meta.env.VITE_CONVEX_SITE_URL;
+      if (!siteUrl || typeof navigator.sendBeacon !== "function") return;
+      const payload = JSON.stringify({
+        sessionId: currentSessionId,
+        userId: currentViewerId || undefined,
+        guestId: currentViewerId ? undefined : getClientId(),
+      });
+      // text/plain keeps this a "simple" request (no CORS preflight)
+      navigator.sendBeacon(
+        `${siteUrl}/presence/leave`,
+        new Blob([payload], { type: "text/plain" })
+      );
+    };
+    window.addEventListener("pagehide", handlePageHide);
+
     return () => {
+      window.removeEventListener("pagehide", handlePageHide);
       if (currentSessionId) {
         // Guests identify by their stable client id instead of a user id
         convexLow.mutation(api.presence.leaveSession, {

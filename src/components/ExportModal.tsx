@@ -9,13 +9,28 @@ interface ExportModalProps {
   defaultFilename?: string
 }
 
-export function ExportModal({ 
-  isOpen, 
-  onClose, 
+export function buildExportFilename(sessionName?: string | null): string {
+  const now = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const date = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+  const slug = sessionName
+    ?.toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60)
+  return slug
+    ? `${slug}-${date}`
+    : `wepaintai-${date}-${pad(now.getHours())}${pad(now.getMinutes())}`
+}
+
+export function ExportModal({
+  isOpen,
+  onClose,
   canvasDataUrl,
-  defaultFilename = `wepaintai-${Date.now()}`
+  defaultFilename
 }: ExportModalProps) {
-  const [filename, setFilename] = useState(defaultFilename)
+  const [filename, setFilename] = useState(defaultFilename ?? buildExportFilename())
   const [format, setFormat] = useState<'png' | 'jpeg'>('png')
   const [quality, setQuality] = useState(0.9)
   const [processedImageUrl, setProcessedImageUrl] = useState<string>('')
@@ -24,40 +39,46 @@ export function ExportModal({
   const isIOSDevice = isIOS()
 
   useEffect(() => {
+    if (isOpen) {
+      setFilename(defaultFilename ?? buildExportFilename())
+    }
+  }, [isOpen, defaultFilename])
+
+  useEffect(() => {
     if (!isOpen) return
 
-    const processImage = async () => {
-      setIsProcessing(true)
-      
-      if (format === 'png' || quality === 1) {
-        // For PNG or max quality JPEG, use the original data URL
-        setProcessedImageUrl(canvasDataUrl)
-      } else {
-        // For JPEG with custom quality, we need to re-encode
-        const img = new Image()
-        img.onload = () => {
-          const canvas = document.createElement('canvas')
-          canvas.width = img.width
-          canvas.height = img.height
-          const ctx = canvas.getContext('2d')
-          
-          if (ctx) {
-            // Fill with white background for JPEG (no transparency)
-            ctx.fillStyle = 'white'
-            ctx.fillRect(0, 0, canvas.width, canvas.height)
-            ctx.drawImage(img, 0, 0)
-            
-            const jpegUrl = canvas.toDataURL('image/jpeg', quality)
-            setProcessedImageUrl(jpegUrl)
-          }
-        }
-        img.src = canvasDataUrl
-      }
-      
-      setIsProcessing(false)
-    }
+    setIsProcessing(true)
 
-    processImage()
+    if (format === 'png' || quality === 1) {
+      // For PNG or max quality JPEG, use the original data URL
+      setProcessedImageUrl(canvasDataUrl)
+      setIsProcessing(false)
+    } else {
+      // For JPEG with custom quality, we need to re-encode
+      const img = new Image()
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        canvas.width = img.width
+        canvas.height = img.height
+        const ctx = canvas.getContext('2d')
+
+        if (ctx) {
+          // Fill with white background for JPEG (no transparency)
+          ctx.fillStyle = 'white'
+          ctx.fillRect(0, 0, canvas.width, canvas.height)
+          ctx.drawImage(img, 0, 0)
+          setProcessedImageUrl(canvas.toDataURL('image/jpeg', quality))
+        } else {
+          setProcessedImageUrl(canvasDataUrl)
+        }
+        setIsProcessing(false)
+      }
+      img.onerror = () => {
+        setProcessedImageUrl(canvasDataUrl)
+        setIsProcessing(false)
+      }
+      img.src = canvasDataUrl
+    }
   }, [isOpen, canvasDataUrl, format, quality])
 
   useEffect(() => {
@@ -205,7 +226,7 @@ export function ExportModal({
               </button>
 
               {isIOSDevice && (
-                <p className="text-xs text-white/50 text-center">
+                <p className="text-xs text-white/70 text-center">
                   Tip: For best results on iOS, use the long-press method to save directly to Photos
                 </p>
               )}
