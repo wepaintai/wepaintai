@@ -315,15 +315,16 @@ export function AIGenerationModal({
             <button
               onClick={() => setWithFlames(!withFlames)}
               disabled={isGenerating}
+              title={withFlames ? "Removes 'with flames' from your prompt" : "Appends 'with flames' to your prompt"}
               className={`flex items-center gap-2 px-3 py-2 rounded-md border transition-all ${
-                withFlames 
-                  ? 'bg-orange-500/20 border-orange-500/40 text-orange-400 hover:bg-orange-500/30' 
+                withFlames
+                  ? 'bg-orange-500/20 border-orange-500/40 text-orange-400 hover:bg-orange-500/30'
                   : 'bg-white/10 border-white/20 text-white/70 hover:bg-white/20'
               }`}
             >
               <Flame className={`w-4 h-4 ${withFlames ? 'animate-pulse' : ''}`} />
               <span className="text-sm font-medium">
-                {withFlames ? '🔥 ✅' : 'Add 🔥'}
+                {withFlames ? "🔥 'with flames' added" : "Add 'with flames' 🔥"}
               </span>
             </button>
           </div>

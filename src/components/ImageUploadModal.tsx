@@ -64,7 +64,8 @@ export function ImageUploadModal({
     setIsDragging(false)
     
     const file = e.dataTransfer.files[0]
-    if (file && file.type.startsWith('image/')) {
+    if (file) {
+      // handleFileSelect validates against the shared ACCEPTED_TYPES allowlist
       handleFileSelect(file)
     }
   }, [handleFileSelect])
@@ -169,6 +170,9 @@ export function ImageUploadModal({
             </p>
             <p className="text-xs text-center text-white/60 mt-2">
               PNG, JPG, GIF, WebP • Max 5MB
+            </p>
+            <p className="text-xs text-center text-white/40 mt-1">
+              Images larger than 4096px are automatically resized
             </p>
           </div>
         ) : (
