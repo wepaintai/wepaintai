@@ -4,7 +4,7 @@ import {
   type AuthFunctions,
   type GenericCtx,
 } from "@convex-dev/better-auth";
-import { convex } from "@convex-dev/better-auth/plugins";
+import { convex, crossDomain } from "@convex-dev/better-auth/plugins";
 import authConfig from "./auth.config";
 import { components, internal } from "./_generated/api";
 import { query } from "./_generated/server";
@@ -43,10 +43,15 @@ export const authComponent = createClient<DataModel>(components.betterAuth, {
 export const { onCreate, onUpdate, onDelete } = authComponent.triggersApi();
 
 const siteUrl = process.env.SITE_URL!;
+const previewUrl = process.env.PREVIEW_URL;
 
 export const createAuth = (ctx: GenericCtx<DataModel>) => {
   return betterAuth({
     baseURL: siteUrl,
+    // A preview slot has a fixed SITE_URL registered with Google and an exact
+    // PR frontend origin. Production has neither PREVIEW_URL nor the
+    // cross-domain handoff plugin, so its OAuth flow stays unchanged.
+    trustedOrigins: previewUrl ? [previewUrl] : [],
     database: authComponent.adapter(ctx),
     // Google OAuth only — no password accounts.
     socialProviders: {
@@ -55,7 +60,10 @@ export const createAuth = (ctx: GenericCtx<DataModel>) => {
         clientSecret: process.env.GOOGLE_CLIENT_SECRET as string,
       },
     },
-    plugins: [convex({ authConfig })],
+    plugins: [
+      convex({ authConfig }),
+      ...(previewUrl ? [crossDomain({ siteUrl: previewUrl })] : []),
+    ],
   });
 };
 
