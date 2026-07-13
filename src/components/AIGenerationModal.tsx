@@ -84,7 +84,7 @@ export function AIGenerationModal({
       if (result.success && 'imageUrl' in result && result.imageUrl) {
         console.log('Generated image URL:', result.imageUrl)
         // Save the prompt to both session and user history
-        await addAIPrompt({ sessionId, prompt: prompt.trim() })
+        await addAIPrompt({ sessionId, prompt: prompt.trim(), guestKey: getGuestKey(sessionId) || undefined })
         await addUserPrompt({ prompt: prompt.trim() })
         onGenerationComplete(result.imageUrl)
         onClose()

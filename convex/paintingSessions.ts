@@ -444,12 +444,15 @@ export const addAIPrompt = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
     prompt: v.string(),
+    guestKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
     if (!session) {
       throw new Error("Session not found");
     }
+
+    await assertCanModifySession(ctx, session, args.guestKey);
 
     const currentPrompts = session.aiPrompts || [];
     

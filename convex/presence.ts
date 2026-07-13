@@ -240,9 +240,10 @@ export const beaconLeave = internalMutation({
 });
 
 /**
- * Clean up old presence records (internal function)
+ * Clean up old presence records (internal function).
+ * Internal-only duplicate of the cron-driven cleanup; never client-callable.
  */
-export const cleanupOldPresence = mutation({
+export const cleanupOldPresence = internalMutation({
   args: {},
   returns: v.null(),
   handler: async (ctx) => {
