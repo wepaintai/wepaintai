@@ -236,7 +236,7 @@ export function LibraryModal({ isOpen, onClose, onCreateNew, onOpenSession }: Li
                   {/* Info */}
                   <div className="p-3">
                     {editingSessionId === session._id ? (
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-3">
                         <input
                           type="text"
                           value={editingName}
@@ -250,14 +250,14 @@ export function LibraryModal({ isOpen, onClose, onCreateNew, onOpenSession }: Li
                         />
                         <button
                           onClick={handleSaveEdit}
-                          className="p-3 -m-2 hover:bg-white/20 rounded text-green-400"
+                          className="p-3 -m-1.5 hover:bg-white/20 rounded text-green-400"
                           aria-label="Save name"
                         >
                           ✓
                         </button>
                         <button
                           onClick={handleCancelEdit}
-                          className="p-3 -m-2 hover:bg-white/20 rounded text-red-400"
+                          className="p-3 -m-1.5 hover:bg-white/20 rounded text-red-400"
                           aria-label="Cancel rename"
                         >
                           ✗
@@ -316,11 +316,9 @@ export function LibraryModal({ isOpen, onClose, onCreateNew, onOpenSession }: Li
           )}
         </div>
 
-        {/* Footer note: contributed-to sessions are looked up from recent
-            activity only, so old collaborations may be missing */}
+        {/* Footer note */}
         <div className="px-4 py-2 border-t border-white/10 text-xs text-white/70">
-          Shows your paintings and recent collaborations. Older canvases you
-          contributed to (but don't own) may not appear.
+          Shows paintings you own.
         </div>
 
         {/* Undo-delete toast */}

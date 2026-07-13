@@ -419,13 +419,23 @@ export const getSessionGenerations = query({
         }
       }
     }
+    // Take a larger window then filter, so a run of failed/moderated rows
+    // doesn't shrink the strip; then keep the 10 most recent usable results.
+    // Only Convex-storage URLs are usable — direct Replicate URLs (the
+    // storage-failure fallback) expire and would render as broken thumbnails.
     const generations = await ctx.db
       .query("aiGenerations")
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
       .order("desc")
-      .take(10);
+      .take(50);
     return generations
-      .filter((g) => g.status === "completed" && g.resultImageUrl)
+      .filter(
+        (g) =>
+          g.status === "completed" &&
+          g.resultImageUrl &&
+          g.resultImageUrl.includes("/api/storage/")
+      )
+      .slice(0, 10)
       .map((g) => ({
         _id: g._id,
         prompt: g.prompt,

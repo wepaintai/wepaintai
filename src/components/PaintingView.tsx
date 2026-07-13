@@ -5,7 +5,7 @@ import { ToolPanel, Layer } from './ToolPanel'
 import { type BrushSettings } from './BrushSettingsModal'
 import { AdminPanel } from './AdminPanel' // Import AdminPanel
 import { SessionInfo } from './SessionInfo'
-import { PresenceStrip } from './PresenceStrip'
+import { PresenceStrip, activeCollaborators } from './PresenceStrip'
 import { SyncStatusBanner } from './SyncStatusBanner'
 import { P2PStatus } from './P2PStatus'
 import { P2PDebugPanel } from './P2PDebugPanel'
@@ -473,17 +473,36 @@ export function PaintingView() {
 
   // Switch to another session (or null to create a fresh one) without a full
   // page reload: update the URL via history and let React state drive the swap.
+  // Opening a concrete session pushes a history entry so Back returns to the
+  // previous canvas instead of exiting the app; the null/new-canvas case keeps
+  // replaceState (a fresh session id gets written over it once created).
   const switchToSession = useCallback((newSessionId: Id<"paintingSessions"> | null) => {
     try {
       const url = new URL(window.location.href)
       if (newSessionId) {
         url.searchParams.set('session', newSessionId)
+        window.history.pushState({}, '', url.toString())
       } else {
         url.searchParams.delete('session')
+        window.history.replaceState({}, '', url.toString())
       }
-      window.history.replaceState({}, '', url.toString())
     } catch {}
     setSessionId(newSessionId)
+  }, [])
+
+  // Follow browser Back/Forward across the entries pushed above. Entries
+  // without a session param are ambiguous (guest-owned URLs are masked), so
+  // only concrete session ids are followed.
+  useEffect(() => {
+    const onPopState = () => {
+      const params = new URLSearchParams(window.location.search)
+      const target = params.get('session') as Id<"paintingSessions"> | null
+      if (target) {
+        setSessionId((current) => (current === target ? current : target))
+      }
+    }
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
   }, [])
 
   // Leave the current session behind so a fresh painting is created
@@ -1110,7 +1129,10 @@ export function PaintingView() {
       )}
 
       {validSessionId ? (
+        // key forces a remount on session switch so per-session canvas state
+        // (pendingStrokes, imageMasks, konvaImages) resets by contract
         <KonvaCanvas
+          key={validSessionId}
           ref={canvasRef}
           sessionId={validSessionId}
           color={color}
@@ -1183,7 +1205,7 @@ export function PaintingView() {
       {adminFeaturesEnabled && (
         <SessionInfo
           sessionId={sessionId}
-          userCount={presence.length + 1}
+          userCount={activeCollaborators(presence, currentUser.id, presenceGuestId).length + 1}
           currentUser={currentUser}
         />
       )}
