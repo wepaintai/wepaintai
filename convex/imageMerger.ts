@@ -1,10 +1,11 @@
 import { v } from "convex/values";
-import { mutation, action, query } from "./_generated/server";
+import { mutation, action, query, internalMutation } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 
-// Mutation to store image merge requests and results
-export const createMergeRequest = mutation({
+// Mutation to store image merge requests and results.
+// Internal-only: invoked from the mergeImages action via ctx.runMutation.
+export const createMergeRequest = internalMutation({
   args: {
     sessionId: v.id("paintingSessions"),
     firstLayerId: v.string(),
@@ -35,8 +36,9 @@ export const createMergeRequest = mutation({
   },
 });
 
-// Update merge status
-export const updateMergeStatus = mutation({
+// Update merge status. Internal-only: patches any imageMerges doc by id with no
+// auth, so it must never be client-callable.
+export const updateMergeStatus = internalMutation({
   args: {
     mergeId: v.id("imageMerges"),
     status: v.union(v.literal("pending"), v.literal("processing"), v.literal("completed"), v.literal("failed")),
@@ -133,7 +135,7 @@ export const mergeImages = action({
 
     try {
       // Create a merge request record
-      const mergeId = await ctx.runMutation(api.imageMerger.createMergeRequest, {
+      const mergeId = await ctx.runMutation(internal.imageMerger.createMergeRequest, {
         sessionId: args.sessionId,
         firstLayerId: args.firstLayerId,
         secondLayerId: args.secondLayerId,
@@ -190,7 +192,7 @@ export const mergeImages = action({
         });
       } catch (error) {
         console.error('[IMAGE-MERGE] Failed to get layer image URLs:', error);
-        await ctx.runMutation(api.imageMerger.updateMergeStatus, {
+        await ctx.runMutation(internal.imageMerger.updateMergeStatus, {
           mergeId,
           status: "failed",
           error: "Failed to get layer images",
@@ -238,7 +240,7 @@ export const mergeImages = action({
       if (!response.ok) {
         const error = await response.text();
         console.error("Replicate API error:", error);
-        await ctx.runMutation(api.imageMerger.updateMergeStatus, {
+        await ctx.runMutation(internal.imageMerger.updateMergeStatus, {
           mergeId,
           status: "failed",
           error: "Failed to start merge",
@@ -250,7 +252,7 @@ export const mergeImages = action({
       console.log('[IMAGE-MERGE] Created prediction:', prediction);
       
       // Update with Replicate ID
-      await ctx.runMutation(api.imageMerger.updateMergeStatus, {
+      await ctx.runMutation(internal.imageMerger.updateMergeStatus, {
         mergeId,
         status: "processing",
         replicateId: prediction.id,
@@ -335,7 +337,7 @@ export const mergeImages = action({
               const finalUrl = storageUrl || imageUrl;
               console.log('[IMAGE-MERGE] Final URL to return:', finalUrl);
               
-              await ctx.runMutation(api.imageMerger.updateMergeStatus, {
+              await ctx.runMutation(internal.imageMerger.updateMergeStatus, {
                 mergeId,
                 status: "completed",
                 resultImageUrl: finalUrl,
@@ -361,7 +363,7 @@ export const mergeImages = action({
               }
               
               // Fallback to using the Replicate URL directly
-              await ctx.runMutation(api.imageMerger.updateMergeStatus, {
+              await ctx.runMutation(internal.imageMerger.updateMergeStatus, {
                 mergeId,
                 status: "completed",
                 resultImageUrl: imageUrl,
@@ -380,7 +382,7 @@ export const mergeImages = action({
             }
           }
         } else if (status.status === "failed" || status.status === "canceled") {
-          await ctx.runMutation(api.imageMerger.updateMergeStatus, {
+          await ctx.runMutation(internal.imageMerger.updateMergeStatus, {
             mergeId,
             status: "failed",
             error: status.error || "Merge failed",
@@ -394,7 +396,7 @@ export const mergeImages = action({
       }
 
       // Timeout
-      await ctx.runMutation(api.imageMerger.updateMergeStatus, {
+      await ctx.runMutation(internal.imageMerger.updateMergeStatus, {
         mergeId,
         status: "failed",
         error: "Merge timed out",

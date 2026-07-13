@@ -1,6 +1,6 @@
 import { v } from "convex/values";
-import { mutation, action, query } from "./_generated/server";
-import { api, internal } from "./_generated/api";
+import { mutation, action, query, internalMutation } from "./_generated/server";
+import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 
 // Verbose logging of prompts and image-data samples is a privacy concern in
@@ -10,8 +10,11 @@ function debugLog(...args: unknown[]) {
   if (AI_GEN_DEBUG) console.log(...args);
 }
 
-// Mutation to store AI generation requests and results
-export const createGenerationRequest = mutation({
+// Mutation to store AI generation requests and results.
+// Internal-only: invoked from generation actions via ctx.runMutation. Exposing
+// this publicly would let any client inject arbitrary result URLs into a
+// session's generation feed (see getSessionGenerations).
+export const createGenerationRequest = internalMutation({
   args: {
     sessionId: v.id("paintingSessions"),
     prompt: v.string(),
@@ -38,8 +41,9 @@ export const createGenerationRequest = mutation({
   },
 });
 
-// Update generation status
-export const updateGenerationStatus = mutation({
+// Update generation status. Internal-only: patches any aiGenerations doc by id
+// with no auth, so it must never be client-callable.
+export const updateGenerationStatus = internalMutation({
   args: {
     generationId: v.id("aiGenerations"),
     status: v.union(v.literal("pending"), v.literal("processing"), v.literal("completed"), v.literal("failed")),
@@ -109,7 +113,7 @@ export const generateImage = action({
 
     try {
       // Create a generation request record
-      const generationId = await ctx.runMutation(api.aiGeneration.createGenerationRequest, {
+      const generationId = await ctx.runMutation(internal.aiGeneration.createGenerationRequest, {
         sessionId: args.sessionId,
         prompt: args.prompt,
         status: "pending",
@@ -214,7 +218,7 @@ export const generateImage = action({
       if (!response.ok) {
         const error = await response.text();
         console.error("Replicate API error:", error);
-        await ctx.runMutation(api.aiGeneration.updateGenerationStatus, {
+        await ctx.runMutation(internal.aiGeneration.updateGenerationStatus, {
           generationId,
           status: "failed",
           error: "Failed to start generation",
@@ -226,7 +230,7 @@ export const generateImage = action({
       debugLog('[AI-GEN] Created prediction:', prediction.id);
       
       // Update with Replicate ID
-      await ctx.runMutation(api.aiGeneration.updateGenerationStatus, {
+      await ctx.runMutation(internal.aiGeneration.updateGenerationStatus, {
         generationId,
         status: "processing",
         replicateId: prediction.id,
@@ -314,7 +318,7 @@ export const generateImage = action({
               debugLog('Final URL type:', typeof finalUrl);
               debugLog('Final URL length:', finalUrl?.length);
               
-              await ctx.runMutation(api.aiGeneration.updateGenerationStatus, {
+              await ctx.runMutation(internal.aiGeneration.updateGenerationStatus, {
                 generationId,
                 status: "completed",
                 resultImageUrl: finalUrl,
@@ -341,7 +345,7 @@ export const generateImage = action({
               }
               
               // Fallback to using the Replicate URL directly
-              await ctx.runMutation(api.aiGeneration.updateGenerationStatus, {
+              await ctx.runMutation(internal.aiGeneration.updateGenerationStatus, {
                 generationId,
                 status: "completed",
                 resultImageUrl: imageUrl,
@@ -363,7 +367,7 @@ export const generateImage = action({
             }
           }
         } else if (status.status === "failed" || status.status === "canceled") {
-          await ctx.runMutation(api.aiGeneration.updateGenerationStatus, {
+          await ctx.runMutation(internal.aiGeneration.updateGenerationStatus, {
             generationId,
             status: "failed",
             error: status.error || "Generation failed",
@@ -377,7 +381,7 @@ export const generateImage = action({
       }
 
       // Timeout
-      await ctx.runMutation(api.aiGeneration.updateGenerationStatus, {
+      await ctx.runMutation(internal.aiGeneration.updateGenerationStatus, {
         generationId,
         status: "failed",
         error: "Generation timed out",

@@ -244,10 +244,11 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
           sessionId,
           viewerId: currentUser.id,
           lastAckedStrokeOrder: maxStrokeOrder,
+          guestKey: localGuestKey || undefined,
         }).catch((e) => reportSyncFailure(e));
       }
     }
-  }, [strokes, sessionId, currentUser.id, upsertViewerState]);
+  }, [strokes, sessionId, currentUser.id, upsertViewerState, localGuestKey]);
 
   // Create a new session
   const createNewSession = useCallback(async (
@@ -463,6 +464,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
         sessionId,
         viewerId: currentUser.id,
         lastAckedStrokeOrder: 0,
+        guestKey: localGuestKey || undefined,
       });
     }
   }, [sessionId, clearSessionMutation, clearSessionLiveStrokes, currentUser.id, upsertViewerState, localGuestKey]);
@@ -630,7 +632,11 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
           guestId: currentViewerId ? undefined : getClientId(),
         });
         if (currentViewerId) {
-          removeViewerState({ sessionId: currentSessionId, viewerId: currentViewerId });
+          removeViewerState({
+            sessionId: currentSessionId,
+            viewerId: currentViewerId,
+            guestKey: getGuestKey(currentSessionId) || undefined,
+          });
         }
       }
       // Clean up any pending live stroke updates

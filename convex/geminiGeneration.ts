@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { action } from "./_generated/server";
-import { api, internal } from "./_generated/api";
+import { internal } from "./_generated/api";
 
 // Generate an image using Gemini 2.5 Flash Image (preview)
 export const generateImage = action({
@@ -36,7 +36,7 @@ export const generateImage = action({
     }
 
     // Create a generation request record
-    const generationId = await ctx.runMutation(api.aiGeneration.createGenerationRequest, {
+    const generationId = await ctx.runMutation(internal.aiGeneration.createGenerationRequest, {
       sessionId: args.sessionId,
       prompt: args.prompt,
       status: "pending",
@@ -80,7 +80,7 @@ export const generateImage = action({
       if (!response.ok) {
         const errorText = await response.text();
         console.error('[GEMINI] API error:', errorText);
-        await ctx.runMutation(api.aiGeneration.updateGenerationStatus, {
+        await ctx.runMutation(internal.aiGeneration.updateGenerationStatus, {
           generationId,
           status: 'failed',
           error: 'Failed to start generation',
@@ -106,7 +106,7 @@ export const generateImage = action({
 
       if (!imageBase64) {
         console.error('[GEMINI] No image data in response');
-        await ctx.runMutation(api.aiGeneration.updateGenerationStatus, {
+        await ctx.runMutation(internal.aiGeneration.updateGenerationStatus, {
           generationId,
           status: 'failed',
           error: 'No image data returned from Gemini',
@@ -124,7 +124,7 @@ export const generateImage = action({
       const storageId = await ctx.storage.store(blob);
       const storageUrl = await ctx.storage.getUrl(storageId);
 
-      await ctx.runMutation(api.aiGeneration.updateGenerationStatus, {
+      await ctx.runMutation(internal.aiGeneration.updateGenerationStatus, {
         generationId,
         status: 'completed',
         resultImageUrl: storageUrl || '',

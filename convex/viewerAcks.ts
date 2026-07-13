@@ -1,6 +1,7 @@
-import { mutation, query } from "./_generated/server";
+import { mutation, query, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
+import { assertCanModifySession } from "./sessionAuth";
 
 /**
  * Upsert (update or insert) the acknowledged stroke order for a viewer in a session.
@@ -10,9 +11,16 @@ export const upsertViewerState = mutation({
     sessionId: v.id("paintingSessions"),
     viewerId: v.string(), // Client-generated viewer ID
     lastAckedStrokeOrder: v.number(),
+    guestKey: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) {
+      throw new Error("Session not found");
+    }
+    await assertCanModifySession(ctx, session, args.guestKey);
+
     const existingState = await ctx.db
       .query("viewerStates")
       .withIndex("by_session_viewer", (q) =>
@@ -98,9 +106,16 @@ export const removeViewerState = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
     viewerId: v.string(),
+    guestKey: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) {
+      throw new Error("Session not found");
+    }
+    await assertCanModifySession(ctx, session, args.guestKey);
+
     const existingState = await ctx.db
       .query("viewerStates")
       .withIndex("by_session_viewer", (q) =>
@@ -116,9 +131,11 @@ export const removeViewerState = mutation({
 });
 
 /**
- * Clear all viewer states for a session (useful when clearing the canvas)
+ * Clear all viewer states for a session (useful when clearing the canvas).
+ * Internal-only: no client callers, and it would otherwise let anyone wipe a
+ * session's viewer sync state.
  */
-export const clearSessionViewerStates = mutation({
+export const clearSessionViewerStates = internalMutation({
   args: {
     sessionId: v.id("paintingSessions"),
   },
