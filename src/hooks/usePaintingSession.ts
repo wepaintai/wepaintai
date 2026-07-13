@@ -4,7 +4,13 @@ import { Id } from "../../convex/_generated/dataModel";
 import { useCallback, useEffect, useState, useRef, useMemo } from "react";
 import { p2pLogger } from "../lib/p2p-logger";
 import { convexLow } from "../lib/convex";
-import { reportSyncFailure, reportSyncSuccess } from "../lib/syncStatus";
+import {
+  reportSyncFailure,
+  reportSyncSuccess,
+  enqueueStroke,
+  hasPendingStrokes,
+  retrySync,
+} from "../lib/syncStatus";
 import { beginInFlightStroke, endInFlightStroke } from "../lib/unsavedChanges";
 import {
   generateGuestKey,
@@ -239,7 +245,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
           viewerId: currentUser.id,
           lastAckedStrokeOrder: maxStrokeOrder,
           guestKey: localGuestKey || undefined,
-        });
+        }).catch((e) => reportSyncFailure(e));
       }
     }
   }, [strokes, sessionId, currentUser.id, upsertViewerState, localGuestKey]);
@@ -299,6 +305,16 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
       guestKey: localGuestKey || undefined,
     };
 
+    // While earlier strokes are queued for replay, route new strokes through
+    // the queue too — sending them directly would save them ahead of the
+    // queued ones, inverting stroke order (and making undo hit the wrong
+    // stroke). The returned promise resolves with the backend id on replay.
+    if (hasPendingStrokes()) {
+      const replayPromise = enqueueStroke(strokeArgs);
+      void retrySync();
+      return replayPromise;
+    }
+
     beginInFlightStroke();
     try {
       const strokeId = await addStroke(strokeArgs);
@@ -306,10 +322,11 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
       return strokeId;
     } catch (e) {
       // Queue the stroke for replay after re-auth/reconnect and surface the
-      // failure via the sync banner instead of failing silently.
+      // failure via the sync banner instead of failing silently. The replay
+      // promise resolves with the eventual backend id (or undefined if the
+      // stroke is dropped) so the canvas can reconcile its optimistic copy.
       console.error('[usePaintingSession] Failed to save stroke:', e);
-      reportSyncFailure(e, strokeArgs);
-      return undefined;
+      return reportSyncFailure(e, strokeArgs);
     } finally {
       endInFlightStroke();
     }
@@ -364,7 +381,9 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
       if (pendingPresenceRef.current === payload) {
         pendingPresenceRef.current = null;
       }
-      reportSyncSuccess();
+      // updatePresence is unauthenticated, so this success can't clear an
+      // auth-kind error — reportSyncSuccess gates on the source.
+      reportSyncSuccess("presence");
     } catch (e) {
       // Presence is best-effort, but a failure here is the same auth/network
       // problem that breaks stroke saving — surface it via the sync banner.
@@ -424,10 +443,17 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     if (!sessionId) return;
     
     // Clear both completed strokes and live strokes
-    await Promise.all([
-      clearSessionMutation({ sessionId, guestKey: localGuestKey || undefined }),
-      clearSessionLiveStrokes({ sessionId, guestKey: localGuestKey || undefined })
-    ]);
+    try {
+      await Promise.all([
+        clearSessionMutation({ sessionId, guestKey: localGuestKey || undefined }),
+        clearSessionLiveStrokes({ sessionId, guestKey: localGuestKey || undefined })
+      ]);
+    } catch (e) {
+      // Surface via the sync banner instead of failing silently, then rethrow
+      // so the caller's own error handling still runs.
+      reportSyncFailure(e);
+      throw e;
+    }
     
     // Reset local acknowledgment state
     localLastAckedStrokeOrderRef.current = 0;
