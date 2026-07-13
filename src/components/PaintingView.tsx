@@ -7,6 +7,7 @@ import { AdminPanel } from './AdminPanel' // Import AdminPanel
 import { SessionInfo } from './SessionInfo'
 import { PresenceStrip } from './PresenceStrip'
 import { SyncStatusBanner } from './SyncStatusBanner'
+import { discardPendingStrokes } from '../lib/syncStatus'
 import { P2PStatus } from './P2PStatus'
 import { P2PDebugPanel } from './P2PDebugPanel'
 import { ImageUploadModal } from './ImageUploadModal'
@@ -570,22 +571,18 @@ export function PaintingView() {
     }
     
     try {
-      await undoLastStroke()
-      // Success - the stroke will be removed from rawStrokes automatically
-      // If we were relying solely on local flag before server queries caught up, clear it now
-      if (hasLocalStrokes && (!rawStrokes || rawStrokes.length <= 1)) {
-        setHasLocalStrokes(false)
+      // undoLastStroke never throws — it reports failures to the sync banner
+      // and returns false — so check the return value instead of catching.
+      const result = await undoLastStroke()
+      if (result !== false) {
+        // Success - the stroke will be removed from rawStrokes automatically
+        // If we were relying solely on local flag before server queries caught up, clear it now
+        if (hasLocalStrokes && (!rawStrokes || rawStrokes.length <= 1)) {
+          setHasLocalStrokes(false)
+        }
       }
-    } catch (error) {
-      console.error('Failed to undo stroke:', error)
-      // On error, remove from pending set to show the stroke again
-      if (lastStrokeId) {
-        setPendingUndoStrokeIds(prev => {
-          const newSet = new Set(prev)
-          newSet.delete(lastStrokeId)
-          return newSet
-        })
-      }
+      // On failure the finally below removes the stroke from the pending-undo
+      // set, so it shows again.
     } finally {
       releaseMutationLock()
       // Clear pending undo set after operation completes
@@ -626,6 +623,9 @@ export function PaintingView() {
     // Clear local canvas immediately for responsiveness
     canvasRef.current?.clear()
     setHasLocalStrokes(false)
+    // Drop this session's queued failed strokes too — otherwise a
+    // post-recovery replay would resurrect them onto the cleared canvas.
+    if (sessionId) discardPendingStrokes(sessionId)
 
     // Clear the session in the backend
     try {

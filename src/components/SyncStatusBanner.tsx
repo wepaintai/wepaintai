@@ -3,6 +3,7 @@ import { useConvexAuth } from 'convex/react'
 import { AlertTriangle, Loader2, RefreshCw } from 'lucide-react'
 import { useAuthState, authClient } from '../lib/auth-client'
 import { useSyncStatus, retrySync } from '../lib/syncStatus'
+import { suppressUnloadGuard, resumeUnloadGuard } from '../lib/unsavedChanges'
 
 /**
  * Grace period before flagging the "Better Auth signed in but Convex not
@@ -35,13 +36,17 @@ export function SyncStatusBanner() {
     return () => clearTimeout(timer)
   }, [desyncCandidate])
 
-  // When Convex auth comes back (e.g. after re-sign-in), replay queued strokes.
+  // When Convex auth comes back (e.g. after re-sign-in), replay queued
+  // strokes. Also retry when the error state appears while already
+  // authenticated — the rehydrated queue flips status asynchronously, so the
+  // auth edge alone can be consumed before the queue is visible.
   const wasAuthenticatedRef = useRef(isAuthenticated)
   useEffect(() => {
-    if (isAuthenticated && !wasAuthenticatedRef.current && sync.status === 'error') {
+    const cameOnline = isAuthenticated && !wasAuthenticatedRef.current
+    wasAuthenticatedRef.current = isAuthenticated
+    if (isAuthenticated && sync.status === 'error' && (cameOnline || sync.pendingStrokeCount > 0)) {
       void retrySync()
     }
-    wasAuthenticatedRef.current = isAuthenticated
   }, [isAuthenticated, sync.status])
 
   if (import.meta.env.VITE_AUTH_DISABLED === 'true') return null
@@ -58,6 +63,10 @@ export function SyncStatusBanner() {
 
   const handleSignInAgain = async () => {
     setSigningIn(true)
+    // Queued strokes are persisted to localStorage (write-through in
+    // syncStatus) and replayed after the round-trip, so this intentional
+    // full-page redirect loses nothing — don't show the "Leave site?" prompt.
+    suppressUnloadGuard()
     try {
       // Round-trip through Google to mint a fresh Convex JWT, then land back
       // on this painting so no work is lost.
@@ -65,10 +74,14 @@ export function SyncStatusBanner() {
         provider: 'google',
         callbackURL: window.location.pathname + window.location.search,
       })
-      if (result.error) setSigningIn(false)
+      if (result.error) {
+        setSigningIn(false)
+        resumeUnloadGuard()
+      }
       // On success the browser navigates away; leave the spinner running.
     } catch {
       setSigningIn(false)
+      resumeUnloadGuard()
     }
   }
 
@@ -89,7 +102,7 @@ export function SyncStatusBanner() {
         )}
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        {isAuthIssue && isSignedIn && (
+        {isAuthIssue && (
           <button
             type="button"
             onClick={handleSignInAgain}
@@ -97,7 +110,9 @@ export function SyncStatusBanner() {
             className="flex items-center gap-1 rounded bg-amber-600 px-2 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-60"
           >
             {signingIn && <Loader2 className="h-3 w-3 animate-spin" />}
-            Sign in again
+            {/* Also offered when the session is fully expired (isSignedIn
+                false) — that state previously had no actionable CTA. */}
+            {isSignedIn ? 'Sign in again' : 'Sign in'}
           </button>
         )}
         <button
