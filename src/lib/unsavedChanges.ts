@@ -34,13 +34,28 @@ function hasUnsavedWork(): boolean {
 }
 
 let installed = false;
+let suppressed = false;
+
+/**
+ * Skip the "Leave site?" prompt for an intentional navigation that doesn't
+ * lose work — e.g. the sign-in redirect, where queued strokes are persisted
+ * to localStorage and replayed after the round-trip.
+ */
+export function suppressUnloadGuard() {
+  suppressed = true;
+}
+
+/** Re-enable the prompt (e.g. when the sign-in redirect fails). */
+export function resumeUnloadGuard() {
+  suppressed = false;
+}
 
 /** Idempotent; safe to call from any component effect (client only). */
 export function installUnloadGuard() {
   if (installed || typeof window === "undefined") return;
   installed = true;
   window.addEventListener("beforeunload", (e) => {
-    if (!hasUnsavedWork()) return;
+    if (suppressed || !hasUnsavedWork()) return;
     e.preventDefault();
     // Required by some browsers to actually show the prompt
     e.returnValue = "";

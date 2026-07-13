@@ -267,6 +267,30 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   const autoFittedRef = useRef<Set<string>>(new Set())
   // Map to track pending strokes by their temporary IDs to backend IDs
   const pendingStrokeIdsRef = useRef<Map<string, Id<"strokes"> | null>>(new Map())
+  // Latest backend stroke ids, kept for resolvePendingStroke's race check
+  const confirmedStrokeIdsRef = useRef<Set<string>>(new Set())
+  // Called when addStrokeToSession settles — possibly much later, after a
+  // failed stroke has been queued and replayed. A backend id links the
+  // optimistic stroke so the confirmation effect can clear it once the real
+  // stroke arrives; undefined means the stroke was permanently dropped
+  // (poison pill / clear-canvas discard), so remove the optimistic copy
+  // instead of letting it render forever.
+  const resolvePendingStroke = useCallback((tempId: string, strokeId: Id<"strokes"> | undefined) => {
+    if (strokeId && !confirmedStrokeIdsRef.current.has(strokeId)) {
+      pendingStrokeIdsRef.current.set(tempId, strokeId)
+    } else {
+      // Either dropped, or the backend stroke already arrived via the query
+      // before this mapping landed (the confirmation effect can no longer
+      // match it) — clear the optimistic copy now.
+      pendingStrokeIdsRef.current.delete(tempId)
+      setPendingStrokes(prev => {
+        if (!prev.has(tempId)) return prev
+        const map = new Map(prev)
+        map.delete(tempId)
+        return map
+      })
+    }
+  }, [])
   // Cursor position for brush size indicator
   const [cursorPosition, setCursorPosition] = useState<Point | null>(null)
   // Track if mouse is over the canvas stage (via shared context)
@@ -469,11 +493,12 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
 
   // Remove confirmed strokes from pending when they appear in the strokes array
   useEffect(() => {
+    confirmedStrokeIdsRef.current = new Set(strokes.map(s => s._id))
     if (strokes.length > 0) {
       setPendingStrokes(prev => {
         const newPending = new Map(prev)
-        const strokeIds = new Set(strokes.map(s => s._id))
-        
+        const strokeIds = confirmedStrokeIdsRef.current
+
         // Check each pending stroke to see if it's been confirmed
         for (const [tempId, pendingStroke] of newPending) {
           const backendId = pendingStrokeIdsRef.current.get(tempId)
@@ -773,9 +798,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
         pendingStrokeIdsRef.current.set(tempId, null)
         const layerIdToUse = activeLayerId || null
         addStrokeToSession(finalStrokePoints, '#000000', size, 1, true, layerIdToUse, 'solid').then(strokeId => {
-          if (strokeId) {
-            pendingStrokeIdsRef.current.set(tempId, strokeId)
-          }
+          resolvePendingStroke(tempId, strokeId)
         }).catch(err => {
           console.error('[KonvaCanvas] Error saving eraser stroke on image layer:', err)
         })
@@ -830,9 +853,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
         console.log('[KonvaCanvas] Saving stroke with layerId:', layerIdToUse, 'isEraser:', selectedTool === 'eraser', 'activeLayerId:', activeLayerId, 'activePaintLayerId:', activePaintLayerId, 'activeLayer:', activeLayer)
         addStrokeToSession(finalStrokePoints, color, size, opacity, selectedTool === 'eraser', layerIdToUse, selectedTool === 'eraser' ? 'solid' : colorMode).then(strokeId => {
           console.log('[KonvaCanvas] Stroke saved with ID:', strokeId)
-          if (strokeId) {
-            pendingStrokeIdsRef.current.set(tempId, strokeId)
-          }
+          resolvePendingStroke(tempId, strokeId)
         }).catch(err => {
           console.error('[KonvaCanvas] Error saving stroke:', err)
         })
@@ -842,7 +863,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     setCurrentStroke([])
     setCurrentStrokeId(null)
     onStrokeEnd?.()
-  }, [isDrawing, currentStroke, getPointerPosition, color, size, opacity, addStrokeToSession, onStrokeEnd, selectedTool, activeLayerId, activePaintLayerId, layers])
+  }, [isDrawing, currentStroke, getPointerPosition, color, size, opacity, addStrokeToSession, resolvePendingStroke, onStrokeEnd, selectedTool, activeLayerId, activePaintLayerId, layers])
 
   // Fallback global listener to ensure drawing stops if pointer capture fails
   useEffect(() => {
@@ -876,9 +897,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
           pendingStrokeIdsRef.current.set(tempId, null)
           const layerIdToUse = activeLayerId || null
           addStrokeToSession(currentStroke, '#000000', size, 1, true, layerIdToUse, 'solid').then(strokeId => {
-            if (strokeId) {
-              pendingStrokeIdsRef.current.set(tempId, strokeId)
-            }
+            resolvePendingStroke(tempId, strokeId)
           })
         } else {
           // Normal paint layer behavior
@@ -928,9 +947,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
           })
 
           addStrokeToSession(currentStroke, color, size, opacity, selectedTool === 'eraser', layerIdToUse, selectedTool === 'eraser' ? 'solid' : colorMode).then(strokeId => {
-            if (strokeId) {
-              pendingStrokeIdsRef.current.set(tempId, strokeId)
-            }
+            resolvePendingStroke(tempId, strokeId)
           })
         }
       }
@@ -942,7 +959,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
 
     document.addEventListener('pointerup', handleGlobalPointerUp)
     return () => document.removeEventListener('pointerup', handleGlobalPointerUp)
-  }, [isDrawing, currentStroke, color, size, opacity, addStrokeToSession, onStrokeEnd, selectedTool, activeLayerId, activePaintLayerId, layers])
+  }, [isDrawing, currentStroke, color, size, opacity, addStrokeToSession, resolvePendingStroke, onStrokeEnd, selectedTool, activeLayerId, activePaintLayerId, layers])
 
   // Handle pointer leave - hide cursor  
   const handlePointerLeave = useCallback(() => {
