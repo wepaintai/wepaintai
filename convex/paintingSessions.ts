@@ -327,8 +327,10 @@ export const restoreSession = mutation({
       .query("users")
       .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
       .first();
+    // Non-owners get the same answer as a missing id so they can't probe
+    // whether a session exists (getSession deliberately hides this too)
     if (!user || session.createdBy !== user._id) {
-      throw new Error("You can only restore your own sessions");
+      return "not_found";
     }
 
     if (session.deletedAt === undefined) return "restored"; // already live

@@ -100,8 +100,9 @@ export function MergeTwoModal({
         {/* Close button */}
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 text-white/70 hover:text-white transition-colors z-10 bg-black/50 rounded-full p-1"
+          className="absolute top-2.5 right-2.5 text-white/70 hover:text-white transition-colors z-10 bg-black/50 rounded-full p-2.5"
           disabled={isMerging}
+          aria-label="Close modal"
         >
           <X className="w-5 h-5" />
         </button>

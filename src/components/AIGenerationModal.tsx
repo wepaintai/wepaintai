@@ -114,8 +114,9 @@ export function AIGenerationModal({
         {/* Close button */}
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 text-white/70 hover:text-white transition-colors z-10 bg-black/50 rounded-full p-1"
+          className="absolute top-2.5 right-2.5 text-white/70 hover:text-white transition-colors z-10 bg-black/50 rounded-full p-2.5"
           disabled={isGenerating}
+          aria-label="Close modal"
         >
           <X className="w-5 h-5" />
         </button>
@@ -183,7 +184,7 @@ export function AIGenerationModal({
                 disabled={isGenerating}
                 className="w-full accent-blue-500"
               />
-              <div className="flex justify-between text-xs text-white/50">
+              <div className="flex justify-between text-xs text-white/70">
                 <span>Ignore canvas</span>
                 <span>Keep my drawing</span>
               </div>
@@ -359,7 +360,7 @@ export function AIGenerationModal({
                   </button>
                 ))}
               </div>
-              <p className="text-xs text-white/50 mt-1">Click a thumbnail to add it back as a layer.</p>
+              <p className="text-xs text-white/70 mt-1">Click a thumbnail to add it back as a layer.</p>
             </div>
           )}
 
