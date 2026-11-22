@@ -79,7 +79,7 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
                 Sign in with your Google account to save your work and use AI
                 features.
               </p>
-              <p className="text-white/40 text-xs text-center mb-4">
+              <p className="text-white/70 text-xs text-center mb-4">
                 New here? Signing in with Google creates your account
                 automatically.
               </p>

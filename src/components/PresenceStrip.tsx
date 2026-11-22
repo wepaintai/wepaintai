@@ -24,15 +24,21 @@ function initialOf(name: string): string {
   return trimmed ? trimmed[0].toUpperCase() : '?'
 }
 
-export function PresenceStrip({ presence, currentUser, presenceGuestId, connectionStatus }: PresenceStripProps) {
+/**
+ * Presence rows for everyone but the current user, deduped by identity
+ * (userId, guestId, or record id as fallback) and limited to recently-active
+ * records. Shared so every online count in the UI agrees with the strip.
+ */
+export function activeCollaborators(
+  presence: UserPresence[],
+  currentUserId: Id<'users'> | null,
+  presenceGuestId?: string
+): UserPresence[] {
   const now = Date.now()
-
   const isSelf = (p: UserPresence) =>
-    currentUser.id ? p.userId === currentUser.id : !!presenceGuestId && p.guestId === presenceGuestId
-
-  // Dedupe collaborators by identity (userId, guestId, or record id as fallback)
+    currentUserId ? p.userId === currentUserId : !!presenceGuestId && p.guestId === presenceGuestId
   const seen = new Set<string>()
-  const collaborators = presence.filter((p) => {
+  return presence.filter((p) => {
     if (isSelf(p)) return false
     if (now - p.lastSeen > ACTIVE_WINDOW_MS) return false
     const key = p.userId?.toString() || p.guestId || p._id.toString()
@@ -40,6 +46,10 @@ export function PresenceStrip({ presence, currentUser, presenceGuestId, connecti
     seen.add(key)
     return true
   })
+}
+
+export function PresenceStrip({ presence, currentUser, presenceGuestId, connectionStatus }: PresenceStripProps) {
+  const collaborators = activeCollaborators(presence, currentUser.id, presenceGuestId)
 
   const onlineCount = collaborators.length + 1
   const maxDots = 5

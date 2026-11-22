@@ -679,6 +679,28 @@ export function ToolPanel({
   const [isCollapsed, setIsCollapsed] = React.useState(false)
   const [showMenu, setShowMenu] = React.useState(false)
   const [showAuthModal, setShowAuthModal] = React.useState(false)
+
+  // Surface OAuth round-trip failures on the canvas: sign-in from the in-app
+  // modal redirects back here with an `error` query param (e.g. the user
+  // cancelled at Google), but the modal that initiated it is gone after the
+  // reload. Reopen it so GoogleSignInButton can show the error and scrub the
+  // param; if the user is actually signed in, the param is stale — just scrub.
+  React.useEffect(() => {
+    if (!isLoaded) return
+    const params = new URLSearchParams(window.location.search)
+    if (!params.get('error')) return
+    if (isSignedIn) {
+      params.delete('error')
+      const query = params.toString()
+      window.history.replaceState(
+        null,
+        '',
+        window.location.pathname + (query ? `?${query}` : '') + window.location.hash
+      )
+    } else {
+      setShowAuthModal(true)
+    }
+  }, [isLoaded, isSignedIn])
   const [showGuestRecent, setShowGuestRecent] = React.useState(false)
   const [menuPosition, setMenuPosition] = React.useState({ x: 0, y: 0 })
   const [activeTab, setActiveTab] = React.useState<TabId>('tools')
