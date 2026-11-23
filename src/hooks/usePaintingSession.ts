@@ -3,7 +3,6 @@ import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { useCallback, useEffect, useState, useRef, useMemo } from "react";
 import { p2pLogger } from "../lib/p2p-logger";
-import { convexLow } from "../lib/convex";
 import {
   reportSyncFailure,
   reportSyncSuccess,
@@ -147,7 +146,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
   const clearSessionMutation = useMutation(api.strokes.clearSession);
   const removeLastStroke = useMutation(api.strokes.removeLastStroke);
   const restoreLastDeletedStroke = useMutation(api.strokes.restoreLastDeletedStroke);
-  // presence updates use convexLow.mutation with throttling; see updateUserPresence below
+  const updatePresence = useMutation(api.presence.updatePresence);
   const leaveSession = useMutation(api.presence.leaveSession);
   const updateLiveStroke = useMutation(api.liveStrokes.updateLiveStroke);
   const clearLiveStroke = useMutation(api.liveStrokes.clearLiveStroke);
@@ -160,7 +159,9 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
   // For viewer state, use user ID if authenticated, otherwise use name as viewer ID
   const viewerId = currentUser.id || currentUser.name;
   const getViewerState = useQuery(api.viewerAcks.getViewerState,
-    sessionId && viewerId && canReadSessionData ? { sessionId, viewerId } : "skip"
+    sessionId && viewerId && canReadSessionData
+      ? { sessionId, viewerId, guestKey: localGuestKey || undefined }
+      : "skip"
   );
 
   const localLastAckedStrokeOrderRef = useRef<number>(0);
@@ -367,12 +368,13 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     if (!payload) return;
     presenceInFlightRef.current = true;
     try {
-      await convexLow.mutation(api.presence.updatePresence, {
+      await updatePresence({
         sessionId,
         userId: currentUser.id || undefined,
         guestId: currentUser.id ? undefined : getClientId(),
         userColor: currentUser.color,
         userName: currentUser.name,
+        guestKey: localGuestKey || undefined,
         ...payload,
       });
       lastPresenceSentAtRef.current = Date.now();
@@ -381,8 +383,8 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
       if (pendingPresenceRef.current === payload) {
         pendingPresenceRef.current = null;
       }
-      // updatePresence is unauthenticated, so this success can't clear an
-      // auth-kind error — reportSyncSuccess gates on the source.
+      // On public sessions presence can succeed without auth, so presence
+      // successes must not clear an auth-kind error — reportSyncSuccess gates on source.
       reportSyncSuccess("presence");
     } catch (e) {
       // Presence is best-effort, but a failure here is the same auth/network
@@ -391,7 +393,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     } finally {
       presenceInFlightRef.current = false;
     }
-  }, [sessionId, currentUser.id, currentUser.color, currentUser.name]);
+  }, [sessionId, updatePresence, currentUser.id, currentUser.color, currentUser.name, localGuestKey]);
 
   // Presence heartbeat every 20s: flush anything queued, or re-send the last
   // position so lastSeen stays fresh and idle users still count as online.
@@ -625,18 +627,20 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     return () => {
       window.removeEventListener("pagehide", handlePageHide);
       if (currentSessionId) {
+        const currentGuestKey = getGuestKey(currentSessionId) || undefined;
         // Guests identify by their stable client id instead of a user id
-        convexLow.mutation(api.presence.leaveSession, {
+        void leaveSession({
           sessionId: currentSessionId,
           userId: currentViewerId || undefined,
           guestId: currentViewerId ? undefined : getClientId(),
-        });
+          guestKey: currentGuestKey,
+        }).catch(() => {});
         if (currentViewerId) {
-          removeViewerState({
+          void removeViewerState({
             sessionId: currentSessionId,
             viewerId: currentViewerId,
-            guestKey: getGuestKey(currentSessionId) || undefined,
-          });
+            guestKey: currentGuestKey,
+          }).catch(() => {});
         }
       }
       // Clean up any pending live stroke updates

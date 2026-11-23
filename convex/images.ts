@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
-import { assertCanModifySession } from "./sessionAuth";
+import { assertCanModifySession, canReadSession } from "./sessionAuth";
 
 // Upload an image to storage and create a record
 export const uploadImage = mutation({
@@ -192,20 +192,8 @@ export const getSessionImages = query({
   handler: async (ctx, args) => {
     // Authorization: allow if public or owner
     const session = await ctx.db.get(args.sessionId);
-    if (!session) return [];
-    if (!session.isPublic) {
-      const identity = await ctx.auth.getUserIdentity();
-      if (identity) {
-        const user = await ctx.db
-          .query("users")
-          .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
-          .first();
-        if (!user || session.createdBy !== user._id) {
-          if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [] as any[];
-        }
-      } else {
-        if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [] as any[];
-      }
+    if (!(await canReadSession(ctx, session, args.guestKey))) {
+      return [] as any[];
     }
     // Get uploaded images
     const uploadedImages = await ctx.db
@@ -503,20 +491,8 @@ export const getAIGeneratedImages = query({
   args: { sessionId: v.id("paintingSessions"), guestKey: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!session) return [];
-    if (!session.isPublic) {
-      const identity = await ctx.auth.getUserIdentity();
-      if (identity) {
-        const user = await ctx.db
-          .query("users")
-          .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
-          .first();
-        if (!user || session.createdBy !== user._id) {
-          if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
-        }
-      } else {
-        if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
-      }
+    if (!(await canReadSession(ctx, session, args.guestKey))) {
+      return [];
     }
     const aiImages = await ctx.db
       .query("aiGeneratedImages")

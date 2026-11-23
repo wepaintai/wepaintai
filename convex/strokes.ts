@@ -1,6 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import { assertCanModifySession } from "./sessionAuth";
+import { assertCanModifySession, canReadSession } from "./sessionAuth";
 
 /**
  * Add a new stroke to a painting session
@@ -32,14 +32,25 @@ export const addStroke = mutation({
     }
 
     // Authorization: allow if public or owner or guest owner
-    await assertCanModifySession(ctx, session, args.guestKey);
+    const { user } = await assertCanModifySession(ctx, session, args.guestKey);
+
+    // Derive authenticated attribution strictly from ctx.auth
+    if (args.userId && (!user || user._id !== args.userId)) {
+      throw new Error("Unauthorized");
+    }
+    const effectiveUserId = user?._id;
 
     // Increment stroke counter for ordering
     const strokeOrder = session.strokeCounter + 1;
 
-    // If no layerId provided, ensure a default layer exists
+    // If layerId provided, verify it belongs to this session
     let layerId = args.layerId;
-    if (!layerId) {
+    if (layerId) {
+      const targetLayer = await ctx.db.get(layerId);
+      if (!targetLayer || targetLayer.sessionId !== args.sessionId) {
+        throw new Error("Layer does not belong to this session");
+      }
+    } else {
       // Check for existing paint layers
       const defaultLayer = await ctx.db
         .query("paintLayers")
@@ -56,7 +67,7 @@ export const addStroke = mutation({
           layerOrder: 0,
           visible: true,
           opacity: 1,
-          createdBy: args.userId,
+          createdBy: effectiveUserId,
           createdAt: Date.now(),
         });
       }
@@ -66,7 +77,7 @@ export const addStroke = mutation({
     const strokeId = await ctx.db.insert("strokes", {
       sessionId: args.sessionId,
       layerId,
-      userId: args.userId,
+      userId: effectiveUserId,
       userColor: args.userColor,
       points: args.points,
       brushColor: args.brushColor,
@@ -87,6 +98,9 @@ export const addStroke = mutation({
       strokeCounter: strokeOrder,
       recentStrokeOrders: updatedRecentOrders,
       recentStrokeIds: updatedRecentIds,
+      lastAction: undefined,
+      lastClearBatchId: undefined,
+      lastModified: Date.now(),
     });
 
     return strokeId;
@@ -123,23 +137,8 @@ export const getSessionStrokes = query({
   handler: async (ctx, args) => {
     // First, ensure session cache is populated for fast undo/redo
     const session = await ctx.db.get(args.sessionId);
-    if (!session) {
+    if (!(await canReadSession(ctx, session, args.guestKey))) {
       return [];
-    }
-    // Authorization: allow if public or owner or guest owner
-    if (!session.isPublic) {
-      const identity = await ctx.auth.getUserIdentity();
-      if (identity) {
-        const user = await ctx.db
-          .query("users")
-          .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
-          .first();
-        if (!user || session.createdBy !== user._id) {
-          if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
-        }
-      } else {
-        if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
-      }
     }
     
     // Use the index with order to get strokes already sorted
@@ -150,7 +149,7 @@ export const getSessionStrokes = query({
       .collect();
     
     // Check if session needs cache population
-    if (strokes.length > 0) {
+    if (strokes.length > 0 && session) {
       const needsCacheUpdate = !session.recentStrokeIds || session.recentStrokeIds.length === 0;
       
       if (needsCacheUpdate) {
@@ -194,20 +193,8 @@ export const getLayerStrokes = query({
   })),
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!session) return [];
-    if (!session.isPublic) {
-      const identity = await ctx.auth.getUserIdentity();
-      if (identity) {
-        const user = await ctx.db
-          .query("users")
-          .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
-          .first();
-        if (!user || session.createdBy !== user._id) {
-          if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
-        }
-      } else {
-        if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
-      }
+    if (!(await canReadSession(ctx, session, args.guestKey))) {
+      return [];
     }
     return await ctx.db
       .query("strokes")
@@ -248,20 +235,8 @@ export const getStrokesAfter = query({
   })),
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!session) return [];
-    if (!session.isPublic) {
-      const identity = await ctx.auth.getUserIdentity();
-      if (identity) {
-        const user = await ctx.db
-          .query("users")
-          .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
-          .first();
-        if (!user || session.createdBy !== user._id) {
-          if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
-        }
-      } else {
-        if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
-      }
+    if (!(await canReadSession(ctx, session, args.guestKey))) {
+      return [];
     }
     return await ctx.db
       .query("strokes")
@@ -343,19 +318,21 @@ export const removeLastStroke = mutation({
     }
 
     let lastStroke = null;
+    let currentRecentOrders = session.recentStrokeOrders || [];
+    let currentRecentIds = session.recentStrokeIds || [];
     
     // First try to use the cached stroke IDs for instant access
-    const recentIds = session.recentStrokeIds || [];
-    if (recentIds.length > 0) {
-      const lastStrokeId = recentIds[recentIds.length - 1];
+    if (currentRecentIds.length > 0) {
+      const lastStrokeId = currentRecentIds[currentRecentIds.length - 1];
       lastStroke = await ctx.db.get(lastStrokeId);
       
       // If the cached stroke was deleted, clean up the cache
       if (!lastStroke) {
-        const cleanedIds = recentIds.slice(0, -1);
+        currentRecentIds = currentRecentIds.slice(0, -1);
+        currentRecentOrders = currentRecentOrders.slice(0, -1);
         await ctx.db.patch(args.sessionId, {
-          recentStrokeIds: cleanedIds,
-          recentStrokeOrders: (session.recentStrokeOrders || []).slice(0, -1),
+          recentStrokeIds: currentRecentIds,
+          recentStrokeOrders: currentRecentOrders,
         });
       }
     }
@@ -376,10 +353,8 @@ export const removeLastStroke = mutation({
         
         // Update cache with these strokes for future operations
         const sortedRecent = recentStrokes.reverse(); // Back to ascending order
-        await ctx.db.patch(args.sessionId, {
-          recentStrokeOrders: sortedRecent.map(s => s.strokeOrder),
-          recentStrokeIds: sortedRecent.map(s => s._id),
-        });
+        currentRecentOrders = sortedRecent.map(s => s.strokeOrder);
+        currentRecentIds = sortedRecent.map(s => s._id);
       }
     }
 
@@ -406,15 +381,13 @@ export const removeLastStroke = mutation({
     // Delete the last stroke
     await ctx.db.delete(lastStroke._id);
     
-    // Update recent stroke orders, IDs, and deleted count
-    const recentOrders = session.recentStrokeOrders || [];
-    const cachedRecentIds = session.recentStrokeIds || [];
-    const updatedRecentOrders = recentOrders.filter(order => order !== lastStroke.strokeOrder);
-    const updatedRecentIds = cachedRecentIds.filter(id => id !== lastStroke._id);
+    // Update recent stroke orders, IDs, and deleted count using the fresh cache
+    const updatedRecentOrders = currentRecentOrders.filter(order => order !== lastStroke.strokeOrder);
+    const updatedRecentIds = currentRecentIds.filter(id => id !== lastStroke._id);
     const deletedCount = (session.deletedStrokeCount || 0) + 1;
     
     await ctx.db.patch(args.sessionId, {
-      strokeCounter: session.strokeCounter - 1,
+      strokeCounter: Math.max(0, session.strokeCounter - 1),
       recentStrokeOrders: updatedRecentOrders,
       recentStrokeIds: updatedRecentIds,
       deletedStrokeCount: deletedCount,
@@ -445,7 +418,9 @@ export const restoreLastDeletedStroke = mutation({
 
     let lastDeletedStroke = null;
     
-    // Use lastDeletedStrokeOrder for direct lookup if available
+    // Prefer the most recently deleted stroke matching lastDeletedStrokeOrder;
+    // avoid `.unique()` because undo -> draw -> undo can legitimately leave
+    // two deletedStrokes rows sharing the same strokeOrder.
     const lastDeletedStrokeOrder = session.lastDeletedStrokeOrder;
     if (lastDeletedStrokeOrder !== undefined && lastDeletedStrokeOrder !== null) {
       lastDeletedStroke = await ctx.db
@@ -454,10 +429,11 @@ export const restoreLastDeletedStroke = mutation({
           q.eq("sessionId", args.sessionId)
            .eq("strokeOrder", lastDeletedStrokeOrder)
         )
-        .unique();
+        .order("desc")
+        .first();
     }
     
-    // Fallback to the old method if needed
+    // Fallback to the most recently deleted stroke
     if (!lastDeletedStroke) {
       lastDeletedStroke = await ctx.db
         .query("deletedStrokes")
@@ -488,14 +464,17 @@ export const restoreLastDeletedStroke = mutation({
     // Remove from deleted strokes
     await ctx.db.delete(lastDeletedStroke._id);
     
-    // Update recent stroke orders, IDs, and deleted count
+    // Keep recentStrokeOrders and recentStrokeIds aligned by strokeOrder
     const recentOrders = session.recentStrokeOrders || [];
     const recentIds = session.recentStrokeIds || [];
-    const updatedRecentOrders = [...recentOrders, lastDeletedStroke.strokeOrder]
-      .sort((a, b) => a - b)
-      .slice(-10); // Keep last 10 in order
-    const updatedRecentIds = [...recentIds, restoredStrokeId]
-      .slice(-10); // Keep last 10
+    const paired = recentOrders
+      .slice(0, recentIds.length)
+      .map((order, idx) => ({ order, id: recentIds[idx] }));
+    paired.push({ order: lastDeletedStroke.strokeOrder, id: restoredStrokeId });
+    paired.sort((a, b) => a.order - b.order);
+    const trimmed = paired.slice(-10);
+    const updatedRecentOrders = trimmed.map((p) => p.order);
+    const updatedRecentIds = trimmed.map((p) => p.id);
     const deletedCount = Math.max(0, (session.deletedStrokeCount || 1) - 1);
     
     // Find the next most recent deleted stroke for future redo operations
@@ -505,16 +484,13 @@ export const restoreLastDeletedStroke = mutation({
       .order("desc")
       .first();
     
-    const sessionPatch: any = {
+    await ctx.db.patch(args.sessionId, {
       strokeCounter: Math.max(session.strokeCounter, lastDeletedStroke.strokeOrder),
       recentStrokeOrders: updatedRecentOrders,
       recentStrokeIds: updatedRecentIds,
       deletedStrokeCount: deletedCount,
-    };
-    if (nextDeletedStroke) {
-      sessionPatch.lastDeletedStrokeOrder = nextDeletedStroke.strokeOrder;
-    }
-    await ctx.db.patch(args.sessionId, sessionPatch);
+      lastDeletedStrokeOrder: nextDeletedStroke ? nextDeletedStroke.strokeOrder : undefined,
+    });
 
     return true;
   },
@@ -592,9 +568,8 @@ export const clearSession = mutation({
       .collect();
 
     if (strokes.length === 0) {
-      // Nothing to move, but mark last action so Undo can no-op gracefully
       await ctx.db.patch(args.sessionId, {
-        lastAction: 'clear',
+        lastAction: undefined,
         lastClearBatchId: undefined,
         recentStrokeOrders: [],
         recentStrokeIds: [],
@@ -605,7 +580,9 @@ export const clearSession = mutation({
 
     // Tag this clear with batch id and move strokes to deletedStrokes
     const batchId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    let lastOrder = 0;
     for (const s of strokes) {
+      if (s.strokeOrder > lastOrder) lastOrder = s.strokeOrder;
       await ctx.db.insert("deletedStrokes", {
         sessionId: s.sessionId,
         layerId: s.layerId,
@@ -625,7 +602,6 @@ export const clearSession = mutation({
     }
 
     const newDeletedCount = (session.deletedStrokeCount || 0) + strokes.length;
-    const lastOrder = Math.max(...strokes.map((s) => s.strokeOrder));
     await ctx.db.patch(args.sessionId, {
       strokeCounter: 0,
       recentStrokeOrders: [],
@@ -658,7 +634,7 @@ export const getUndoRedoAvailability = query({
   }),
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!session) {
+    if (!session || !(await canReadSession(ctx, session, args.guestKey))) {
       return {
         canUndo: false,
         canRedo: false,
@@ -666,30 +642,6 @@ export const getUndoRedoAvailability = query({
         deletedCount: 0,
         cacheWarmed: false,
       };
-    }
-
-    // Authorization for private sessions (view availability only if owner or guest owner)
-    if (!session.isPublic) {
-      const identity = await ctx.auth.getUserIdentity();
-      let authorized = false;
-      if (identity) {
-        const user = await ctx.db
-          .query("users")
-          .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
-          .first();
-        authorized = !!user && session.createdBy === user._id;
-      }
-      if (!authorized) {
-        if (!(session.guestOwnerKey && args.guestKey && session.guestOwnerKey === args.guestKey)) {
-          return {
-            canUndo: false,
-            canRedo: false,
-            strokeCount: 0,
-            deletedCount: 0,
-            cacheWarmed: false,
-          };
-        }
-      }
     }
 
     const recentIds = session.recentStrokeIds || [];

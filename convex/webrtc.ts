@@ -1,10 +1,10 @@
 import { mutation, query, internalMutation, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
+import { assertCanModifySession } from "./sessionAuth";
 
 /**
- * Authorization: allow if public or owner or guest owner.
- * Same pattern as strokes.addStroke / images.getSessionImages.
+ * Authorization: allow if public or owner or guest owner, rejecting soft-deleted sessions.
  */
 async function assertSessionAccess(
   ctx: MutationCtx | QueryCtx,
@@ -15,20 +15,7 @@ async function assertSessionAccess(
   if (!session) {
     throw new Error("Session not found");
   }
-  if (!session.isPublic) {
-    const identity = await ctx.auth.getUserIdentity();
-    if (identity) {
-      const user = await ctx.db
-        .query("users")
-        .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
-        .first();
-      if (!user || session.createdBy !== user._id) {
-        if (!session.guestOwnerKey || session.guestOwnerKey !== guestKey) throw new Error("Unauthorized");
-      }
-    } else {
-      if (!session.guestOwnerKey || session.guestOwnerKey !== guestKey) throw new Error("Unauthorized");
-    }
-  }
+  await assertCanModifySession(ctx, session, guestKey);
   return session;
 }
 

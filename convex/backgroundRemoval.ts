@@ -1,55 +1,55 @@
 import { v } from "convex/values";
 import { action } from "./_generated/server";
-import { api, internal } from "./_generated/api";
+import { internal } from "./_generated/api";
 
 export const removeBackground = action({
   args: {
     sessionId: v.id("paintingSessions"),
     imageData: v.string(),
     targetLayerId: v.optional(v.string()),
+    guestKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     console.log("[BG-REMOVAL] Starting background removal process");
 
-    // Get the session to check ownership
-    const sessionResult = await ctx.runQuery(api.paintingSessions.getSession, {
+    const access = await ctx.runQuery(internal.sessionAuth.verifySessionAccess, {
       sessionId: args.sessionId,
+      guestKey: args.guestKey,
+      requireAuth: true,
     });
 
-    if (sessionResult.status === "not_found") {
+    if (access.status === "not_found") {
       throw new Error("Session not found");
     }
-    if (sessionResult.status !== "ok") {
-      throw new Error("You don't have permission to edit this painting");
-    }
-    const session = sessionResult.session;
-
-    // Check authentication
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
+    if (access.status === "unauthenticated") {
       throw new Error("Authentication required for background removal");
     }
-
-    const userId = identity.subject;
-
-    // Check if user owns the session (createdBy is optional, so also check if session is public)
-    if (session.createdBy && session.createdBy !== userId) {
+    if (access.status !== "ok") {
       throw new Error("You don't have permission to edit this painting");
     }
 
-    // Check if user has enough tokens (1 token per background removal)
-    const hasTokens = await ctx.runQuery(internal.tokens.hasEnoughTokensForOperation, {
-      operationType: "background-removal",
-    });
-    
-    if (!hasTokens) {
-      throw new Error("Insufficient tokens. Background removal costs 1 token.");
-    }
-
-    // Get Replicate API token from environment
+    // Get Replicate API token from environment before reserving tokens
     const replicateToken = process.env.REPLICATE_API_TOKEN;
     if (!replicateToken) {
       throw new Error("Replicate API token not configured");
+    }
+
+    // Reserve 1 token atomically BEFORE any external provider spending
+    const operationId = `bg-${Date.now()}-${crypto.randomUUID()}`;
+    let tokenReserved: boolean;
+    try {
+      const reservation = await ctx.runMutation(internal.tokens.consumeTokensForOperation, {
+        operationId,
+        operationType: "background-removal",
+        sessionId: args.sessionId,
+        targetLayerId: args.targetLayerId,
+      });
+      tokenReserved = reservation.charged;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("Insufficient tokens")) {
+        throw new Error("Insufficient tokens. Background removal costs 1 token.");
+      }
+      throw error;
     }
 
     try {
@@ -83,7 +83,8 @@ export const removeBackground = action({
 
       // Poll for completion
       let attempts = 0;
-      const maxAttempts = parseInt(process.env.REPLICATE_TIMEOUT_SECONDS || "180"); // Default 180 seconds timeout
+      const parsedTimeout = parseInt(process.env.REPLICATE_TIMEOUT_SECONDS || "180", 10);
+      const maxAttempts = Number.isFinite(parsedTimeout) && parsedTimeout > 0 ? parsedTimeout : 180;
       let output: any;
 
       while (attempts < maxAttempts) {
@@ -107,7 +108,7 @@ export const removeBackground = action({
           output = status.output;
           console.log("[BG-REMOVAL] Model output:", output);
           break;
-        } else if (status.status === "failed") {
+        } else if (status.status === "failed" || status.status === "canceled") {
           throw new Error(status.error || "Background removal failed");
         }
 
@@ -154,14 +155,6 @@ export const removeBackground = action({
         throw new Error("Failed to get storage URL");
       }
 
-      // Deduct token
-      await ctx.runMutation(internal.tokens.consumeTokensForOperation, {
-        operationId: crypto.randomUUID(),
-        operationType: "background-removal",
-        sessionId: args.sessionId,
-        targetLayerId: args.targetLayerId,
-      });
-
       console.log("[BG-REMOVAL] Background removal successful");
       
       return {
@@ -170,6 +163,13 @@ export const removeBackground = action({
         storageId,
       };
     } catch (error) {
+      if (tokenReserved) {
+        await ctx.runMutation(internal.tokens.refundTokensForOperation, {
+          operationId,
+          operationType: "background-removal",
+          reason: error instanceof Error ? error.message : "Background removal failed",
+        });
+      }
       console.error("[BG-REMOVAL] Error:", error);
       
       if (error instanceof Error) {

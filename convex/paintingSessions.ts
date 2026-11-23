@@ -2,7 +2,7 @@ import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { createUserWithWelcomeTokens } from "./users";
-import { assertCanModifySession } from "./sessionAuth";
+import { assertCanModifySession, canReadSession } from "./sessionAuth";
 
 /**
  * Create a new painting session
@@ -479,32 +479,16 @@ export const getAIPrompts = query({
   returns: v.array(v.string()),
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!session) {
+    if (!session || !(await canReadSession(ctx, session, args.guestKey))) {
       return [];
-    }
-    if (!session.isPublic) {
-      const identity = await ctx.auth.getUserIdentity();
-      let authorized = false;
-      if (identity) {
-        const user = await ctx.db
-          .query("users")
-          .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
-          .first();
-        authorized = !!user && session.createdBy === user._id;
-      }
-      if (!authorized) {
-        if (!(session.guestOwnerKey && args.guestKey && session.guestOwnerKey === args.guestKey)) {
-          return [];
-        }
-      }
     }
     return session.aiPrompts || [];
   },
 });
 
 /**
- * Claim ownership of an orphaned session (createdBy is undefined)
- * Assigns to the current authenticated user if no owner is set.
+ * Claim ownership of an orphaned public session (createdBy is undefined).
+ * Assigns to the current authenticated user if no owner or guest key is set.
  */
 export const claimSessionOwnership = mutation({
   args: {
@@ -515,7 +499,8 @@ export const claimSessionOwnership = mutation({
     if (!identity) return;
 
     const session = await ctx.db.get(args.sessionId);
-    if (!session) return;
+    if (!session || session.deletedAt !== undefined) return;
+    if (!session.isPublic) return;
 
     // Only claim if no owner is set
     if (session.createdBy !== undefined) return;
@@ -599,27 +584,12 @@ export const setSessionVisibility = mutation({
   },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!session) throw new Error("Session not found");
-    
-    // If authenticated, require owner
-    const identity = await ctx.auth.getUserIdentity();
-    if (identity) {
-      const user = await ctx.db
-        .query("users")
-        .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
-        .first();
-      if (!user) throw new Error("User not found");
-      if (session.createdBy !== user._id) {
-        // Not owner as user, try guest key
-        if (!(session.guestOwnerKey && args.guestKey && session.guestOwnerKey === args.guestKey)) {
-          throw new Error("Only the owner can change visibility");
-        }
-      }
-    } else {
-      // Guest path: validate guest key
-      if (!(session.guestOwnerKey && args.guestKey && session.guestOwnerKey === args.guestKey)) {
-        throw new Error("Only the owner can change visibility");
-      }
+    if (!session || session.deletedAt !== undefined) throw new Error("Session not found");
+
+    try {
+      await assertCanModifySession(ctx, session, args.guestKey, { ownerOnly: true });
+    } catch {
+      throw new Error("Only the owner can change visibility");
     }
 
     await ctx.db.patch(args.sessionId, { isPublic: args.isPublic, lastModified: Date.now() });

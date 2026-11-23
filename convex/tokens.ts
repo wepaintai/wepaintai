@@ -45,19 +45,15 @@ export const getTokenBalance = query({
       
       if (!identity) {
         // Return null for unauthenticated users
-        console.log("[getTokenBalance] No identity found");
         return null;
       }
 
-      console.log("[getTokenBalance] Querying for user with authId:", identity.subject);
       const user = await ctx.db
         .query("users")
         .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
         .first();
 
       if (!user) {
-        // User not found in database
-        console.log("[getTokenBalance] User not found in database for authId:", identity.subject);
         return null;
       }
 
@@ -94,7 +90,10 @@ export const getTokenHistory = query({
 
     if (!user) return [];
 
-    const limit = args.limit ?? 50;
+    const rawLimit = args.limit ?? 50;
+    const limit = Number.isFinite(rawLimit)
+      ? Math.min(200, Math.max(1, Math.floor(rawLimit)))
+      : 50;
     const transactions = await ctx.db
       .query("tokenTransactions")
       .withIndex("by_user", (q) => q.eq("userId", user._id))
@@ -139,7 +138,7 @@ export const consumeTokensForOperation = internalMutation({
       .first();
 
     if (existingTransaction) {
-      return { newBalance: existingTransaction.balance, charged: false };
+      return { newBalance: user.tokens ?? existingTransaction.balance, charged: false };
     }
 
     const tokenCost = assertPositiveTokenAmount(getTokenCost(operationType));
@@ -195,6 +194,82 @@ export const consumeTokensForOperation = internalMutation({
     });
 
     return { newBalance, charged: true };
+  },
+});
+
+// Idempotently refund a previously reserved/debited operation if the external
+// provider fails before producing a usable result. Never credits unless a
+// matching usage debit exists, and never refunds the same operation twice.
+export const refundTokensForOperation = internalMutation({
+  args: {
+    operationId: v.string(),
+    operationType: tokenOperationValidator,
+    reason: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Not authenticated");
+    }
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
+      .first();
+
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    const operationKey = createTokenOperationKey(args.operationType, args.operationId);
+    const refundKey = `refund:${operationKey}`;
+
+    const existingRefund = await ctx.db
+      .query("tokenTransactions")
+      .withIndex("by_user_operation", (q) =>
+        q.eq("userId", user._id).eq("operationKey", refundKey),
+      )
+      .first();
+
+    if (existingRefund) {
+      return { newBalance: user.tokens ?? existingRefund.balance, refunded: false };
+    }
+
+    const usageTx = await ctx.db
+      .query("tokenTransactions")
+      .withIndex("by_user_operation", (q) =>
+        q.eq("userId", user._id).eq("operationKey", operationKey),
+      )
+      .first();
+
+    if (!usageTx || usageTx.type !== "usage") {
+      return { newBalance: user.tokens ?? 0, refunded: false };
+    }
+
+    const refundAmount = assertPositiveTokenAmount(Math.abs(usageTx.amount), "Refund amount");
+    const currentTokens = assertValidTokenBalance(user.tokens ?? 0);
+    const newBalance = assertValidTokenBalance(currentTokens + refundAmount);
+
+    await ctx.db.patch(user._id, {
+      tokens: newBalance,
+      lifetimeTokensUsed: Math.max(0, (user.lifetimeTokensUsed ?? 0) - refundAmount),
+      updatedAt: Date.now(),
+    });
+
+    await ctx.db.insert("tokenTransactions", {
+      userId: user._id,
+      operationKey: refundKey,
+      type: "refund",
+      amount: refundAmount,
+      balance: newBalance,
+      description: args.reason
+        ? `Refund: ${usageTx.description} (${args.reason})`
+        : `Refund: ${usageTx.description}`,
+      metadata: usageTx.metadata,
+      createdAt: Date.now(),
+    });
+
+    return { newBalance, refunded: true };
   },
 });
 

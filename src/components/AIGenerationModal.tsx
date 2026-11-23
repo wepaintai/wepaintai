@@ -60,6 +60,7 @@ export function AIGenerationModal({
         imageDataLength: canvasDataUrl.length
       })
       
+      const guestKey = getGuestKey(sessionId) || undefined
       const result = provider === 'replicate'
         ? await generateImage({
             sessionId,
@@ -68,6 +69,7 @@ export function AIGenerationModal({
             weight: weight,
             canvasWidth: canvasWidth,
             canvasHeight: canvasHeight,
+            guestKey,
           })
         : await generateImageGemini({
             sessionId,
@@ -75,6 +77,7 @@ export function AIGenerationModal({
             imageData: canvasDataUrl,
             canvasWidth: canvasWidth,
             canvasHeight: canvasHeight,
+            guestKey,
           })
 
       console.log('AI Generation result:', result)

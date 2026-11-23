@@ -10,23 +10,25 @@ export const generateImage = action({
     imageData: v.string(), // data URL or base64 PNG
     canvasWidth: v.optional(v.number()),
     canvasHeight: v.optional(v.number()),
+    guestKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     console.log('[GEMINI] generateImage called with prompt:', args.prompt);
 
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
+    const access = await ctx.runQuery(internal.sessionAuth.verifySessionAccess, {
+      sessionId: args.sessionId,
+      guestKey: args.guestKey,
+      requireAuth: true,
+    });
+    if (access.status === "not_found") {
+      return { success: false, error: "Session not found" };
+    }
+    if (access.status === "unauthenticated") {
       console.error('[GEMINI] User not authenticated');
       return { success: false, error: "Please sign in to use AI generation." };
     }
-
-    // Token gating: 1 token per generation to match Replicate
-    const hasTokens = await ctx.runQuery(internal.tokens.hasEnoughTokensForOperation, {
-      operationType: "ai-generation",
-    });
-    if (!hasTokens) {
-      console.error('[GEMINI] Insufficient tokens');
-      return { success: false, error: "Insufficient tokens. Please purchase more tokens to continue." };
+    if (access.status !== "ok") {
+      return { success: false, error: "Unauthorized" };
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
@@ -35,13 +37,51 @@ export const generateImage = action({
       return { success: false, error: "AI generation not configured" };
     }
 
-    // Create a generation request record
+    // Create a generation request record as the immutable operation ID
     const generationId = await ctx.runMutation(internal.aiGeneration.createGenerationRequest, {
       sessionId: args.sessionId,
       prompt: args.prompt,
       status: "pending",
       provider: "gemini",
     });
+
+    // Atomically reserve 1 token BEFORE calling Gemini
+    let tokenReserved = false;
+    try {
+      const reservation = await ctx.runMutation(internal.tokens.consumeTokensForOperation, {
+        operationId: generationId,
+        operationType: "ai-generation",
+      });
+      tokenReserved = reservation.charged;
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message.includes("Insufficient tokens")
+          ? "Insufficient tokens. Please purchase more tokens to continue."
+          : "Unable to reserve token for AI generation.";
+      await ctx.runMutation(internal.aiGeneration.updateGenerationStatus, {
+        generationId,
+        status: "failed",
+        error: message,
+      });
+      return { success: false, error: message };
+    }
+
+    const failAndRefund = async (errorMessage: string) => {
+      await ctx.runMutation(internal.aiGeneration.updateGenerationStatus, {
+        generationId,
+        status: 'failed',
+        error: errorMessage,
+      });
+      if (tokenReserved) {
+        tokenReserved = false;
+        await ctx.runMutation(internal.tokens.refundTokensForOperation, {
+          operationId: generationId,
+          operationType: "ai-generation",
+          reason: errorMessage,
+        });
+      }
+      return { success: false as const, error: errorMessage };
+    };
 
     try {
       // Normalize to base64 without data URL prefix
@@ -66,13 +106,13 @@ export const generateImage = action({
         ],
       };
 
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key=${apiKey}`;
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent`;
 
-      console.log('[GEMINI] Sending request to Gemini endpoint');
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
         },
         body: JSON.stringify(body),
       });
@@ -80,12 +120,7 @@ export const generateImage = action({
       if (!response.ok) {
         const errorText = await response.text();
         console.error('[GEMINI] API error:', errorText);
-        await ctx.runMutation(internal.aiGeneration.updateGenerationStatus, {
-          generationId,
-          status: 'failed',
-          error: 'Failed to start generation',
-        });
-        return { success: false, error: 'Failed to start AI generation' };
+        return await failAndRefund('Failed to start AI generation');
       }
 
       const json = await response.json();
@@ -106,12 +141,7 @@ export const generateImage = action({
 
       if (!imageBase64) {
         console.error('[GEMINI] No image data in response');
-        await ctx.runMutation(internal.aiGeneration.updateGenerationStatus, {
-          generationId,
-          status: 'failed',
-          error: 'No image data returned from Gemini',
-        });
-        return { success: false, error: 'No image data returned from Gemini' };
+        return await failAndRefund('No image data returned from Gemini');
       }
 
       // Convert base64 to Blob and store in Convex storage
@@ -124,22 +154,20 @@ export const generateImage = action({
       const storageId = await ctx.storage.store(blob);
       const storageUrl = await ctx.storage.getUrl(storageId);
 
+      if (!storageUrl) {
+        return await failAndRefund('Failed to store generated image');
+      }
+
       await ctx.runMutation(internal.aiGeneration.updateGenerationStatus, {
         generationId,
         status: 'completed',
-        resultImageUrl: storageUrl || '',
-      });
-
-      // Consume tokens on success
-      await ctx.runMutation(internal.tokens.consumeTokensForOperation, {
-        operationId: generationId,
-        operationType: "ai-generation",
+        resultImageUrl: storageUrl,
       });
 
       return { success: true, imageUrl: storageUrl };
     } catch (error) {
       console.error('[GEMINI] Generation error:', error);
-      return { success: false, error: 'An error occurred during generation' };
+      return await failAndRefund('An error occurred during generation');
     }
   },
 });

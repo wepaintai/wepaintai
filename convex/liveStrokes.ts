@@ -1,6 +1,6 @@
 import { mutation, query, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
-import { assertCanModifySession } from "./sessionAuth";
+import { assertCanModifySession, canReadSession } from "./sessionAuth";
 
 /**
  * Update or create a live stroke for a user
@@ -29,24 +29,31 @@ export const updateLiveStroke = mutation({
     if (!session) {
       throw new Error("Session not found");
     }
-    await assertCanModifySession(ctx, session, args.guestKey);
+    const { user } = await assertCanModifySession(ctx, session, args.guestKey);
+
+    // Derive authenticated user attribution strictly from ctx.auth
+    if (args.userId && (!user || user._id !== args.userId)) {
+      throw new Error("Unauthorized");
+    }
+    const effectiveUserId = user?._id;
+    const effectiveGuestId = effectiveUserId ? undefined : args.guestId;
 
     const now = Date.now();
 
     // Find existing live stroke for this user in this session. Guests all have
     // userId undefined, so they are keyed by their stable per-browser guestId.
-    const existingLiveStroke = args.userId
+    const existingLiveStroke = effectiveUserId
       ? await ctx.db
           .query("liveStrokes")
           .withIndex("by_user_session", (q) =>
-            q.eq("userId", args.userId).eq("sessionId", args.sessionId)
+            q.eq("userId", effectiveUserId).eq("sessionId", args.sessionId)
           )
           .first()
-      : args.guestId
+      : effectiveGuestId
         ? await ctx.db
             .query("liveStrokes")
             .withIndex("by_guest_session", (q) =>
-              q.eq("guestId", args.guestId).eq("sessionId", args.sessionId)
+              q.eq("guestId", effectiveGuestId).eq("sessionId", args.sessionId)
             )
             .first()
         : await ctx.db
@@ -73,8 +80,8 @@ export const updateLiveStroke = mutation({
       // Create new live stroke
       await ctx.db.insert("liveStrokes", {
         sessionId: args.sessionId,
-        userId: args.userId,
-        guestId: args.guestId,
+        userId: effectiveUserId,
+        guestId: effectiveGuestId,
         userColor: args.userColor,
         userName: args.userName,
         points: args.points,
@@ -119,20 +126,8 @@ export const getLiveStrokes = query({
   })),
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!session) return [];
-    if (!session.isPublic) {
-      const identity = await ctx.auth.getUserIdentity();
-      if (identity) {
-        const user = await ctx.db
-          .query("users")
-          .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
-          .first();
-        if (!user || session.createdBy !== user._id) {
-          if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
-        }
-      } else {
-        if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
-      }
+    if (!(await canReadSession(ctx, session, args.guestKey))) {
+      return [];
     }
     const thirtySecondsAgo = Date.now() - 30 * 1000; // 30 seconds
     
@@ -161,36 +156,28 @@ export const clearLiveStroke = mutation({
       // Session is gone; nothing to clear
       return null;
     }
-    await assertCanModifySession(ctx, session, args.guestKey);
+    const { user } = await assertCanModifySession(ctx, session, args.guestKey);
 
     // A caller may only clear their own live stroke: a userId-scoped stroke
     // requires the caller to be signed in as that user
-    if (args.userId) {
-      const identity = await ctx.auth.getUserIdentity();
-      if (!identity) {
-        throw new Error("Unauthorized");
-      }
-      const user = await ctx.db
-        .query("users")
-        .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
-        .first();
-      if (!user || user._id !== args.userId) {
-        throw new Error("Unauthorized");
-      }
+    if (args.userId && (!user || user._id !== args.userId)) {
+      throw new Error("Unauthorized");
     }
+    const effectiveUserId = user?._id;
+    const effectiveGuestId = effectiveUserId ? undefined : args.guestId;
 
-    const liveStroke = args.userId
+    const liveStroke = effectiveUserId
       ? await ctx.db
           .query("liveStrokes")
           .withIndex("by_user_session", (q) =>
-            q.eq("userId", args.userId).eq("sessionId", args.sessionId)
+            q.eq("userId", effectiveUserId).eq("sessionId", args.sessionId)
           )
           .first()
-      : args.guestId
+      : effectiveGuestId
         ? await ctx.db
             .query("liveStrokes")
             .withIndex("by_guest_session", (q) =>
-              q.eq("guestId", args.guestId).eq("sessionId", args.sessionId)
+              q.eq("guestId", effectiveGuestId).eq("sessionId", args.sessionId)
             )
             .first()
         : await ctx.db

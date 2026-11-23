@@ -1,7 +1,7 @@
 import { v } from "convex/values";
-import { mutation, action, query, internalMutation } from "./_generated/server";
+import { action, query, internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import { canReadSession } from "./sessionAuth";
 
 // Verbose logging of prompts and image-data samples is a privacy concern in
 // shared logs; opt in with AI_GEN_DEBUG=true on the deployment.
@@ -70,6 +70,7 @@ export const generateImage = action({
     weight: v.optional(v.number()), // Optional weight parameter (0-1)
     canvasWidth: v.optional(v.number()),
     canvasHeight: v.optional(v.number()),
+    guestKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     debugLog('[AI-GEN] generateImage action called with prompt:', args.prompt);
@@ -86,40 +87,76 @@ export const generateImage = action({
     // Test return to isolate the issue
     // return { success: true, imageUrl: "https://example.com/test.jpg" };
     
-    const identity = await ctx.auth.getUserIdentity();
-    
-    // Check if user is authenticated
-    if (!identity) {
+    const access = await ctx.runQuery(internal.sessionAuth.verifySessionAccess, {
+      sessionId: args.sessionId,
+      guestKey: args.guestKey,
+      requireAuth: true,
+    });
+    if (access.status === "not_found") {
+      return { success: false, error: "Session not found" };
+    }
+    if (access.status === "unauthenticated") {
       console.error('[AI-GEN] User not authenticated');
       return { success: false, error: "Please sign in to use AI generation." };
     }
-
-    // Check if user has enough tokens (1 token per generation)
-    const hasTokens = await ctx.runQuery(internal.tokens.hasEnoughTokensForOperation, {
-      operationType: "ai-generation",
-    });
-    
-    if (!hasTokens) {
-      console.error('[AI-GEN] User does not have enough tokens');
-      return { success: false, error: "Insufficient tokens. Please purchase more tokens to continue." };
+    if (access.status !== "ok") {
+      return { success: false, error: "Unauthorized" };
     }
 
-    // Get Replicate API token from environment
+    // Get Replicate API token from environment before reserving tokens
     const replicateToken = process.env.REPLICATE_API_TOKEN;
     if (!replicateToken) {
       console.error("REPLICATE_API_TOKEN not configured");
       return { success: false, error: "AI generation not configured" };
     }
 
-    try {
-      // Create a generation request record
-      const generationId = await ctx.runMutation(internal.aiGeneration.createGenerationRequest, {
-        sessionId: args.sessionId,
-        prompt: args.prompt,
-        status: "pending",
-        provider: "replicate",
-      });
+    // Create a generation request record to serve as the immutable operation ID
+    const generationId = await ctx.runMutation(internal.aiGeneration.createGenerationRequest, {
+      sessionId: args.sessionId,
+      prompt: args.prompt,
+      status: "pending",
+      provider: "replicate",
+    });
 
+    // Atomically reserve 1 token BEFORE any external provider spending
+    let tokenReserved = false;
+    try {
+      const reservation = await ctx.runMutation(internal.tokens.consumeTokensForOperation, {
+        operationId: generationId,
+        operationType: "ai-generation",
+      });
+      tokenReserved = reservation.charged;
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message.includes("Insufficient tokens")
+          ? "Insufficient tokens. Please purchase more tokens to continue."
+          : "Unable to reserve token for AI generation.";
+      await ctx.runMutation(internal.aiGeneration.updateGenerationStatus, {
+        generationId,
+        status: "failed",
+        error: message,
+      });
+      return { success: false, error: message };
+    }
+
+    const failAndRefund = async (errorMessage: string) => {
+      await ctx.runMutation(internal.aiGeneration.updateGenerationStatus, {
+        generationId,
+        status: "failed",
+        error: errorMessage,
+      });
+      if (tokenReserved) {
+        tokenReserved = false;
+        await ctx.runMutation(internal.tokens.refundTokensForOperation, {
+          operationId: generationId,
+          operationType: "ai-generation",
+          reason: errorMessage,
+        });
+      }
+      return { success: false as const, error: errorMessage };
+    };
+
+    try {
       // Convert base64 to data URL if needed
       const imageDataUrl = args.imageData.startsWith('data:') 
         ? args.imageData 
@@ -165,7 +202,7 @@ export const generateImage = action({
         debugLog('[AI-GEN] Canvas image stored, URL:', imageUrl);
       } catch (error) {
         console.error('[AI-GEN] Failed to store canvas image:', error);
-        return { success: false, error: 'Failed to store canvas image' };
+        return await failAndRefund('Failed to store canvas image');
       }
 
       // Calculate aspect ratio from canvas dimensions
@@ -218,12 +255,7 @@ export const generateImage = action({
       if (!response.ok) {
         const error = await response.text();
         console.error("Replicate API error:", error);
-        await ctx.runMutation(internal.aiGeneration.updateGenerationStatus, {
-          generationId,
-          status: "failed",
-          error: "Failed to start generation",
-        });
-        return { success: false, error: "Failed to start AI generation" };
+        return await failAndRefund("Failed to start AI generation");
       }
 
       const prediction = await response.json();
@@ -238,7 +270,8 @@ export const generateImage = action({
 
       // Poll for completion
       let attempts = 0;
-      const maxAttempts = parseInt(process.env.REPLICATE_TIMEOUT_SECONDS || "180"); // Default 180 seconds timeout
+      const parsedTimeout = parseInt(process.env.REPLICATE_TIMEOUT_SECONDS || "180", 10);
+      const maxAttempts = Number.isFinite(parsedTimeout) && parsedTimeout > 0 ? parsedTimeout : 180;
       
       debugLog('[AI-GEN] Starting to poll for prediction:', prediction.id);
       
@@ -263,116 +296,62 @@ export const generateImage = action({
         if (status.status === "succeeded") {
           debugLog('[AI-GEN] Prediction succeeded, raw output:', JSON.stringify(status.output)?.substring(0, 200));
 
-          let imageUrl;
+          let outputImageUrl: string | undefined;
           if (Array.isArray(status.output)) {
             // Check if it's an array of characters (Replicate bug)
             if (status.output.length > 10 && status.output.every((item: any) => typeof item === 'string' && item.length === 1)) {
               // It's an array of characters, join them
-              imageUrl = status.output.join('');
-              debugLog('Joined character array into URL:', imageUrl);
+              outputImageUrl = status.output.join('');
+              debugLog('Joined character array into URL:', outputImageUrl);
             } else {
               // Normal array, take first element
-              imageUrl = status.output[0];
-              debugLog('Extracted from array[0]:', imageUrl);
+              outputImageUrl = status.output[0];
+              debugLog('Extracted from array[0]:', outputImageUrl);
             }
           } else if (typeof status.output === 'string') {
-            imageUrl = status.output;
-            debugLog('Using string directly:', imageUrl);
+            outputImageUrl = status.output;
+            debugLog('Using string directly:', outputImageUrl);
           } else if (status.output && typeof status.output === 'object') {
             // Check if output is an object with a property
             debugLog('Output is object, keys:', Object.keys(status.output));
-            imageUrl = status.output.url || status.output.image || status.output[0];
+            outputImageUrl = status.output.url || status.output.image || status.output[0];
           } else {
             console.error('Unexpected output format:', status.output);
           }
           
-          debugLog('Final extracted image URL:', imageUrl);
-          if (imageUrl) {
-            try {
-              // Download the image from Replicate
-              const imageResponse = await fetch(imageUrl);
-              if (!imageResponse.ok) {
-                throw new Error(`Failed to download image: ${imageResponse.statusText}`);
-              }
-              
-              // Get the image as a blob
-              const imageBlob = await imageResponse.blob();
-              debugLog('Image blob size:', imageBlob.size);
-              debugLog('Image blob type:', imageBlob.type);
-              
-              // Store the image in Convex storage
-              const storageId = await ctx.storage.store(imageBlob);
-              debugLog('Storage ID:', storageId);
-              
-              const storageUrl = await ctx.storage.getUrl(storageId);
-              debugLog('Storage URL:', storageUrl);
-              debugLog('Storage URL type:', typeof storageUrl);
-              debugLog('Original URL:', imageUrl);
-              
-              if (!storageUrl) {
-                console.warn('Storage URL is null, using original URL');
-              }
-              
-              const finalUrl = storageUrl || imageUrl;
-              debugLog('Final URL to return:', finalUrl);
-              debugLog('Final URL type:', typeof finalUrl);
-              debugLog('Final URL length:', finalUrl?.length);
-              
-              await ctx.runMutation(internal.aiGeneration.updateGenerationStatus, {
-                generationId,
-                status: "completed",
-                resultImageUrl: finalUrl,
-              });
-              
-              // Consume tokens after successful generation
-              await ctx.runMutation(internal.tokens.consumeTokensForOperation, {
-                operationId: generationId,
-                operationType: "ai-generation",
-              });
-              
-              const result = { success: true, imageUrl: finalUrl };
-              debugLog('Returning result:', JSON.stringify(result));
-              return result;
-            } catch (error) {
-              console.error("Error storing image:", error);
-              console.error("Image URL that failed:", imageUrl);
-              
-              // Check if imageUrl is just "h" (Replicate bug)
-              if (imageUrl === "h" || imageUrl?.length === 1) {
-                console.error("DETECTED REPLICATE BUG: URL is single character");
-                // This is likely the Replicate bug, return error
-                return { success: false, error: "Replicate returned invalid URL. Please try again." };
-              }
-              
-              // Fallback to using the Replicate URL directly
-              await ctx.runMutation(internal.aiGeneration.updateGenerationStatus, {
-                generationId,
-                status: "completed",
-                resultImageUrl: imageUrl,
-              });
-              
-              // Consume tokens after successful generation
-              await ctx.runMutation(internal.tokens.consumeTokensForOperation, {
-                operationId: generationId,
-                operationType: "ai-generation",
-              });
-              
-              debugLog('ERROR: Using fallback due to storage error');
-              debugLog('Fallback imageUrl value:', imageUrl);
-              debugLog('Fallback imageUrl type:', typeof imageUrl);
-              debugLog('Fallback imageUrl length:', imageUrl?.length);
-              const result = { success: true, imageUrl: imageUrl || "error-no-url" };
-              debugLog('Returning fallback result:', JSON.stringify(result));
-              return result;
-            }
+          debugLog('Final extracted image URL:', outputImageUrl);
+          if (!outputImageUrl || outputImageUrl === "h" || outputImageUrl.length === 1) {
+            return await failAndRefund("Replicate returned invalid URL. Please try again.");
           }
-        } else if (status.status === "failed" || status.status === "canceled") {
+
+          let finalUrl = outputImageUrl;
+          try {
+            // Download the image from Replicate
+            const imageResponse = await fetch(outputImageUrl);
+            if (!imageResponse.ok) {
+              throw new Error(`Failed to download image: ${imageResponse.statusText}`);
+            }
+            
+            const imageBlob = await imageResponse.blob();
+            const storageId = await ctx.storage.store(imageBlob);
+            const storageUrl = await ctx.storage.getUrl(storageId);
+            if (storageUrl) {
+              finalUrl = storageUrl;
+            }
+          } catch (error) {
+            console.error("Error storing image:", error);
+            // Fall back to the provider URL when storage download fails
+          }
+
           await ctx.runMutation(internal.aiGeneration.updateGenerationStatus, {
             generationId,
-            status: "failed",
-            error: status.error || "Generation failed",
+            status: "completed",
+            resultImageUrl: finalUrl,
           });
-          return { success: false, error: status.error || "Generation failed" };
+          
+          return { success: true, imageUrl: finalUrl };
+        } else if (status.status === "failed" || status.status === "canceled") {
+          return await failAndRefund(status.error || "Generation failed");
         }
 
         // Wait 1 second before polling again
@@ -381,17 +360,12 @@ export const generateImage = action({
       }
 
       // Timeout
-      await ctx.runMutation(internal.aiGeneration.updateGenerationStatus, {
-        generationId,
-        status: "failed",
-        error: "Generation timed out",
-      });
-      return { success: false, error: "Generation timed out" };
+      return await failAndRefund("Generation timed out");
 
     } catch (error) {
       console.error("AI generation error:", error);
       console.error("Error details:", error instanceof Error ? error.message : String(error));
-      return { success: false, error: "An error occurred during generation" };
+      return await failAndRefund("An error occurred during generation");
     }
   },
 });
@@ -404,24 +378,8 @@ export const getSessionGenerations = query({
   },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!session) {
+    if (!(await canReadSession(ctx, session, args.guestKey))) {
       return [];
-    }
-    if (!session.isPublic) {
-      const identity = await ctx.auth.getUserIdentity();
-      let authorized = false;
-      if (identity) {
-        const user = await ctx.db
-          .query("users")
-          .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
-          .first();
-        authorized = !!user && session.createdBy === user._id;
-      }
-      if (!authorized) {
-        if (!(session.guestOwnerKey && args.guestKey && session.guestOwnerKey === args.guestKey)) {
-          return [];
-        }
-      }
     }
     // Take a larger window then filter, so a run of failed/moderated rows
     // doesn't shrink the strip; then keep the 10 most recent usable results.

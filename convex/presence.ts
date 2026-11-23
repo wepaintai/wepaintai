@@ -1,5 +1,6 @@
 import { mutation, query, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
+import { assertCanModifySession, canReadSession, resolveAuthenticatedUser } from "./sessionAuth";
 
 /**
  * Update user presence in a session
@@ -15,25 +16,38 @@ export const updatePresence = mutation({
     cursorY: v.number(),
     isDrawing: v.boolean(),
     currentTool: v.string(),
+    guestKey: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) {
+      throw new Error("Session not found");
+    }
+    const { user } = await assertCanModifySession(ctx, session, args.guestKey);
+
+    if (args.userId && (!user || user._id !== args.userId)) {
+      throw new Error("Unauthorized");
+    }
+    const effectiveUserId = user?._id;
+    const effectiveGuestId = effectiveUserId ? undefined : args.guestId;
+
     const now = Date.now();
 
     // Find existing presence record. Guests all have userId undefined, so they
     // are keyed by their stable per-browser guestId instead.
-    const existingPresence = args.userId
+    const existingPresence = effectiveUserId
       ? await ctx.db
           .query("userPresence")
           .withIndex("by_user_session", (q) =>
-            q.eq("userId", args.userId).eq("sessionId", args.sessionId)
+            q.eq("userId", effectiveUserId).eq("sessionId", args.sessionId)
           )
           .first()
-      : args.guestId
+      : effectiveGuestId
         ? await ctx.db
             .query("userPresence")
             .withIndex("by_guest_session", (q) =>
-              q.eq("guestId", args.guestId).eq("sessionId", args.sessionId)
+              q.eq("guestId", effectiveGuestId).eq("sessionId", args.sessionId)
             )
             .first()
         : await ctx.db
@@ -60,8 +74,8 @@ export const updatePresence = mutation({
       // Replace the entire document to avoid conflicts
       await ctx.db.replace(existingPresence._id, {
         sessionId: args.sessionId,
-        userId: args.userId,
-        guestId: args.guestId,
+        userId: effectiveUserId,
+        guestId: effectiveGuestId,
         userColor: args.userColor,
         userName: args.userName,
         cursorX: args.cursorX,
@@ -74,8 +88,8 @@ export const updatePresence = mutation({
       // Create new presence record
       await ctx.db.insert("userPresence", {
         sessionId: args.sessionId,
-        userId: args.userId,
-        guestId: args.guestId,
+        userId: effectiveUserId,
+        guestId: effectiveGuestId,
         userColor: args.userColor,
         userName: args.userName,
         cursorX: args.cursorX,
@@ -114,20 +128,8 @@ export const getSessionPresence = query({
   })),
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!session) return [];
-    if (!session.isPublic) {
-      const identity = await ctx.auth.getUserIdentity();
-      if (identity) {
-        const user = await ctx.db
-          .query("users")
-          .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
-          .first();
-        if (!user || session.createdBy !== user._id) {
-          if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
-        }
-      } else {
-        if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
-      }
+    if (!(await canReadSession(ctx, session, args.guestKey))) {
+      return [];
     }
     const fiveMinutesAgo = Date.now() - 5 * 60 * 1000; // 5 minutes
     
@@ -148,21 +150,41 @@ export const leaveSession = mutation({
     userId: v.optional(v.id("users")),
     guestId: v.optional(v.string()),
     userName: v.optional(v.string()),
+    guestKey: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const presence = args.userId
+    const session = await ctx.db.get(args.sessionId);
+    let user: Awaited<ReturnType<typeof resolveAuthenticatedUser>>;
+    if (session && session.deletedAt === undefined) {
+      ({ user } = await assertCanModifySession(ctx, session, args.guestKey));
+    } else {
+      user = await resolveAuthenticatedUser(ctx);
+      // If session is gone/deleted, only allow authenticated callers to clean
+      // up their own presence row rather than arbitrary records.
+      if (!user && !args.guestKey) {
+        return null;
+      }
+    }
+
+    if (args.userId && (!user || user._id !== args.userId)) {
+      throw new Error("Unauthorized");
+    }
+    const effectiveUserId = user?._id;
+    const effectiveGuestId = effectiveUserId ? undefined : args.guestId;
+
+    const presence = effectiveUserId
       ? await ctx.db
           .query("userPresence")
           .withIndex("by_user_session", (q) =>
-            q.eq("userId", args.userId).eq("sessionId", args.sessionId)
+            q.eq("userId", effectiveUserId).eq("sessionId", args.sessionId)
           )
           .first()
-      : args.guestId
+      : effectiveGuestId
         ? await ctx.db
             .query("userPresence")
             .withIndex("by_guest_session", (q) =>
-              q.eq("guestId", args.guestId).eq("sessionId", args.sessionId)
+              q.eq("guestId", effectiveGuestId).eq("sessionId", args.sessionId)
             )
             .first()
         : null;

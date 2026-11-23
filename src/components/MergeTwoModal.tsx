@@ -4,6 +4,7 @@ import { useAction, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import type { Id } from '../../convex/_generated/dataModel'
 import type { Layer } from './ToolPanel'
+import { getGuestKey } from '../utils/guestKey'
 
 interface MergeTwoModalProps {
   isOpen: boolean
@@ -59,6 +60,7 @@ export function MergeTwoModal({
         secondLayerId,
         controlLayerId: controlLayerId || undefined,
         mergeMode,
+        guestKey: getGuestKey(sessionId) || undefined,
       })
 
       if (result.success && 'imageUrl' in result && result.imageUrl) {

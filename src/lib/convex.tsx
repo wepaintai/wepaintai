@@ -1,11 +1,9 @@
 import { ConvexReactClient } from "convex/react";
-import { ConvexClient } from "convex/browser";
 import { ConvexBetterAuthProvider, type AuthClient } from "@convex-dev/better-auth/react";
 import { authClient } from "./auth-client";
 import type { ReactNode } from "react";
 
 export const convexHigh = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string);
-export const convexLow = new ConvexClient(import.meta.env.VITE_CONVEX_URL as string);
 
 export function ConvexClientProvider({
   children,
