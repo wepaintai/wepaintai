@@ -7,7 +7,7 @@ import { useP2PPainting } from '../hooks/useP2PPainting'
 import { useSessionImages } from '../hooks/useSessionImages'
 import { Id } from '../../convex/_generated/dataModel'
 import { Layer as LayerType } from './ToolPanel'
-import { useQuery, useMutation } from 'convex/react'
+import { useQuery, useMutation, useAction } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import { shouldShowAdminFeatures } from '../utils/environment'
 import { uploadImageFile, validateImageFile, ACCEPTED_TYPES } from '../utils/imageUpload'
@@ -340,9 +340,9 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   const updateAIImageTransform = useMutation(api.images.updateAIImageTransform)
   const updatePaintLayerTransform = useMutation(api.paintLayers.updatePaintLayer)
   
-  // Mutations for image upload
+  // Image upload URL mutation + server-validated registration action
   const generateUploadUrl = useMutation(api.images.generateUploadUrl)
-  const uploadImage = useMutation(api.images.uploadImage)
+  const uploadImage = useAction(api.images.uploadImage)
 
   // P2P preview layer
   const {

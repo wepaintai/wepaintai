@@ -1,12 +1,140 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
-import { Id } from "./_generated/dataModel";
+import {
+  action,
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+} from "./_generated/server";
+import { internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import { assertCanModifySession, canReadSession } from "./sessionAuth";
+import {
+  assertFiniteNumber,
+  assertSafeImageUrl,
+  assertValidImageDimensions,
+  inspectImageBytes,
+  MAX_AI_IMAGE_DIMENSION,
+  MAX_IMAGE_DIMENSION,
+  MAX_UPLOAD_BYTES,
+  sanitizeFilename,
+  UPLOAD_INTENT_TTL_MS,
+} from "./imageValidation";
 
-// Upload an image to storage and create a record
-export const uploadImage = mutation({
+const ALLOWED_STORAGE_CONTENT_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/gif",
+  "image/webp",
+]);
+
+// Internal query validating an upload intent and _storage metadata before
+// reading bytes in the uploadImage action.
+export const inspectUploadIntent = internalQuery({
   args: {
     sessionId: v.id("paintingSessions"),
+    intentId: v.id("imageUploadIntents"),
+    storageId: v.id("_storage"),
+    guestKey: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) {
+      throw new Error("Session not found");
+    }
+    const { user } = await assertCanModifySession(ctx, session, args.guestKey);
+
+    const intent = await ctx.db.get(args.intentId);
+    if (!intent) {
+      throw new Error("Upload intent not found");
+    }
+    if (intent.sessionId !== args.sessionId) {
+      throw new Error("Upload intent does not match session");
+    }
+    if (intent.userId !== user?._id) {
+      throw new Error("Unauthorized");
+    }
+    if (intent.consumedAt !== undefined) {
+      throw new Error("Upload intent already used");
+    }
+    if (Date.now() > intent.expiresAt) {
+      throw new Error("Upload intent expired");
+    }
+
+    // Never allow attaching a storage object already bound to any image record
+    const existingAttachment = await ctx.db
+      .query("uploadedImages")
+      .withIndex("by_storage", (q) => q.eq("storageId", args.storageId))
+      .first();
+    if (existingAttachment) {
+      throw new Error("Storage object is already registered");
+    }
+
+    const storageMetadata = await ctx.db.system.get("_storage", args.storageId);
+    if (!storageMetadata) {
+      throw new Error("Uploaded file not found");
+    }
+
+    // Reject storage blobs created before this upload intent was issued so a
+    // caller cannot attach a pre-existing object from another session/workflow.
+    if (storageMetadata._creationTime < intent._creationTime) {
+      throw new Error("Storage object does not match this upload intent");
+    }
+
+    const sizeValid =
+      typeof storageMetadata.size === "number" &&
+      storageMetadata.size > 0 &&
+      storageMetadata.size <= MAX_UPLOAD_BYTES;
+    const declaredType = storageMetadata.contentType?.toLowerCase();
+    const declaredTypeValid =
+      !declaredType || ALLOWED_STORAGE_CONTENT_TYPES.has(declaredType);
+
+    return {
+      sizeValid,
+      declaredTypeValid,
+      size: storageMetadata.size,
+      contentType: declaredType,
+    };
+  },
+});
+
+// Consume a failed upload intent and remove a rejected caller-uploaded blob.
+export const discardUploadIntent = internalMutation({
+  args: {
+    intentId: v.id("imageUploadIntents"),
+    deleteStorageId: v.optional(v.id("_storage")),
+  },
+  handler: async (ctx, args) => {
+    const intent = await ctx.db.get(args.intentId);
+    if (intent && intent.consumedAt === undefined) {
+      await ctx.db.patch(args.intentId, {
+        consumedAt: Date.now(),
+        storageId: args.deleteStorageId,
+      });
+    }
+    if (args.deleteStorageId) {
+      const existing = await ctx.db
+        .query("uploadedImages")
+        .withIndex("by_storage", (q) => q.eq("storageId", args.deleteStorageId!))
+        .first();
+      if (!existing) {
+        try {
+          await ctx.storage.delete(args.deleteStorageId);
+        } catch {
+          // Blob already removed
+        }
+      }
+    }
+  },
+});
+
+// Atomically consume the single-use upload intent and insert the validated
+// uploadedImages record with server-decoded MIME type and dimensions.
+export const commitUploadedImage = internalMutation({
+  args: {
+    sessionId: v.id("paintingSessions"),
+    intentId: v.id("imageUploadIntents"),
     storageId: v.id("_storage"),
     filename: v.string(),
     mimeType: v.string(),
@@ -18,67 +146,91 @@ export const uploadImage = mutation({
     canvasHeight: v.optional(v.number()),
     guestKey: v.optional(v.string()),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Id<"uploadedImages">> => {
     const uploadSession = await ctx.db.get(args.sessionId);
     if (!uploadSession) throw new Error("Session not found");
-    await assertCanModifySession(ctx, uploadSession, args.guestKey);
+    const { user } = await assertCanModifySession(ctx, uploadSession, args.guestKey);
 
-    let userId: Id<"users"> | undefined;
-    const identity = await ctx.auth.getUserIdentity();
-    if (identity) {
-      const user = await ctx.db
-        .query("users")
-        .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
-        .first();
-      userId = user?._id;
+    const intent = await ctx.db.get(args.intentId);
+    if (!intent || intent.sessionId !== args.sessionId) {
+      throw new Error("Invalid upload intent");
     }
+    if (intent.userId !== user?._id) {
+      throw new Error("Unauthorized");
+    }
+    if (intent.consumedAt !== undefined) {
+      throw new Error("Upload intent already used");
+    }
+    if (Date.now() > intent.expiresAt) {
+      throw new Error("Upload intent expired");
+    }
+
+    const existingAttachment = await ctx.db
+      .query("uploadedImages")
+      .withIndex("by_storage", (q) => q.eq("storageId", args.storageId))
+      .first();
+    if (existingAttachment) {
+      throw new Error("Storage object is already registered");
+    }
+
+    const { width, height } = assertValidImageDimensions(
+      args.width,
+      args.height,
+      MAX_IMAGE_DIMENSION
+    );
+    const x = assertFiniteNumber(args.x, "x");
+    const y = assertFiniteNumber(args.y, "y");
+    const filename = sanitizeFilename(args.filename);
 
     // Get the current max layer order from ALL images (uploaded and AI)
     const uploadedImages = await ctx.db
       .query("uploadedImages")
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
       .collect();
-    
+
     const aiImages = await ctx.db
       .query("aiGeneratedImages")
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
       .collect();
-    
-    // Get painting session to check paint layer order
-    const paintLayerOrder = uploadSession?.paintLayerOrder ?? 0;
-    // Compute scale to fit original image within canvas without altering the stored pixels
-    const canvasWidth = args.canvasWidth ?? uploadSession?.canvasWidth ?? args.width;
-    const canvasHeight = args.canvasHeight ?? uploadSession?.canvasHeight ?? args.height;
-    const scaleX = canvasWidth / args.width;
-    const scaleY = canvasHeight / args.height;
+
+    const paintLayerOrder = uploadSession.paintLayerOrder ?? 0;
+    const rawCanvasWidth = args.canvasWidth ?? uploadSession.canvasWidth ?? width;
+    const rawCanvasHeight = args.canvasHeight ?? uploadSession.canvasHeight ?? height;
+    const canvasWidth =
+      Number.isFinite(rawCanvasWidth) && rawCanvasWidth > 0 ? rawCanvasWidth : width;
+    const canvasHeight =
+      Number.isFinite(rawCanvasHeight) && rawCanvasHeight > 0 ? rawCanvasHeight : height;
+
+    const scaleX = canvasWidth / width;
+    const scaleY = canvasHeight / height;
     // Use "cover" fit (fill canvas; may crop) but never upscale above 1
     const computedScale = Math.min(Math.max(scaleX, scaleY), 1);
-    
-    // Find max layer order across all images
-    let maxLayerOrder = paintLayerOrder; // Start with paint layer order
-    
-    uploadedImages.forEach(img => {
+
+    let maxLayerOrder = paintLayerOrder;
+    uploadedImages.forEach((img) => {
       maxLayerOrder = Math.max(maxLayerOrder, img.layerOrder);
     });
-    
-    aiImages.forEach(img => {
+    aiImages.forEach((img) => {
       maxLayerOrder = Math.max(maxLayerOrder, img.layerOrder);
     });
-    
-    // Set new image to top layer
+
     const newLayerOrder = maxLayerOrder + 1;
 
-    // Create the image record
+    await ctx.db.patch(args.intentId, {
+      consumedAt: Date.now(),
+      storageId: args.storageId,
+    });
+
     const imageId = await ctx.db.insert("uploadedImages", {
       sessionId: args.sessionId,
-      userId,
+      userId: user?._id,
       storageId: args.storageId,
-      filename: args.filename,
+      filename,
       mimeType: args.mimeType,
-      width: args.width,
-      height: args.height,
-      x: args.x,
-      y: args.y,
+      width,
+      height,
+      x,
+      y,
       scale: computedScale,
       scaleX: computedScale,
       scaleY: computedScale,
@@ -88,6 +240,95 @@ export const uploadImage = mutation({
     });
 
     return imageId;
+  },
+});
+
+// Validate a newly uploaded blob server-side (intent binding, file size, binary
+// magic bytes, decoded MIME type & dimensions) and register it atomically.
+export const uploadImage = action({
+  args: {
+    sessionId: v.id("paintingSessions"),
+    intentId: v.id("imageUploadIntents"),
+    storageId: v.id("_storage"),
+    filename: v.string(),
+    mimeType: v.optional(v.string()),
+    width: v.optional(v.number()),
+    height: v.optional(v.number()),
+    x: v.number(),
+    y: v.number(),
+    canvasWidth: v.optional(v.number()),
+    canvasHeight: v.optional(v.number()),
+    guestKey: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<Id<"uploadedImages">> => {
+    const check = await ctx.runQuery(internal.images.inspectUploadIntent, {
+      sessionId: args.sessionId,
+      intentId: args.intentId,
+      storageId: args.storageId,
+      guestKey: args.guestKey,
+    });
+
+    if (!check.sizeValid) {
+      await ctx.runMutation(internal.images.discardUploadIntent, {
+        intentId: args.intentId,
+        deleteStorageId: args.storageId,
+      });
+      throw new Error("Uploaded file must be non-empty and at most 5MB");
+    }
+
+    if (!check.declaredTypeValid) {
+      await ctx.runMutation(internal.images.discardUploadIntent, {
+        intentId: args.intentId,
+        deleteStorageId: args.storageId,
+      });
+      throw new Error("Unsupported image content type");
+    }
+
+    const blob = await ctx.storage.get(args.storageId);
+    if (!blob) {
+      throw new Error("Uploaded file not found");
+    }
+
+    const buffer = await blob.arrayBuffer();
+    if (buffer.byteLength === 0 || buffer.byteLength > MAX_UPLOAD_BYTES) {
+      await ctx.runMutation(internal.images.discardUploadIntent, {
+        intentId: args.intentId,
+        deleteStorageId: args.storageId,
+      });
+      throw new Error("Uploaded file must be non-empty and at most 5MB");
+    }
+
+    const decoded = inspectImageBytes(new Uint8Array(buffer));
+    if (!decoded) {
+      await ctx.runMutation(internal.images.discardUploadIntent, {
+        intentId: args.intentId,
+        deleteStorageId: args.storageId,
+      });
+      throw new Error("Uploaded file is not a valid PNG, JPEG, GIF, or WebP image");
+    }
+
+    if (decoded.width > MAX_IMAGE_DIMENSION || decoded.height > MAX_IMAGE_DIMENSION) {
+      await ctx.runMutation(internal.images.discardUploadIntent, {
+        intentId: args.intentId,
+        deleteStorageId: args.storageId,
+      });
+      throw new Error(`Image dimensions must not exceed ${MAX_IMAGE_DIMENSION}px`);
+    }
+
+    return await ctx.runMutation(internal.images.commitUploadedImage, {
+      sessionId: args.sessionId,
+      intentId: args.intentId,
+      storageId: args.storageId,
+      filename: args.filename,
+      mimeType: decoded.mimeType,
+      width: decoded.width,
+      height: decoded.height,
+      x: args.x,
+      y: args.y,
+      canvasWidth: args.canvasWidth,
+      canvasHeight: args.canvasHeight,
+      guestKey: args.guestKey,
+    });
   },
 });
 
@@ -106,6 +347,13 @@ export const addAIGeneratedImage = mutation({
     const session = await ctx.db.get(args.sessionId);
     if (!session) throw new Error("Session not found");
     await assertCanModifySession(ctx, session, args.guestKey);
+
+    const safeImageUrl = assertSafeImageUrl(args.imageUrl);
+    const { width, height } = assertValidImageDimensions(
+      args.width,
+      args.height,
+      MAX_AI_IMAGE_DIMENSION
+    );
 
     // Get the current max layer order from ALL images (uploaded and AI)
     const uploadedImages = await ctx.db
@@ -143,37 +391,23 @@ export const addAIGeneratedImage = mutation({
     }
 
     // Calculate scale to fit the AI image within canvas while maintaining aspect ratio
-    const scaleX = canvasWidth / args.width;
-    const scaleY = canvasHeight / args.height;
+    const scaleX = canvasWidth / width;
+    const scaleY = canvasHeight / height;
     const scale = Math.min(scaleX, scaleY); // Use min to fit within canvas
     
     // Center the image on the canvas
-    // Since KonvaImage uses offsetX/offsetY to center the image anchor,
-    // we position at the canvas center directly
     const x = canvasWidth / 2;
     const y = canvasHeight / 2;
-    
-    console.log('[addAIGeneratedImage] Positioning calculation:', {
-      imageWidth: args.width,
-      imageHeight: args.height,
-      canvasWidth,
-      canvasHeight,
-      scaleX,
-      scaleY,
-      finalScale: scale,
-      centerX: x,
-      centerY: y,
-    });
     
     // Store the original AI image dimensions and calculate scale/position
     const imageId = await ctx.db.insert("aiGeneratedImages", {
       sessionId: args.sessionId,
-      imageUrl: args.imageUrl,
-      width: args.width, // Store actual image width
-      height: args.height, // Store actual image height
-      x: x, // Center horizontally if needed
-      y: y, // Center vertically if needed
-      scale: scale, // Scale to fit canvas
+      imageUrl: safeImageUrl,
+      width,
+      height,
+      x: x,
+      y: y,
+      scale: scale,
       scaleX: scale,
       scaleY: scale,
       rotation: 0,
@@ -472,7 +706,7 @@ export const deleteImage = mutation({
   },
 });
 
-// Generate upload URL for client-side upload
+// Generate a session-bound, single-use upload URL and intent for client-side upload
 export const generateUploadUrl = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
@@ -481,8 +715,51 @@ export const generateUploadUrl = mutation({
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
     if (!session) throw new Error("Session not found");
-    await assertCanModifySession(ctx, session, args.guestKey);
-    return await ctx.storage.generateUploadUrl();
+    const { user } = await assertCanModifySession(ctx, session, args.guestKey);
+
+    const now = Date.now();
+    const intentId = await ctx.db.insert("imageUploadIntents", {
+      sessionId: args.sessionId,
+      userId: user?._id,
+      createdAt: now,
+      expiresAt: now + UPLOAD_INTENT_TTL_MS,
+    });
+    const uploadUrl = await ctx.storage.generateUploadUrl();
+    return { uploadUrl, intentId };
+  },
+});
+
+// Bounded cron cleanup for expired upload intents and any abandoned storage blobs
+export const cleanupExpiredUploadIntents = internalMutation({
+  args: {},
+  returns: v.number(),
+  handler: async (ctx) => {
+    const now = Date.now();
+    const expiredIntents = await ctx.db
+      .query("imageUploadIntents")
+      .withIndex("by_expires", (q) => q.lt("expiresAt", now))
+      .take(200);
+
+    let removed = 0;
+    for (const intent of expiredIntents) {
+      if (intent.storageId) {
+        const attached = await ctx.db
+          .query("uploadedImages")
+          .withIndex("by_storage", (q) => q.eq("storageId", intent.storageId!))
+          .first();
+        if (!attached) {
+          try {
+            await ctx.storage.delete(intent.storageId);
+          } catch {
+            // Already deleted
+          }
+        }
+      }
+      await ctx.db.delete(intent._id);
+      removed += 1;
+    }
+
+    return removed;
   },
 });
 

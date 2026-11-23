@@ -20,6 +20,7 @@ export interface ImageUploadResult {
 
 interface UploadImageMutationArgs {
   sessionId: Id<"paintingSessions">
+  intentId: Id<"imageUploadIntents">
   storageId: Id<"_storage">
   filename: string
   mimeType: string
@@ -179,7 +180,7 @@ export async function uploadImageFile(
   generateUploadUrl: (args: {
     sessionId: Id<"paintingSessions">
     guestKey?: string
-  }) => Promise<string>,
+  }) => Promise<{ uploadUrl: string; intentId: Id<"imageUploadIntents"> }>,
   uploadImage: (args: UploadImageMutationArgs) => Promise<Id<"uploadedImages">>
 ): Promise<ImageUploadResult> {
   const { sessionId, guestKey, canvasWidth = 800, canvasHeight = 600, onImageUploaded } = options
@@ -206,8 +207,8 @@ export async function uploadImageFile(
       mimeType = resized.mimeType
     }
 
-    // Generate upload URL
-    const uploadUrl = await generateUploadUrl({ sessionId, guestKey })
+    // Generate single-use session-bound upload URL + intent
+    const { uploadUrl, intentId } = await generateUploadUrl({ sessionId, guestKey })
 
     // Upload to Convex storage
     const response = await fetch(uploadUrl, {
@@ -226,9 +227,10 @@ export async function uploadImageFile(
     const x = canvasWidth / 2
     const y = canvasHeight / 2
 
-    // Create image record
+    // Create image record (server re-verifies intent, size, magic bytes & dimensions)
     const uploadArgs: UploadImageMutationArgs = {
       sessionId,
+      intentId,
       storageId,
       filename: file.name,
       mimeType,

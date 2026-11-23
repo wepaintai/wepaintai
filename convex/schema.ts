@@ -177,7 +177,19 @@ const schema = defineSchema({
     opacity: v.number(),
     layerOrder: v.number(),
   }).index("by_session", ["sessionId", "layerOrder"]) 
-    .index("by_user", ["userId"]),
+    .index("by_user", ["userId"])
+    .index("by_storage", ["storageId"]),
+
+  // Single-use upload intents binding generated upload URLs to a session/caller
+  imageUploadIntents: defineTable({
+    sessionId: v.id("paintingSessions"),
+    userId: v.optional(v.id("users")),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+    consumedAt: v.optional(v.number()),
+    storageId: v.optional(v.id("_storage")),
+  }).index("by_expires", ["expiresAt"])
+    .index("by_session", ["sessionId"]),
 
   // AI generation requests and results
   aiGenerations: defineTable({
