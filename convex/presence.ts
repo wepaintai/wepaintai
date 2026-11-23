@@ -34,12 +34,16 @@ type PresenceIdentity =
 async function resolvePresenceIdentity(
   ctx: MutationCtx,
   session: Doc<"paintingSessions"> | null,
-  args: { guestKey?: string; guestId?: string },
+  args: { guestKey?: string; guestId?: string; editKey?: string },
 ): Promise<PresenceIdentity | null> {
   if (!session || session.deletedAt !== undefined) return null;
   let user: Doc<"users"> | null;
   try {
-    ({ user } = await assertCanModifySession(ctx, session, args.guestKey));
+    // Presence is an editor-only signal: read-only viewers of a public
+    // session (no owner key, no edit key) are not shown in the strip.
+    ({ user } = await assertCanModifySession(ctx, session, args.guestKey, {
+      editKey: args.editKey,
+    }));
   } catch {
     return null;
   }
@@ -91,6 +95,7 @@ export const updatePresence = mutation({
     isDrawing: v.boolean(),
     currentTool: v.string(),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   returns: v.union(
     v.null(),
@@ -167,6 +172,7 @@ export const getSessionPresence = query({
   args: {
     sessionId: v.id("paintingSessions"),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   returns: v.array(v.object({
     _id: v.id("userPresence"),
@@ -183,7 +189,7 @@ export const getSessionPresence = query({
   })),
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!(await canReadSession(ctx, session, args.guestKey))) {
+    if (!(await canReadSession(ctx, session, args.guestKey, args.editKey))) {
       return [];
     }
     const fiveMinutesAgo = Date.now() - 5 * 60 * 1000; // 5 minutes
@@ -221,6 +227,7 @@ export const leaveSession = mutation({
     guestId: v.optional(v.string()),
     userName: v.optional(v.string()),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {

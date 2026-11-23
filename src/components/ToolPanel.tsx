@@ -88,6 +88,8 @@ interface ToolPanelProps {
   onBrushSettingsChange?: (settings: BrushSettings) => void
   canUndo?: boolean
   canRedo?: boolean
+  canEdit?: boolean
+  isOwner?: boolean
 }
 
 interface Tool {
@@ -463,7 +465,8 @@ const LayerItem = React.memo(({
   totalLayers,
   isTopLayer = false,
   isBottomLayer = false,
-  isOnlyPaintLayer = false
+  isOnlyPaintLayer = false,
+  readOnly = false,
 }: {
   layer: Layer
   isActive: boolean
@@ -476,6 +479,7 @@ const LayerItem = React.memo(({
   isTopLayer?: boolean
   isBottomLayer?: boolean
   isOnlyPaintLayer?: boolean
+  readOnly?: boolean
 }) => {
   const [showOpacitySlider, setShowOpacitySlider] = React.useState(false)
   const [confirmingDelete, setConfirmingDelete] = React.useState(false)
@@ -498,29 +502,20 @@ const LayerItem = React.memo(({
         <GripVertical className="w-3 h-3 text-white/40 cursor-move" />
         <button
           type="button"
+          disabled={readOnly}
           onPointerDown={(e) => {
             e.preventDefault()
             e.stopPropagation()
-            console.log('[LayerItem] onPointerDown visibility toggle', {
-              layerId: layer.id,
-              layerName: layer.name,
-              currentVisible: layer.visible,
-              nextVisible: !layer.visible,
-            })
+            if (readOnly) return
             onVisibilityChange(!layer.visible)
           }}
           onClick={(e) => {
             e.preventDefault()
             e.stopPropagation()
-            console.log('[LayerItem] onClick visibility toggle', {
-              layerId: layer.id,
-              layerName: layer.name,
-              currentVisible: layer.visible,
-              nextVisible: !layer.visible,
-            })
+            if (readOnly) return
             onVisibilityChange(!layer.visible)
           }}
-          className="p-0.5 hover:bg-white/20 rounded transition-colors"
+          className="p-0.5 hover:bg-white/20 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
           aria-label={layer.visible ? 'Hide layer' : 'Show layer'}
         >
           {layer.visible ? (
@@ -533,7 +528,7 @@ const LayerItem = React.memo(({
           {layer.name}
           {isActive && <span className="ml-1 text-blue-400">(Active)</span>}
         </span>
-        {layer.type !== 'stroke' && (
+        {!readOnly && layer.type !== 'stroke' && (
           <button
             onClick={(e) => {
               e.stopPropagation()
@@ -546,6 +541,7 @@ const LayerItem = React.memo(({
             <Circle className="w-3 h-3 text-white/60" style={{ opacity: layer.opacity }} />
           </button>
         )}
+        {!readOnly && (
         <div className="flex items-center gap-0.5">
           <button
             onClick={(e) => {
@@ -592,8 +588,9 @@ const LayerItem = React.memo(({
             <Trash2 className={confirmingDelete ? 'w-3 h-3 text-red-400' : 'w-3 h-3 text-white/60 hover:text-red-400'} />
           </button>
         </div>
+        )}
       </div>
-      {showOpacitySlider && layer.type !== 'stroke' && onOpacityChange && (
+      {!readOnly && showOpacitySlider && layer.type !== 'stroke' && onOpacityChange && (
         <div className="px-2">
           <input
             type="range"
@@ -651,6 +648,8 @@ export function ToolPanel({
   onBrushSettingsChange,
   canUndo = true,
   canRedo = true,
+  canEdit = true,
+  isOwner = true,
 }: ToolPanelProps) {
   const { userId, isLoaded, isSignedIn, user } = useAuthState()
   const { setIsMouseOverToolbox } = useClipboardContext()
@@ -715,6 +714,7 @@ export function ToolPanel({
   const clearConfirmTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const handleClearClick = React.useCallback(() => {
+    if (!isOwner) return
     if (confirmingClear) {
       // Confirm clear
       if (clearConfirmTimeoutRef.current) clearTimeout(clearConfirmTimeoutRef.current)
@@ -726,7 +726,7 @@ export function ToolPanel({
       // Reset after 3 seconds
       clearConfirmTimeoutRef.current = setTimeout(() => setConfirmingClear(false), 3000)
     }
-  }, [confirmingClear, onClear])
+  }, [isOwner, confirmingClear, onClear])
 
   React.useEffect(() => () => {
     if (clearConfirmTimeoutRef.current) clearTimeout(clearConfirmTimeoutRef.current)
@@ -861,6 +861,7 @@ export function ToolPanel({
 
   // Handle tool selection
   const handleToolSelect = React.useCallback((toolId: string) => {
+    if (!canEdit) return
     // Check if AI tool requires authentication
     if (toolId === 'ai' && !effectiveIsSignedIn) {
       // Don't select the tool, just show a message or do nothing
@@ -900,10 +901,11 @@ export function ToolPanel({
     } else {
       setInternalSelectedTool(toolId)
     }
-  }, [onToolChange, onImageUpload, onAIGenerate, effectiveIsSignedIn, authDisabled])
+  }, [canEdit, onToolChange, onImageUpload, onAIGenerate, effectiveIsSignedIn, authDisabled])
 
   // Keyboard shortcuts for tools
   React.useEffect(() => {
+    if (!canEdit) return
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
         return
@@ -923,7 +925,7 @@ export function ToolPanel({
     
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [handleToolSelect, effectiveIsSignedIn])
+  }, [canEdit, handleToolSelect, effectiveIsSignedIn])
 
   // Handle menu open/close. If already open, close. Otherwise open and position.
   const handleMenuToggle = React.useCallback((e: React.MouseEvent) => {
@@ -1051,6 +1053,12 @@ export function ToolPanel({
 
   const renderToolsTab = React.useCallback(() => (
     <>
+      {!canEdit && (
+        <div className="mb-2 rounded bg-amber-500/15 border border-amber-400/30 px-2 py-1 text-[11px] text-amber-200 flex items-center gap-1.5">
+          <Eye className="w-3 h-3 shrink-0" aria-hidden="true" />
+          <span>View only — editing disabled</span>
+        </div>
+      )}
       {/* Tool Selection */}
       <div className="grid grid-cols-4 gap-2 mb-3">
         {tools.map((tool) => {
@@ -1059,72 +1067,84 @@ export function ToolPanel({
             <div key={tool.id} className="flex justify-center">
               <ToolButton
                 tool={tool}
-                isSelected={selectedTool === tool.id}
+                isSelected={canEdit && selectedTool === tool.id}
                 onClick={() => handleToolSelect(tool.id)}
-                disabled={isAIDisabled}
+                disabled={!canEdit || isAIDisabled}
               />
             </div>
           )
         })}
       </div>
 
-      {/* Color Mixer */}
-      <ColorMixer
-        color={color}
-        onColorChange={onColorChange}
-        colorMode={colorMode}
-        onColorModeChange={onColorModeChange}
-      />
-
-      {/* Sliders */}
-      <div className="border-b border-white/20 mb-2 pb-1">
-        <div className="flex items-center gap-1">
-          <div className="flex-1 min-w-0">
-            <Slider
-              value={size}
-              min={1}
-              max={100}
-              onChange={onSizeChange}
-              icon={Circle}
-              label="Brush Size"
-              color="hsl(var(--primary))"
-            />
-          </div>
-          {brushSettings && onBrushSettingsChange && (
-            <button
-              onClick={() => setShowBrushSettings(true)}
-              className="p-1 shrink-0 text-white/60 hover:text-white hover:bg-white/10 rounded transition-colors"
-              title="Brush settings (smoothing, taper, stroke feel)"
-              aria-label="Open brush settings"
-            >
-              <Sliders className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-        <Slider
-          value={opacity * 100}
-          min={0}
-          max={100}
-          onChange={(value) => onOpacityChange(value / 100)}
-          icon={Eye}
-          label="Opacity"
-          color="hsl(0, 0%, 50%)"
+      {/* Color Mixer & Sliders */}
+      <div className={!canEdit ? 'opacity-40 pointer-events-none select-none' : undefined} aria-disabled={!canEdit || undefined}>
+        <ColorMixer
+          color={color}
+          onColorChange={onColorChange}
+          colorMode={colorMode}
+          onColorModeChange={onColorModeChange}
         />
+
+        {/* Sliders */}
+        <div className="border-b border-white/20 mb-2 pb-1">
+          <div className="flex items-center gap-1">
+            <div className="flex-1 min-w-0">
+              <Slider
+                value={size}
+                min={1}
+                max={100}
+                onChange={onSizeChange}
+                icon={Circle}
+                label="Brush Size"
+                color="hsl(var(--primary))"
+              />
+            </div>
+            {brushSettings && onBrushSettingsChange && (
+              <button
+                onClick={() => setShowBrushSettings(true)}
+                disabled={!canEdit}
+                className="p-1 shrink-0 text-white/60 hover:text-white hover:bg-white/10 rounded transition-colors"
+                title="Brush settings (smoothing, taper, stroke feel)"
+                aria-label="Open brush settings"
+              >
+                <Sliders className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+          <Slider
+            value={opacity * 100}
+            min={0}
+            max={100}
+            onChange={(value) => onOpacityChange(value / 100)}
+            icon={Eye}
+            label="Opacity"
+            color="hsl(0, 0%, 50%)"
+          />
+        </div>
       </div>
 
       {/* Action Buttons */}
       <div className="grid grid-cols-4 gap-2">
         <div className="flex justify-center">
-          <ActionButton icon={Undo2} label="Undo" onClick={onUndo} disabled={!canUndo} />
+          <ActionButton icon={Undo2} label="Undo" onClick={onUndo} disabled={!canEdit || !canUndo} />
         </div>
         <div className="flex justify-center">
-          <ActionButton icon={Redo2} label="Redo" onClick={onRedo} disabled={!canRedo} />
+          <ActionButton icon={Redo2} label="Redo" onClick={onRedo} disabled={!canEdit || !canRedo} />
         </div>
         <div className="flex justify-center">
           <ActionButton
             icon={X}
-            label={isClearing ? 'Clearing…' : confirmingClear ? 'Click again to confirm' : 'Clear Canvas'}
+            label={
+              !isOwner
+                ? 'Only the owner can clear the canvas'
+                : isClearing
+                  ? 'Clearing…'
+                  : confirmingClear
+                    ? 'Click again to confirm'
+                    : 'Clear Canvas'
+            }
             onClick={handleClearClick}
+            disabled={!isOwner}
             isDanger={confirmingClear}
             busy={isClearing}
           />
@@ -1134,7 +1154,7 @@ export function ToolPanel({
         </div>
       </div>
     </>
-  ), [selectedTool, handleToolSelect, effectiveIsSignedIn, color, onColorChange, colorMode, onColorModeChange, size, onSizeChange, opacity, onOpacityChange, onUndo, canUndo, onRedo, canRedo, confirmingClear, handleClearClick, isClearing, onExport, isExporting, brushSettings, onBrushSettingsChange])
+  ), [canEdit, isOwner, selectedTool, handleToolSelect, effectiveIsSignedIn, color, onColorChange, colorMode, onColorModeChange, size, onSizeChange, opacity, onOpacityChange, onUndo, canUndo, onRedo, canRedo, confirmingClear, handleClearClick, isClearing, onExport, isExporting, brushSettings, onBrushSettingsChange])
 
   const renderLayersTab = React.useCallback(() => (
     <div className="space-y-2">
@@ -1143,7 +1163,7 @@ export function ToolPanel({
       ) : (
         <>
           <div className="flex items-center justify-between mb-1">
-            {onCreatePaintLayer && (
+            {canEdit && onCreatePaintLayer && (
               <button
                 onClick={onCreatePaintLayer}
                 className="p-0.5 hover:bg-white/20 rounded transition-colors flex items-center gap-1"
@@ -1176,17 +1196,22 @@ export function ToolPanel({
                 isTopLayer={index === 0}
                 isBottomLayer={index === [...layers].sort((a, b) => b.order - a.order).length - 1}
                 isOnlyPaintLayer={(layer.type === 'paint' || layer.type === 'stroke') && layers.filter(l => l.type === 'paint' || l.type === 'stroke').length <= 1}
+                readOnly={!canEdit}
               />
             ))}
           </div>
         </>
       )}
     </div>
-  ), [layers, onCreatePaintLayer, activeLayerId, onActiveLayerChange, onLayerVisibilityChange, onLayerDelete, onLayerReorder, onLayerOpacityChange])
+  ), [canEdit, layers, onCreatePaintLayer, activeLayerId, onActiveLayerChange, onLayerVisibilityChange, onLayerDelete, onLayerReorder, onLayerOpacityChange])
 
   const renderAITab = React.useCallback(() => (
     <div className="space-y-2">
-      {!effectiveIsSignedIn ? (
+      {!canEdit ? (
+        <div className="text-center py-4 px-1">
+          <p className="text-xs text-white/70">View-only painting — ask the owner for a collaborate link to use AI tools.</p>
+        </div>
+      ) : !effectiveIsSignedIn ? (
         <div className="text-center py-4">
           <p className="text-sm text-white/60 mb-2">Sign in to use AI generation</p>
           <button onClick={() => !authDisabled && setShowAuthModal(true)} className="text-blue-400 hover:text-blue-300 text-sm underline">
@@ -1219,7 +1244,7 @@ export function ToolPanel({
         </>
       )}
     </div>
-  ), [effectiveIsSignedIn, authDisabled, onAIGenerate, onBackgroundRemoval, onMergeTwo])
+  ), [canEdit, effectiveIsSignedIn, authDisabled, onAIGenerate, onBackgroundRemoval, onMergeTwo])
 
   return (
     <div

@@ -143,6 +143,7 @@ export const addStroke = mutation({
     isEraser: v.optional(v.boolean()),
     colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   returns: v.id("strokes"),
   handler: async (ctx, args) => {
@@ -152,8 +153,10 @@ export const addStroke = mutation({
       throw new Error("Session not found");
     }
 
-    // Authorization: allow if public or owner or guest owner
-    const { user } = await assertCanModifySession(ctx, session, args.guestKey);
+    // Authorization: allow owner, guest owner, or valid editKey collaborator
+    const { user } = await assertCanModifySession(ctx, session, args.guestKey, {
+      editKey: args.editKey,
+    });
 
     // Derive authenticated attribution strictly from ctx.auth
     if (args.userId && (!user || user._id !== args.userId)) {
@@ -233,6 +236,7 @@ export const getSessionStrokes = query({
   args: {
     sessionId: v.id("paintingSessions"),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   returns: v.array(v.object({
     _id: v.id("strokes"),
@@ -256,7 +260,7 @@ export const getSessionStrokes = query({
   handler: async (ctx, args) => {
     // First, ensure session cache is populated for fast undo/redo
     const session = await ctx.db.get(args.sessionId);
-    if (!(await canReadSession(ctx, session, args.guestKey))) {
+    if (!(await canReadSession(ctx, session, args.guestKey, args.editKey))) {
       return [];
     }
     
@@ -290,6 +294,7 @@ export const getLayerStrokes = query({
     sessionId: v.id("paintingSessions"),
     layerId: v.union(v.id("paintLayers"), v.id("uploadedImages"), v.id("aiGeneratedImages")),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   returns: v.array(v.object({
     _id: v.id("strokes"),
@@ -312,7 +317,7 @@ export const getLayerStrokes = query({
   })),
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!(await canReadSession(ctx, session, args.guestKey))) {
+    if (!(await canReadSession(ctx, session, args.guestKey, args.editKey))) {
       return [];
     }
     return await ctx.db
@@ -332,6 +337,7 @@ export const getStrokesAfter = query({
     sessionId: v.id("paintingSessions"),
     afterStrokeOrder: v.number(),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   returns: v.array(v.object({
     _id: v.id("strokes"),
@@ -354,7 +360,7 @@ export const getStrokesAfter = query({
   })),
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!(await canReadSession(ctx, session, args.guestKey))) {
+    if (!(await canReadSession(ctx, session, args.guestKey, args.editKey))) {
       return [];
     }
     return await ctx.db
@@ -375,6 +381,7 @@ export const removeLastStroke = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
@@ -383,7 +390,7 @@ export const removeLastStroke = mutation({
       throw new Error("Session not found");
     }
 
-    await assertCanModifySession(ctx, session, args.guestKey);
+    await assertCanModifySession(ctx, session, args.guestKey, { editKey: args.editKey });
 
     const top = await topLiveStroke(ctx, args.sessionId);
     const clears = getClearHistory(session);
@@ -445,6 +452,7 @@ export const restoreLastDeletedStroke = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
@@ -453,7 +461,7 @@ export const restoreLastDeletedStroke = mutation({
       throw new Error("Session not found");
     }
 
-    await assertCanModifySession(ctx, session, args.guestKey);
+    await assertCanModifySession(ctx, session, args.guestKey, { editKey: args.editKey });
 
     const redoStack = getRedoStack(session);
     if (redoStack.length === 0) {
@@ -649,6 +657,7 @@ export const getUndoRedoAvailability = query({
   args: {
     sessionId: v.id("paintingSessions"),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   returns: v.object({
     canUndo: v.boolean(),
@@ -660,7 +669,7 @@ export const getUndoRedoAvailability = query({
   }),
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!session || !(await canReadSession(ctx, session, args.guestKey))) {
+    if (!session || !(await canReadSession(ctx, session, args.guestKey, args.editKey))) {
       return {
         canUndo: false,
         canRedo: false,

@@ -22,6 +22,7 @@ export const updateLiveStroke = mutation({
     opacity: v.number(),
     colorMode: v.optional(v.union(v.literal("solid"), v.literal("rainbow"))),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -29,7 +30,9 @@ export const updateLiveStroke = mutation({
     if (!session) {
       throw new Error("Session not found");
     }
-    const { user } = await assertCanModifySession(ctx, session, args.guestKey);
+    const { user } = await assertCanModifySession(ctx, session, args.guestKey, {
+      editKey: args.editKey,
+    });
 
     // Derive authenticated user attribution strictly from ctx.auth
     if (args.userId && (!user || user._id !== args.userId)) {
@@ -104,6 +107,7 @@ export const getLiveStrokes = query({
   args: {
     sessionId: v.id("paintingSessions"),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   returns: v.array(v.object({
     _id: v.id("liveStrokes"),
@@ -125,7 +129,7 @@ export const getLiveStrokes = query({
   })),
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!(await canReadSession(ctx, session, args.guestKey))) {
+    if (!(await canReadSession(ctx, session, args.guestKey, args.editKey))) {
       return [];
     }
     const thirtySecondsAgo = Date.now() - 30 * 1000; // 30 seconds
@@ -150,6 +154,7 @@ export const clearLiveStroke = mutation({
     userId: v.optional(v.id("users")),
     guestId: v.optional(v.string()),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -158,7 +163,9 @@ export const clearLiveStroke = mutation({
       // Session is gone; nothing to clear
       return null;
     }
-    const { user } = await assertCanModifySession(ctx, session, args.guestKey);
+    const { user } = await assertCanModifySession(ctx, session, args.guestKey, {
+      editKey: args.editKey,
+    });
 
     // A caller may only clear their own live stroke: a userId-scoped stroke
     // requires the caller to be signed in as that user

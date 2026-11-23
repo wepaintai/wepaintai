@@ -18,6 +18,9 @@ const schema = defineSchema({
     name: v.optional(v.string()),
     createdBy: v.optional(v.id("users")),
     guestOwnerKey: v.optional(v.string()),
+    // Secret collaboration capability token; grants read+edit (never owner) access.
+    // Separate from isPublic, which grants read-only public viewing.
+    editKey: v.optional(v.string()),
     isPublic: v.boolean(),
     canvasWidth: v.number(),
     canvasHeight: v.number(),

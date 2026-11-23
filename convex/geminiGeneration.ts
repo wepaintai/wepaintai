@@ -15,6 +15,7 @@ export const generateImage = action({
     canvasWidth: v.optional(v.number()),
     canvasHeight: v.optional(v.number()),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<{ success: boolean; imageUrl?: string; error?: string }> => {
     if (isPromptTooLong(args.prompt)) {
@@ -24,6 +25,7 @@ export const generateImage = action({
     const access = await ctx.runQuery(internal.sessionAuth.verifySessionAccess, {
       sessionId: args.sessionId,
       guestKey: args.guestKey,
+      editKey: args.editKey,
       requireAuth: true,
     });
     if (access.status === "not_found") {
@@ -47,6 +49,7 @@ export const generateImage = action({
     const begin = await ctx.runMutation(internal.aiOperations.beginOperation, {
       sessionId: args.sessionId,
       guestKey: args.guestKey,
+      editKey: args.editKey,
       operation: { type: "ai-generation", prompt: args.prompt, provider: "gemini" },
     });
     if (begin.status !== "ok") {
@@ -160,6 +163,7 @@ export const generateImage = action({
         operationId: generationId,
         resultImageUrl: storageUrl,
         guestKey: args.guestKey,
+        editKey: args.editKey,
       });
       if (completion !== "completed") {
         await ctx.storage.delete(storageId).catch(() => {});

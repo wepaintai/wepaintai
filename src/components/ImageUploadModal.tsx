@@ -4,7 +4,7 @@ import { useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import { Id } from '../../convex/_generated/dataModel'
 import { uploadImageFile, validateImageFile, ACCEPTED_TYPES } from '../utils/imageUpload'
-import { getGuestKey } from '../utils/guestKey'
+import { getSessionAccessKey } from '../utils/guestKey'
 
 interface ImageUploadModalProps {
   sessionId: Id<"paintingSessions"> | null
@@ -93,7 +93,7 @@ export function ImageUploadModal({
         selectedFile,
         {
           sessionId,
-          guestKey: getGuestKey(sessionId) || undefined,
+          guestKey: getSessionAccessKey(sessionId) || undefined,
           canvasWidth,
           canvasHeight,
           onImageUploaded,

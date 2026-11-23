@@ -20,6 +20,7 @@ export const removeBackground = action({
     imageData: v.string(),
     targetLayerId: v.optional(v.string()),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   handler: async (
     ctx,
@@ -30,6 +31,7 @@ export const removeBackground = action({
     const access = await ctx.runQuery(internal.sessionAuth.verifySessionAccess, {
       sessionId: args.sessionId,
       guestKey: args.guestKey,
+      editKey: args.editKey,
       requireAuth: true,
     });
 
@@ -54,6 +56,7 @@ export const removeBackground = action({
     const begin = await ctx.runMutation(internal.aiOperations.beginOperation, {
       sessionId: args.sessionId,
       guestKey: args.guestKey,
+      editKey: args.editKey,
       operation: { type: "background-removal", targetLayerId: args.targetLayerId },
     });
     if (begin.status === "insufficient_tokens") {
@@ -140,6 +143,7 @@ export const removeBackground = action({
         operationId,
         resultImageUrl: storageUrl,
         guestKey: args.guestKey,
+        editKey: args.editKey,
       });
       if (completion !== "completed") {
         await ctx.storage.delete(storedId).catch(() => {});

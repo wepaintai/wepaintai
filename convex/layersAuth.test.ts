@@ -12,6 +12,7 @@ function createTestBackend() {
 async function seedLayerSession(options: {
   ownerAuthId?: string
   guestOwnerKey?: string
+  editKey?: string
   isPublic?: boolean
   layerCount?: number
 }) {
@@ -28,6 +29,7 @@ async function seedLayerSession(options: {
     const sessionId = await ctx.db.insert('paintingSessions', {
       createdBy: ownerId,
       guestOwnerKey: options.guestOwnerKey,
+      editKey: options.editKey,
       isPublic: options.isPublic ?? false,
       canvasWidth: 800,
       canvasHeight: 600,
@@ -106,16 +108,37 @@ describe('paint layer authorization policy', () => {
     expect(layer?.opacity).toBe(0.75)
   })
 
-  test('keeps public sessions collaboratively editable', async () => {
-    const { t, sessionId, layerIds } = await seedLayerSession({ isPublic: true })
+  test('keeps public sessions read-only without an editKey and editable with a valid editKey', async () => {
+    const editKey = 'layer-collab-key'
+    const { t, sessionId, layerIds } = await seedLayerSession({ isPublic: true, editKey })
 
+    // Public viewer can read layers
+    expect(await t.query(api.paintLayers.getPaintLayers, { sessionId })).toHaveLength(2)
+
+    // Public viewer without editKey cannot mutate layers
+    await expect(
+      t.mutation(api.paintLayers.createPaintLayer, {
+        sessionId,
+        name: 'Public vandal layer',
+      }),
+    ).rejects.toThrow('Unauthorized')
+    await expect(
+      t.mutation(api.paintLayers.updatePaintLayer, {
+        layerId: layerIds[0],
+        visible: false,
+      }),
+    ).rejects.toThrow('Unauthorized')
+
+    // Collaborator with valid editKey can mutate layers
     await t.mutation(api.paintLayers.createPaintLayer, {
       sessionId,
-      name: 'Public layer',
+      name: 'Collab layer',
+      editKey,
     })
     await t.mutation(api.paintLayers.updatePaintLayer, {
       layerId: layerIds[0],
       visible: false,
+      editKey,
     })
 
     const layer = await t.run(async (ctx) => await ctx.db.get(layerIds[0]))
@@ -201,15 +224,19 @@ describe('paint layer authorization policy', () => {
 describe('layer mutation session boundaries', () => {
   test('cross-session merge and unified reorder fail without changing either session', async () => {
     const t = createTestBackend()
+    const editKeyA = 'session-a-edit-key'
+    const editKeyB = 'session-b-edit-key'
     const seeded = await t.run(async (ctx) => {
       const sessionA = await ctx.db.insert('paintingSessions', {
         isPublic: true,
+        editKey: editKeyA,
         canvasWidth: 800,
         canvasHeight: 600,
         strokeCounter: 0,
       })
       const sessionB = await ctx.db.insert('paintingSessions', {
         isPublic: true,
+        editKey: editKeyB,
         canvasWidth: 800,
         canvasHeight: 600,
         strokeCounter: 0,
@@ -246,11 +273,13 @@ describe('layer mutation session boundaries', () => {
     await expect(t.mutation(api.paintLayers.mergePaintLayers, {
       sourceLayerId: seeded.layerB,
       targetLayerId: seeded.layerA,
+      editKey: editKeyA,
     })).rejects.toThrow('Layers must belong to the same session')
     await expect(t.mutation(api.layers.reorderLayer, {
       sessionId: seeded.sessionA,
       layerId: seeded.layerB,
       newOrder: 0,
+      editKey: editKeyA,
     })).rejects.toThrow('Layer not found')
 
     const state = await t.run(async (ctx) => ({

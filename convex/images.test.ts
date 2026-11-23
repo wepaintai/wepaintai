@@ -71,6 +71,7 @@ function makeWebpVp8xBytes(width: number, height: number): Uint8Array<ArrayBuffe
 async function seedImages(options: {
   ownerAuthId?: string
   guestOwnerKey?: string
+  editKey?: string
   isPublic?: boolean
 } = {}) {
   const t = createTestBackend()
@@ -87,6 +88,7 @@ async function seedImages(options: {
     const sessionId = await ctx.db.insert('paintingSessions', {
       createdBy: ownerId,
       guestOwnerKey: options.guestOwnerKey,
+      editKey: options.editKey,
       isPublic: options.isPublic ?? false,
       canvasWidth: 800,
       canvasHeight: 600,
@@ -191,8 +193,9 @@ async function uploadThroughIntent(
   sessionId: Id<'paintingSessions'>,
   bytes: Uint8Array<ArrayBuffer> = makePngBytes(120, 90),
   guestKey?: string,
+  editKey?: string,
 ): Promise<Intent> {
-  const intent = await caller.mutation(api.images.createUploadIntent, { sessionId, guestKey })
+  const intent = await caller.mutation(api.images.createUploadIntent, { sessionId, guestKey, editKey })
   const response = await postUpload(t, intent, bytes)
   expect(response.status).toBe(200)
   return intent
@@ -673,17 +676,26 @@ describe('image upload flow: intent -> POST /uploads/image -> commit (AUD-009)',
       'Too many image uploads',
     )
 
-    // Anonymous editors of a public session share one bucket: random
-    // (non-matching) guest keys don't create new buckets
-    const { t: pub, sessionId: publicSessionId } = await seedImages({ isPublic: true })
+    // Anonymous edit-link holders share one bucket: random (non-matching)
+    // guest keys don't create new buckets
+    const pubEditKey = 'pub-edit-key'
+    const { t: pub, sessionId: publicSessionId } = await seedImages({
+      isPublic: true,
+      editKey: pubEditKey,
+    })
     for (let i = 0; i < MAX_OPEN_UPLOAD_INTENTS; i++) {
       await pub.mutation(api.images.createUploadIntent, {
         sessionId: publicSessionId,
         guestKey: `random-${i}`,
+        editKey: pubEditKey,
       })
     }
     await expect(
-      pub.mutation(api.images.createUploadIntent, { sessionId: publicSessionId, guestKey: 'random-x' }),
+      pub.mutation(api.images.createUploadIntent, {
+        sessionId: publicSessionId,
+        guestKey: 'random-x',
+        editKey: pubEditKey,
+      }),
     ).rejects.toThrow('Too many uploads in progress')
 
     // A guest owner has their own bucket
@@ -798,15 +810,59 @@ describe('image upload flow: intent -> POST /uploads/image -> commit (AUD-009)',
     expect(deleted).toEqual({ uploaded: null, ai: null })
   })
 
-  test('preserves anonymous collaboration for public sessions', async () => {
-    const { t, sessionId, uploadedImageId } = await seedImages({ isPublic: true })
+  test('keeps public sessions read-only for images and allows collaboration with valid editKey', async () => {
+    const editKey = 'public-image-collab-key'
+    const { t, sessionId, uploadedImageId } = await seedImages({ isPublic: true, editKey })
 
-    const intent = await uploadThroughIntent(t, t, sessionId)
-    const imageId = await t.mutation(api.images.commitImageUpload, commitArgs(sessionId, intent))
+    // Public viewer can read images
+    const images = await t.query(api.images.getSessionImages, { sessionId })
+    expect(images).toHaveLength(2)
+
+    // Public viewer without (or with a wrong/empty) editKey cannot upload or transform
+    for (const badKey of [undefined, '', 'wrong-key']) {
+      await expect(
+        t.mutation(api.images.createUploadIntent, { sessionId, editKey: badKey }),
+      ).rejects.toThrow('Unauthorized')
+      await expect(
+        t.mutation(api.images.updateImageTransform, {
+          imageId: uploadedImageId,
+          rotation: 45,
+          editKey: badKey,
+        }),
+      ).rejects.toThrow('Unauthorized')
+    }
+    const ownerIntent = await t.run(async (ctx) => {
+      const now = Date.now()
+      return ctx.db.insert('imageUploadIntents', {
+        sessionId,
+        createdAt: now,
+        expiresAt: now + 60_000,
+        uploadTokenHash: 'x'.repeat(64),
+        rateKey: `anon:${sessionId}`,
+      })
+    })
+    await expect(
+      t.mutation(api.images.commitImageUpload, {
+        sessionId,
+        intentId: ownerIntent,
+        uploadToken: 'tok',
+        filename: 'x.png',
+        x: 0,
+        y: 0,
+      }),
+    ).rejects.toThrow('Unauthorized')
+
+    // Collaborator with valid editKey can upload, commit and transform
+    const intent = await uploadThroughIntent(t, t, sessionId, makePngBytes(120, 90), undefined, editKey)
+    const imageId = await t.mutation(
+      api.images.commitImageUpload,
+      commitArgs(sessionId, intent, { editKey }),
+    )
     expect((await t.run((ctx) => ctx.db.get(imageId)))?.userId).toBeUndefined()
     await t.mutation(api.images.updateImageTransform, {
       imageId: uploadedImageId,
       rotation: 45,
+      editKey,
     })
 
     const image = await t.run(async (ctx) => ctx.db.get(uploadedImageId))

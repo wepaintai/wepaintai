@@ -32,6 +32,7 @@ export const generateImage = action({
     canvasWidth: v.optional(v.number()),
     canvasHeight: v.optional(v.number()),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<{ success: boolean; imageUrl?: string; error?: string }> => {
     debugLog('[AI-GEN] generateImage action called with prompt:', args.prompt);
@@ -50,6 +51,7 @@ export const generateImage = action({
     const access = await ctx.runQuery(internal.sessionAuth.verifySessionAccess, {
       sessionId: args.sessionId,
       guestKey: args.guestKey,
+      editKey: args.editKey,
       requireAuth: true,
     });
     if (access.status === "not_found") {
@@ -75,6 +77,7 @@ export const generateImage = action({
     const begin = await ctx.runMutation(internal.aiOperations.beginOperation, {
       sessionId: args.sessionId,
       guestKey: args.guestKey,
+      editKey: args.editKey,
       operation: { type: "ai-generation", prompt: args.prompt, provider: "replicate" },
     });
     if (begin.status !== "ok") {
@@ -203,6 +206,7 @@ export const generateImage = action({
         operationId: generationId,
         resultImageUrl: finalUrl,
         guestKey: args.guestKey,
+        editKey: args.editKey,
       });
       if (completion !== "completed") {
         if (storedId) await ctx.storage.delete(storedId).catch(() => {});
@@ -232,10 +236,11 @@ export const getSessionGenerations = query({
   args: {
     sessionId: v.id("paintingSessions"),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!(await canReadSession(ctx, session, args.guestKey))) {
+    if (!(await canReadSession(ctx, session, args.guestKey, args.editKey))) {
       return [];
     }
     // Take a larger window then filter, so a run of failed/moderated rows

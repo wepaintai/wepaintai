@@ -1,4 +1,5 @@
 import React from 'react'
+import { Eye } from 'lucide-react'
 import { Id } from '../../convex/_generated/dataModel'
 import type { UserPresence } from '../hooks/usePaintingSession'
 import type { ConnectionStatus } from '../hooks/useConnectionStatus'
@@ -13,6 +14,8 @@ interface PresenceStripProps {
   /** Stable client id identifying this browser when the user is a guest */
   selfPresenceId?: string
   connectionStatus: ConnectionStatus
+  /** True when the caller has read-only access (e.g. public view-only link) */
+  readOnly?: boolean
 }
 
 // Presence records older than this are treated as gone (the server already
@@ -48,7 +51,7 @@ export function activeCollaborators(
   })
 }
 
-export function PresenceStrip({ presence, currentUser, selfPresenceId, connectionStatus }: PresenceStripProps) {
+export function PresenceStrip({ presence, currentUser, selfPresenceId, connectionStatus, readOnly = false }: PresenceStripProps) {
   const collaborators = activeCollaborators(presence, currentUser.id, selfPresenceId)
 
   const onlineCount = collaborators.length + 1
@@ -63,8 +66,17 @@ export function PresenceStrip({ presence, currentUser, selfPresenceId, connectio
     <div
       className="absolute top-2 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 bg-white/90 backdrop-blur-sm rounded-full shadow px-2.5 py-1.5 text-xs text-gray-700 select-none"
       role="status"
-      aria-label={`${onlineCount} ${onlineCount === 1 ? 'person' : 'people'} online. ${connectionLabel}`}
+      aria-label={`${readOnly ? 'View only. ' : ''}${onlineCount} ${onlineCount === 1 ? 'person' : 'people'} online. ${connectionLabel}`}
     >
+      {readOnly && (
+        <span
+          className="inline-flex items-center gap-1 rounded-full bg-amber-100 text-amber-800 border border-amber-300/70 px-2 py-0.5 text-[11px] font-medium whitespace-nowrap"
+          title="Public view-only painting — ask the owner for a collaborate link to edit"
+        >
+          <Eye className="w-3 h-3" aria-hidden="true" />
+          View only
+        </span>
+      )}
       {/* Connection indicator */}
       {connectionStatus === 'connected' ? (
         <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" title="Connected" aria-hidden="true" />

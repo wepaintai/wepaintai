@@ -4,10 +4,14 @@ import { assertCanModifySession, canReadSession } from "./sessionAuth";
 
 // Get paint layer settings for a session
 export const getPaintLayerSettings = query({
-  args: { sessionId: v.id("paintingSessions"), guestKey: v.optional(v.string()) },
+  args: {
+    sessionId: v.id("paintingSessions"),
+    guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!session || !(await canReadSession(ctx, session, args.guestKey))) {
+    if (!session || !(await canReadSession(ctx, session, args.guestKey, args.editKey))) {
       return null;
     }
     
@@ -25,11 +29,12 @@ export const updatePaintLayerOrder = mutation({
     sessionId: v.id("paintingSessions"),
     newLayerOrder: v.number(),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
     if (!session) throw new Error("Session not found");
-    await assertCanModifySession(ctx, session, args.guestKey);
+    await assertCanModifySession(ctx, session, args.guestKey, { editKey: args.editKey });
     
     // Get all images to validate order range
     const uploadedImages = await ctx.db
@@ -100,11 +105,12 @@ export const updatePaintLayerVisibility = mutation({
     sessionId: v.id("paintingSessions"),
     visible: v.boolean(),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
     if (!session) throw new Error("Session not found");
-    await assertCanModifySession(ctx, session, args.guestKey);
+    await assertCanModifySession(ctx, session, args.guestKey, { editKey: args.editKey });
     
     await ctx.db.patch(args.sessionId, {
       paintLayerVisible: args.visible,
@@ -117,11 +123,12 @@ export const normalizeLayerOrders = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
     if (!session) throw new Error("Session not found");
-    await assertCanModifySession(ctx, session, args.guestKey);
+    await assertCanModifySession(ctx, session, args.guestKey, { editKey: args.editKey });
     
     // Get all images
     const uploadedImages = await ctx.db

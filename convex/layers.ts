@@ -10,11 +10,12 @@ export const reorderLayer = mutation({
     layerId: v.string(), // Can be 'painting-layer' or an image ID
     newOrder: v.number(),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
     if (!session) throw new Error("Session not found");
-    await assertCanModifySession(ctx, session, args.guestKey);
+    await assertCanModifySession(ctx, session, args.guestKey, { editKey: args.editKey });
 
     // Get all layers
     const uploadedImages = await ctx.db

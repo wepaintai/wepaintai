@@ -209,6 +209,7 @@ export const beginOperation = internalMutation({
   args: {
     sessionId: v.id("paintingSessions"),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
     operation: operationSpecValidator,
   },
   returns: v.union(
@@ -233,7 +234,9 @@ export const beginOperation = internalMutation({
 
     let user: Doc<"users"> | null;
     try {
-      ({ user } = await assertCanModifySession(ctx, session, args.guestKey));
+      ({ user } = await assertCanModifySession(ctx, session, args.guestKey, {
+        editKey: args.editKey,
+      }));
     } catch {
       return { status: "unauthorized" as const };
     }
@@ -323,6 +326,7 @@ export const completeOperation = internalMutation({
     operationId: v.string(),
     resultImageUrl: v.string(),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   returns: v.union(
     v.literal("completed"),
@@ -340,7 +344,9 @@ export const completeOperation = internalMutation({
     let allowed = false;
     if (session && identity && identity.subject === row.userId) {
       try {
-        const { user } = await assertCanModifySession(ctx, session, args.guestKey);
+        const { user } = await assertCanModifySession(ctx, session, args.guestKey, {
+          editKey: args.editKey,
+        });
         allowed = user !== null;
       } catch {
         allowed = false;

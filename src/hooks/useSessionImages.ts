@@ -1,8 +1,8 @@
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
-import { useCallback } from "react";
-import { getGuestKey } from "../utils/guestKey";
+import { useCallback, useSyncExternalStore } from "react";
+import { getEditKey, getGuestKey, subscribeEditKeys } from "../utils/guestKey";
 
 export interface SessionImage {
   _id: Id<"uploadedImages">;
@@ -27,11 +27,17 @@ export interface SessionImage {
 
 export function useSessionImages(sessionId: Id<"paintingSessions"> | null) {
   const guestKey = getGuestKey(sessionId) || undefined;
+  const editKey =
+    useSyncExternalStore(
+      subscribeEditKeys,
+      () => getEditKey(sessionId),
+      () => null,
+    ) || undefined;
 
   // Query images for the session
   const images = useQuery(
     api.images.getSessionImages,
-    sessionId ? { sessionId, guestKey } : "skip"
+    sessionId ? { sessionId, guestKey, editKey } : "skip"
   );
 
   // Mutations
@@ -45,32 +51,32 @@ export function useSessionImages(sessionId: Id<"paintingSessions"> | null) {
     x: number,
     y: number
   ) => {
-    await updateTransform({ imageId, x, y, guestKey });
-  }, [updateTransform, guestKey]);
+    await updateTransform({ imageId, x, y, guestKey, editKey });
+  }, [updateTransform, guestKey, editKey]);
 
   // Update image scale
   const scaleImage = useCallback(async (
     imageId: Id<"uploadedImages">,
     scale: number
   ) => {
-    await updateTransform({ imageId, scale, guestKey });
-  }, [updateTransform, guestKey]);
+    await updateTransform({ imageId, scale, guestKey, editKey });
+  }, [updateTransform, guestKey, editKey]);
 
   // Update image rotation
   const rotateImage = useCallback(async (
     imageId: Id<"uploadedImages">,
     rotation: number
   ) => {
-    await updateTransform({ imageId, rotation, guestKey });
-  }, [updateTransform, guestKey]);
+    await updateTransform({ imageId, rotation, guestKey, editKey });
+  }, [updateTransform, guestKey, editKey]);
 
   // Update image opacity
   const setImageOpacity = useCallback(async (
     imageId: Id<"uploadedImages">,
     opacity: number
   ) => {
-    await updateTransform({ imageId, opacity, guestKey });
-  }, [updateTransform, guestKey]);
+    await updateTransform({ imageId, opacity, guestKey, editKey });
+  }, [updateTransform, guestKey, editKey]);
 
   // Update full transform
   const updateImageTransform = useCallback(async (
@@ -88,24 +94,24 @@ export function useSessionImages(sessionId: Id<"paintingSessions"> | null) {
     try {
       console.log('[useSessionImages] updateImageTransform called', { imageId, transform })
     } catch {}
-    await updateTransform({ imageId, ...transform, guestKey });
+    await updateTransform({ imageId, ...transform, guestKey, editKey });
     try {
       console.log('[useSessionImages] updateImageTransform completed', { imageId, transform })
     } catch {}
-  }, [updateTransform, guestKey]);
+  }, [updateTransform, guestKey, editKey]);
 
   // Change layer order
   const changeLayerOrder = useCallback(async (
     imageId: Id<"uploadedImages">,
     newLayerOrder: number
   ) => {
-    await updateLayerOrder({ imageId, newLayerOrder, guestKey });
-  }, [updateLayerOrder, guestKey]);
+    await updateLayerOrder({ imageId, newLayerOrder, guestKey, editKey });
+  }, [updateLayerOrder, guestKey, editKey]);
 
   // Delete image
   const deleteImage = useCallback(async (imageId: Id<"uploadedImages">) => {
-    await deleteImageMutation({ imageId, guestKey });
-  }, [deleteImageMutation, guestKey]);
+    await deleteImageMutation({ imageId, guestKey, editKey });
+  }, [deleteImageMutation, guestKey, editKey]);
 
   return {
     images: images || [],

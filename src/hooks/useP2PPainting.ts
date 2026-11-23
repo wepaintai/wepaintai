@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useSyncExternalStore } from 'react';
 import { useConvex } from "convex/react";
 import { Id } from "../../convex/_generated/dataModel";
 import { P2PManager } from '../lib/webrtc/P2PManager';
-import { getGuestKey } from '../utils/guestKey';
+import { getSessionAccessKey, subscribeEditKeys } from '../utils/guestKey';
 import type { 
   PreviewPacket, 
   CursorPacket,
@@ -136,6 +136,13 @@ export function useP2PPainting({
     });
   }, []);
 
+  const accessKey =
+    useSyncExternalStore(
+      subscribeEditKeys,
+      () => getSessionAccessKey(sessionId),
+      () => null,
+    ) || undefined;
+
   // Initialize P2P manager
   useEffect(() => {
     console.log('🔍 P2P Hook - Enabled:', enabled, 'SessionId:', sessionId, 'UserId:', userId);
@@ -152,7 +159,7 @@ export function useP2PPainting({
     const manager = new P2PManager({
       sessionId,
       peerId: userId,
-      guestKey: getGuestKey(sessionId) || undefined,
+      guestKey: accessKey,
       convexClient: convex,
       onPacketReceived: handlePacketReceived,
       onPeerConnected: handlePeerConnected,
@@ -188,7 +195,7 @@ export function useP2PPainting({
       setRemoteStrokes(new Map());
       setRemoteCursors(new Map());
     };
-  }, [enabled, sessionId, userId, convex, handlePacketReceived, handlePeerConnected, handlePeerDisconnected]);
+  }, [enabled, sessionId, userId, accessKey, convex, handlePacketReceived, handlePeerConnected, handlePeerDisconnected]);
 
   // Clean up old remote strokes (older than 5 seconds)
   useEffect(() => {

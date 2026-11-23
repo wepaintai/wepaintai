@@ -6,6 +6,8 @@ import { modules } from './test.setup'
 
 const OWNER = 'presence-owner'
 const OTHER = 'presence-other'
+// Public sessions are read-only; collaborators edit (and show presence) via the edit link
+const EDIT_KEY = 'presence-edit-key'
 
 async function seed() {
   const t = convexTest(schema, modules)
@@ -15,6 +17,7 @@ async function seed() {
     const sessionId = await ctx.db.insert('paintingSessions', {
       createdBy: ownerId,
       isPublic: true,
+      editKey: EDIT_KEY,
       canvasWidth: 800,
       canvasHeight: 600,
       strokeCounter: 0,
@@ -76,6 +79,7 @@ describe('POST /presence/leave (sendBeacon) authentication', { timeout: 30_000 }
     await asOwner.mutation(api.liveStrokes.updateLiveStroke, { sessionId, ...liveStrokeArgs })
     const other = await asOther.mutation(api.presence.updatePresence, {
       sessionId,
+      editKey: EDIT_KEY,
       ...presenceArgs('Other'),
     })
     expect(owner && other).toBeTruthy()
@@ -122,9 +126,15 @@ describe('guest identity is not exposed to other clients', () => {
     await t.mutation(api.presence.updatePresence, {
       sessionId,
       guestId,
+      editKey: EDIT_KEY,
       ...presenceArgs('Guest'),
     })
-    await t.mutation(api.liveStrokes.updateLiveStroke, { sessionId, guestId, ...liveStrokeArgs })
+    await t.mutation(api.liveStrokes.updateLiveStroke, {
+      sessionId,
+      guestId,
+      editKey: EDIT_KEY,
+      ...liveStrokeArgs,
+    })
 
     const presence = await asOther.query(api.presence.getSessionPresence, { sessionId })
     const live = await asOther.query(api.liveStrokes.getLiveStrokes, { sessionId })
@@ -139,8 +149,12 @@ describe('guest identity is not exposed to other clients', () => {
     // The public presence _id is not proof of identity: it cannot be used as a
     // guestId to evict or overwrite the guest, and the beacon needs the token.
     const publicId = presence[0]._id
-    await t.mutation(api.presence.leaveSession, { sessionId, guestId: publicId })
-    await t.mutation(api.liveStrokes.clearLiveStroke, { sessionId, guestId: publicId })
+    await t.mutation(api.presence.leaveSession, { sessionId, guestId: publicId, editKey: EDIT_KEY })
+    await t.mutation(api.liveStrokes.clearLiveStroke, {
+      sessionId,
+      guestId: publicId,
+      editKey: EDIT_KEY,
+    })
     await beacon(t, { sessionId, presenceId: publicId, leaveToken: publicId })
     expect(await counts(t)).toEqual({ presence: 1, live: 1 })
   })
