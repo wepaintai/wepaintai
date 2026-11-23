@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState, useCallback, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useConvex } from "convex/react";
 import { Id } from "../../convex/_generated/dataModel";
 import { P2PManager } from '../lib/webrtc/P2PManager';
-import { getEditKey, getGuestKey, subscribeEditKeys } from '../utils/guestKey';
+import { getGuestKey } from '../utils/guestKey';
 import type { 
   PreviewPacket, 
   CursorPacket,
@@ -12,11 +12,20 @@ import type {
   P2PMetrics 
 } from '../lib/webrtc/types';
 
+export interface P2PPresencePeer {
+  userId?: Id<"users"> | string;
+  userName: string;
+  userColor: string;
+}
+
 export interface P2PPaintingOptions {
   sessionId: Id<"paintingSessions"> | null;
   userId: string;
+  guestKey?: string;
   enabled?: boolean;
-  presence?: Array<{ userName: string; userColor: string }>; // To get peer colors
+  presence?: ReadonlyArray<P2PPresencePeer>; // To get peer colors
+  /** Edit-link key for signaling authorization (never the guest owner key). */
+  editKey?: string;
   /**
    * Peer ids (user id strings) currently allowed to edit. When provided,
    * stroke and cursor packets from any other peer are ignored, so a
@@ -57,11 +66,15 @@ export interface P2PPaintingResult {
   metrics: P2PMetrics | null;
 }
 
+const EMPTY_PRESENCE: ReadonlyArray<P2PPresencePeer> = [];
+
 export function useP2PPainting({
   sessionId,
   userId,
+  guestKey,
   enabled = true,
-  presence = [],
+  presence = EMPTY_PRESENCE,
+  editKey,
   allowedPeerIds = null,
 }: P2PPaintingOptions): P2PPaintingResult {
   const convex = useConvex();
@@ -71,10 +84,18 @@ export function useP2PPainting({
   const [remoteStrokes, setRemoteStrokes] = useState<Map<string, RemoteStroke>>(new Map());
   const [remoteCursors, setRemoteCursors] = useState<Map<string, { x: number; y: number; drawing: boolean }>>(new Map());
   const [metrics, setMetrics] = useState<P2PMetrics | null>(null);
-  const metricsIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const metricsIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const connectedPeersRef = useRef<Set<string>>(new Set());
   const allowedPeerIdsRef = useRef(allowedPeerIds);
   allowedPeerIdsRef.current = allowedPeerIds;
+  const presenceRef = useRef<ReadonlyArray<P2PPresencePeer>>(presence);
+
+  useEffect(() => {
+    presenceRef.current = presence;
+  }, [presence]);
+
+  const resolvedGuestKey =
+    guestKey !== undefined ? guestKey : getGuestKey(sessionId) || undefined;
 
   // Handle incoming packets
   const handlePacketReceived = useCallback((peerId: string, packet: P2PPacket) => {
@@ -115,6 +136,9 @@ export function useP2PPainting({
         console.log('🔄 P2P: Updated stroke', strokeKey, 'points:', existingStroke.points.length);
       } else {
         // Create new stroke
+        const peerInfo = presenceRef.current.find(
+          p => p.userName === peerId || p.userId?.toString() === peerId
+        );
         const newStroke = {
           peerId,
           strokeId: packet.id,
@@ -123,8 +147,8 @@ export function useP2PPainting({
             y: packet.y,
             pressure: packet.p,
           }],
-          // Try to find peer color from presence
-          color: presence.find(p => p.userName === peerId)?.userColor || '#FF0000',
+          // Try to find peer color from latest presence snapshot
+          color: peerInfo?.userColor || '#FF0000',
           size: 20, // Default brush size
           lastUpdate: Date.now(),
         };
@@ -170,14 +194,6 @@ export function useP2PPainting({
     });
   }, []);
 
-  const guestKey = getGuestKey(sessionId) || undefined;
-  const editKey =
-    useSyncExternalStore(
-      subscribeEditKeys,
-      () => getEditKey(sessionId),
-      () => null,
-    ) || undefined;
-
   // Initialize P2P manager
   useEffect(() => {
     console.log('🔍 P2P Hook - Enabled:', enabled, 'SessionId:', sessionId, 'UserId:', userId);
@@ -191,22 +207,29 @@ export function useP2PPainting({
       return;
     }
 
+    let cancelled = false;
+    const connectedPeers = connectedPeersRef.current;
     const manager = new P2PManager({
       sessionId,
       peerId: userId,
-      guestKey,
+      guestKey: resolvedGuestKey,
       editKey,
       convexClient: convex,
       onPacketReceived: handlePacketReceived,
       onPeerConnected: handlePeerConnected,
       onPeerDisconnected: handlePeerDisconnected,
-      onModeChanged: setConnectionMode,
+      onModeChanged: (mode) => {
+        if (!cancelled) {
+          setConnectionMode(mode);
+        }
+      },
     });
 
     p2pManagerRef.current = manager;
 
     // Initialize connection
     manager.init().catch(error => {
+      if (cancelled) return;
       console.error('Failed to initialize P2P:', error);
       // No fallback - P2P is required
       setIsConnected(false);
@@ -221,23 +244,30 @@ export function useP2PPainting({
 
     // Cleanup
     return () => {
+      cancelled = true;
       if (metricsIntervalRef.current) {
         clearInterval(metricsIntervalRef.current);
+        metricsIntervalRef.current = null;
       }
-      manager.destroy();
+      void manager.destroy();
       p2pManagerRef.current = null;
-      connectedPeersRef.current.clear();
+      connectedPeers.clear();
       setIsConnected(false);
+      setConnectionMode('disconnected');
+      setMetrics(null);
       setRemoteStrokes(new Map());
       setRemoteCursors(new Map());
     };
-  }, [enabled, sessionId, userId, guestKey, editKey, convex, handlePacketReceived, handlePeerConnected, handlePeerDisconnected]);
+  }, [enabled, sessionId, userId, resolvedGuestKey, editKey, convex, handlePacketReceived, handlePeerConnected, handlePeerDisconnected]);
 
-  // Clean up old remote strokes (older than 5 seconds)
+  // Clean up old remote strokes (older than 5 seconds) only while P2P is active
   useEffect(() => {
+    if (!enabled || !sessionId || !userId) return;
+
     const interval = setInterval(() => {
       const now = Date.now();
       setRemoteStrokes(prev => {
+        if (prev.size === 0) return prev;
         const newStrokes = new Map(prev);
         let changed = false;
         
@@ -253,7 +283,7 @@ export function useP2PPainting({
     }, 1000);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [enabled, sessionId, userId]);
 
   // Send stroke point
   const sendStrokePoint = useCallback((
@@ -262,7 +292,7 @@ export function useP2PPainting({
     y: number,
     pressure: number
   ) => {
-    if (!p2pManagerRef.current || !isConnected) {
+    if (!p2pManagerRef.current || connectedPeersRef.current.size === 0) {
       return;
     }
 
@@ -275,7 +305,7 @@ export function useP2PPainting({
     };
 
     p2pManagerRef.current.sendPacket(packet);
-  }, [isConnected]);
+  }, []);
 
   // Send cursor position
   const sendCursorPosition = useCallback((
@@ -283,7 +313,7 @@ export function useP2PPainting({
     y: number,
     drawing: boolean
   ) => {
-    if (!p2pManagerRef.current || !isConnected) {
+    if (!p2pManagerRef.current || connectedPeersRef.current.size === 0) {
       return;
     }
 
@@ -295,18 +325,20 @@ export function useP2PPainting({
     };
 
     p2pManagerRef.current.sendCursorPacket(packet);
-  }, [isConnected]);
+  }, []);
 
   // Clear a remote stroke (useful when stroke is completed)
   const clearRemoteStroke = useCallback((peerId: string, strokeId: string) => {
     setRemoteStrokes(prev => {
+      const key = `${peerId}:${strokeId}`;
+      if (!prev.has(key)) return prev;
       const newStrokes = new Map(prev);
-      newStrokes.delete(`${peerId}:${strokeId}`);
+      newStrokes.delete(key);
       return newStrokes;
     });
   }, []);
 
-  return {
+  return useMemo(() => ({
     isConnected,
     connectionMode,
     remoteStrokes,
@@ -315,5 +347,14 @@ export function useP2PPainting({
     sendCursorPosition,
     clearRemoteStroke,
     metrics,
-  };
+  }), [
+    isConnected,
+    connectionMode,
+    remoteStrokes,
+    remoteCursors,
+    sendStrokePoint,
+    sendCursorPosition,
+    clearRemoteStroke,
+    metrics,
+  ]);
 }

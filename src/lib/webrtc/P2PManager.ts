@@ -35,7 +35,8 @@ export class P2PManager {
   private peerId: string;
   private guestKey?: string;
   private editKey?: string;
-  private pollingInterval: NodeJS.Timeout | null = null;
+  private pollingInterval: ReturnType<typeof setInterval> | null = null;
+  private destroyed = false;
   private metrics: P2PMetrics = {
     latency: 0,
     packetsSent: 0,
@@ -84,13 +85,23 @@ export class P2PManager {
       );
 
       console.log('🔍 P2P: Found peers:', peers.length, 'Mode:', mode);
+      if (this.destroyed) {
+        return;
+      }
       this.mode = mode;
       this.onModeChanged?.(mode);
 
       // Connect to each peer
       for (const peerId of peers) {
+        if (this.destroyed) {
+          return;
+        }
         console.log('🤝 P2P: Connecting to peer:', peerId);
         await this.connectToPeer(peerId);
+      }
+
+      if (this.destroyed) {
+        return;
       }
 
       // Start polling for signaling messages
@@ -233,7 +244,13 @@ export class P2PManager {
    * Start polling for signaling messages
    */
   private startSignalPolling(): void {
+    if (this.destroyed || this.pollingInterval) {
+      return;
+    }
     this.pollingInterval = setInterval(async () => {
+      if (this.destroyed) {
+        return;
+      }
       try {
         const signals = await this.convexClient.query(api.webrtc.getSignals, {
           sessionId: this.sessionId,
@@ -242,10 +259,17 @@ export class P2PManager {
           editKey: this.editKey,
         });
 
+        if (this.destroyed) {
+          return;
+        }
+
         if (signals.length > 0) {
           // Process signals
           console.log(`📨 P2P: Received ${signals.length} signals`);
           for (const signal of signals) {
+            if (this.destroyed) {
+              return;
+            }
             await this.handleSignal(signal);
           }
           
@@ -383,6 +407,11 @@ export class P2PManager {
    * Clean up and disconnect
    */
   async destroy(): Promise<void> {
+    if (this.destroyed) {
+      return;
+    }
+    this.destroyed = true;
+
     // Stop polling
     if (this.pollingInterval) {
       clearInterval(this.pollingInterval);
