@@ -7,7 +7,6 @@ import {
 import { createServerFn } from '@tanstack/react-start'
 import type { ReactNode } from 'react'
 import { ConvexClientProvider } from '../lib/convex'
-import { PasswordProtection } from '../components/PasswordProtection'
 import appCss from '../styles/app.css?url'
 import { getToken } from '../lib/auth-server'
 
@@ -72,9 +71,7 @@ function RootComponent() {
   return (
     <ConvexClientProvider initialToken={token}>
       <RootDocument>
-        <PasswordProtection>
-          <Outlet />
-        </PasswordProtection>
+        <Outlet />
       </RootDocument>
     </ConvexClientProvider>
   )
@@ -82,7 +79,7 @@ function RootComponent() {
 
 function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
   return (
-    <html>
+    <html lang="en">
       <head>
         <HeadContent />
       </head>
