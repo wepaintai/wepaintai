@@ -503,6 +503,12 @@ describe('server-authoritative Polar token packages', () => {
         completedCheckout(userId, { status: 'open' })
       )
     ).resolves.toEqual({ outcome: 'rejected', reason: 'status' })
+    await expect(
+      t.mutation(
+        internal.polarWebhook.validateAndCompletePurchase,
+        completedCheckout(userId, { status: 'confirmed' })
+      )
+    ).resolves.toEqual({ outcome: 'rejected', reason: 'status' })
 
     const state = await t.run(async (ctx) => ({
       user: await ctx.db.get(userId),
@@ -676,5 +682,58 @@ describe('Polar webhook security and delivery handling', () => {
     expect(afterRetry.user?.tokens).toBe(53)
     expect(afterRetry.purchase?.status).toBe('completed')
     expect(afterRetry.transactions).toHaveLength(1)
+  })
+
+  test('does not credit unsettled confirmed checkouts and marks failed checkouts failed', async () => {
+    const t = createTestBackend()
+    const userId = await seedUser(t, identity.subject, 'polar-test@example.com')
+    await t.mutation(internal.polarWebhook.createPendingPurchase, {
+      userId,
+      checkoutId: 'checkout-50',
+      packageKey: '50_tokens',
+    })
+
+    const confirmed = await deliverWebhook(
+      t,
+      checkoutUpdatedEvent(userId, { status: 'confirmed' })
+    )
+    expect(confirmed.status).toBe(200)
+
+    const afterConfirmed = await t.run(async (ctx) => ({
+      user: await ctx.db.get(userId),
+      purchase: await ctx.db
+        .query('polarPurchases')
+        .withIndex('by_checkout', (q) => q.eq('checkoutId', 'checkout-50'))
+        .unique(),
+      transactions: await ctx.db.query('tokenTransactions').collect(),
+    }))
+    expect(afterConfirmed.user?.tokens).toBe(3)
+    expect(afterConfirmed.purchase?.status).toBe('pending')
+    expect(afterConfirmed.transactions).toHaveLength(0)
+
+    const failed = await deliverWebhook(
+      t,
+      checkoutUpdatedEvent(userId, { status: 'failed' })
+    )
+    expect(failed.status).toBe(200)
+
+    const afterFailed = await t.run(async (ctx) => ({
+      user: await ctx.db.get(userId),
+      purchase: await ctx.db
+        .query('polarPurchases')
+        .withIndex('by_checkout', (q) => q.eq('checkoutId', 'checkout-50'))
+        .unique(),
+      transactions: await ctx.db.query('tokenTransactions').collect(),
+    }))
+    expect(afterFailed.user?.tokens).toBe(3)
+    expect(afterFailed.purchase?.status).toBe('failed')
+    expect(afterFailed.transactions).toHaveLength(0)
+
+    // A late succeeded event for a failed checkout must remain rejected.
+    const lateSucceeded = await deliverWebhook(
+      t,
+      checkoutUpdatedEvent(userId, { status: 'succeeded' })
+    )
+    expect(lateSucceeded.status).toBe(400)
   })
 })

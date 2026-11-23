@@ -50,7 +50,18 @@ export const handlePolarWebhook = httpAction(async (ctx, request) => {
     if (event.type === 'checkout.updated') {
       const checkoutData = event.data
 
-      if (checkoutData.status !== 'succeeded' && checkoutData.status !== 'confirmed') {
+      if (checkoutData.status === 'failed' || checkoutData.status === 'expired') {
+        await ctx.runMutation(internal.polarWebhook.markPurchaseFailed, {
+          checkoutId: checkoutData.id,
+        })
+        return new Response('OK', { status: 200 })
+      }
+
+      // Only credit tokens once payment has settled (`succeeded`).
+      // Polar emits `confirmed` when a customer submits payment details, before
+      // card capture / 3DS completes; crediting on `confirmed` risks granting
+      // tokens for checkouts that subsequently fail.
+      if (checkoutData.status !== 'succeeded') {
         return new Response('OK', { status: 200 })
       }
 
@@ -115,6 +126,27 @@ export const createPendingPurchase = internalMutation({
   },
 })
 
+export const markPurchaseFailed = internalMutation({
+  args: {
+    checkoutId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const purchase = await ctx.db
+      .query('polarPurchases')
+      .withIndex('by_checkout', (q) => q.eq('checkoutId', args.checkoutId))
+      .first()
+
+    if (!purchase || purchase.status !== 'pending') {
+      return { updated: false as const }
+    }
+
+    await ctx.db.patch(purchase._id, {
+      status: 'failed',
+    })
+    return { updated: true as const }
+  },
+})
+
 export const validateAndCompletePurchase = internalMutation({
   args: {
     checkoutId: v.string(),
@@ -134,7 +166,7 @@ export const validateAndCompletePurchase = internalMutation({
       return { outcome: 'rejected' as const, reason: 'checkout' as const }
     }
 
-    if (args.status !== 'succeeded' && args.status !== 'confirmed') {
+    if (args.status !== 'succeeded') {
       return { outcome: 'rejected' as const, reason: 'status' as const }
     }
 
@@ -172,24 +204,36 @@ export const validateAndCompletePurchase = internalMutation({
       return { outcome: 'rejected' as const, reason: 'status' as const }
     }
 
-    const existingTransaction = await ctx.db
+    if (purchase.status === 'completed') {
+      return { outcome: 'duplicate' as const }
+    }
+
+    const operationKey = `polar-purchase:${args.checkoutId}`
+    const existingByKey = await ctx.db
       .query('tokenTransactions')
-      .withIndex('by_user', (q) => q.eq('userId', purchase.userId))
-      .filter((q) =>
-        q.and(
-          q.eq(q.field('type'), 'purchase'),
-          q.eq(q.field('metadata.polarCheckoutId'), args.checkoutId)
-        )
+      .withIndex('by_user_operation', (q) =>
+        q.eq('userId', purchase.userId).eq('operationKey', operationKey)
       )
       .first()
 
+    const existingTransaction =
+      existingByKey ??
+      (await ctx.db
+        .query('tokenTransactions')
+        .withIndex('by_user', (q) => q.eq('userId', purchase.userId))
+        .filter((q) =>
+          q.and(
+            q.eq(q.field('type'), 'purchase'),
+            q.eq(q.field('metadata.polarCheckoutId'), args.checkoutId)
+          )
+        )
+        .first())
+
     if (existingTransaction) {
-      if (purchase.status !== 'completed') {
-        await ctx.db.patch(purchase._id, {
-          status: 'completed',
-          completedAt: Date.now(),
-        })
-      }
+      await ctx.db.patch(purchase._id, {
+        status: 'completed',
+        completedAt: Date.now(),
+      })
       return { outcome: 'duplicate' as const }
     }
 
@@ -208,6 +252,7 @@ export const validateAndCompletePurchase = internalMutation({
     })
     await ctx.db.insert('tokenTransactions', {
       userId: purchase.userId,
+      operationKey,
       type: 'purchase',
       amount: tokens,
       balance: newBalance,

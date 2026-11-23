@@ -72,12 +72,19 @@ export const createCheckout = action({
 
       const data: PolarCheckoutResponse = await response.json()
       const checkoutUrl = data.checkout_url || data.url || ''
+      let hasHttpsCheckoutUrl = false
+      try {
+        hasHttpsCheckoutUrl = new URL(checkoutUrl).protocol === 'https:'
+      } catch {
+        hasHttpsCheckoutUrl = false
+      }
 
       if (
         !data.id?.trim() ||
-        !checkoutUrl ||
+        !hasHttpsCheckoutUrl ||
         data.product_id !== tokenPackage.productId ||
         data.amount !== tokenPackage.amount ||
+        typeof data.currency !== 'string' ||
         data.currency.toLowerCase() !== tokenPackage.currency ||
         data.external_customer_id !== externalCustomerId
       ) {
