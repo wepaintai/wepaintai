@@ -19,6 +19,7 @@ rm -f "$HOME/Library/LaunchAgents/$LABEL.plist"
 rm -rf "$DEST"
 rm -f "$ROOT/caddy/pr-$PR.caddy" "$ROOT/logs/pr-$PR.log" "$ROOT/queue/pr-$PR"
 
+trap 'preview_release_lock' EXIT
 preview_acquire_lock
 slot=""
 for candidate in $(seq 1 "$PREVIEW_POOL_SIZE"); do
@@ -35,7 +36,8 @@ if [ -n "$slot" ]; then
   if [ -f "$compose_env" ]; then
     docker compose --env-file "$compose_env" \
       -f "$ROOT/bin/slot-compose.yml" \
-      -p "wepaintai-preview-slot-$slot" down --remove-orphans || true
+      -p "wepaintai-preview-slot-$slot" down --remove-orphans \
+      || docker rm -f "wepaintai-preview-slot-$slot" 2>/dev/null || true
   else
     docker rm -f "wepaintai-preview-slot-$slot" 2>/dev/null || true
   fi
@@ -43,6 +45,7 @@ if [ -n "$slot" ]; then
   rm -f "$ROOT/caddy/slot-$slot.caddy"
 fi
 preview_release_lock
+trap - EXIT
 
 preview_reload_caddy
 echo "POOL_REMOVED pr=$PR slot=${slot:-none}"

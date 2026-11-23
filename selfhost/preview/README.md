@@ -134,9 +134,18 @@ memory, host disk space, production backup peaks, and a representative preview
 under AI/image workloads.
 ## Security invariants
 
-- Fork PRs never execute on the mini.
-- Manual dispatch verifies that the PR is open and belongs to this repository.
-- Production secrets are never copied into a preview build.
+- Fork PRs and `dependabot[bot]` PRs never execute on the mini.
+- Manual dispatch validates that `PR` is strictly numeric, open, and belongs to
+  this repository before checkout.
+- Shared host helper scripts under `~/apps/wepaintai-previews/bin/*` are
+  installed only by `setup-pool.sh` from trusted `main` — PR deploys never
+  overwrite `$ROOT/bin/*`.
+- Production secrets are never copied into a preview build, and preview Polar
+  configuration rejects non-sandbox API URLs.
+- **Public-repository runner isolation:** Because `wepaintai/wepaintai` is a
+  public repository, run the self-hosted GitHub Actions runner under a dedicated
+  unprivileged OS account or VM that cannot read `~/apps/wepaintai/.env*`,
+  `~/Backups/`, `~/.cloudflared/`, or the production Docker container.
 - Preview containers bind only to loopback; public access goes through the
   existing tunnel and Caddy routes.
 - Each preview trusts only its exact `preview-pr-<N>.wepaint.ai` origin.

@@ -46,29 +46,53 @@ preview_site_port() {
 }
 
 preview_acquire_lock() {
-  local lock_dir attempts owner_pid
+  local lock_dir attempts owner_pid stale_dir dir_mtime now
   lock_dir="$PREVIEW_ROOT/locks/pool.lock"
   mkdir -p "$PREVIEW_ROOT/locks"
   attempts=0
   while ! mkdir "$lock_dir" 2>/dev/null; do
     owner_pid=""
-    [ -f "$lock_dir/pid" ] && owner_pid="$(tr -d '[:space:]' < "$lock_dir/pid")"
+    [ -f "$lock_dir/pid" ] && owner_pid="$(tr -d '[:space:]' < "$lock_dir/pid" 2>/dev/null || true)"
     if [ -n "$owner_pid" ] && ! kill -0 "$owner_pid" 2>/dev/null; then
-      rm -rf "$lock_dir"
+      # Atomically claim the dead lock directory before removing it so two
+      # concurrent waiters cannot delete a third waiter's newly acquired lock.
+      stale_dir="$PREVIEW_ROOT/locks/pool.stale.$$.$RANDOM"
+      if mv "$lock_dir" "$stale_dir" 2>/dev/null; then
+        rm -rf "$stale_dir"
+      fi
       continue
     fi
+    if [ -z "$owner_pid" ]; then
+      # Recover from a crash between `mkdir` and writing `pid` once > 5s old.
+      dir_mtime="$(stat -f '%m' "$lock_dir" 2>/dev/null || stat -c '%Y' "$lock_dir" 2>/dev/null || echo 0)"
+      now="$(date +%s)"
+      if [ "$dir_mtime" -gt 0 ] && [ $((now - dir_mtime)) -gt 5 ]; then
+        stale_dir="$PREVIEW_ROOT/locks/pool.stale.$$.$RANDOM"
+        if mv "$lock_dir" "$stale_dir" 2>/dev/null; then
+          rm -rf "$stale_dir"
+        fi
+        continue
+      fi
+    fi
     attempts=$((attempts + 1))
-    if [ "$attempts" -ge 30 ]; then
+    if [ "$attempts" -ge 45 ]; then
       echo "Timed out waiting for preview pool lock" >&2
       return 1
     fi
     sleep 1
   done
-  printf '%s\n' "$$" > "$lock_dir/pid"
+  printf '%s\n' "$$" > "$lock_dir/pid.tmp"
+  mv "$lock_dir/pid.tmp" "$lock_dir/pid"
 }
 
 preview_release_lock() {
-  rm -rf "$PREVIEW_ROOT/locks/pool.lock"
+  local lock_dir owner_pid
+  lock_dir="$PREVIEW_ROOT/locks/pool.lock"
+  [ -d "$lock_dir" ] || return 0
+  owner_pid="$(tr -d '[:space:]' < "$lock_dir/pid" 2>/dev/null || true)"
+  if [ -z "$owner_pid" ] || [ "$owner_pid" = "$$" ]; then
+    rm -rf "$lock_dir"
+  fi
 }
 
 preview_reload_caddy() {

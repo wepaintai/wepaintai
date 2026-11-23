@@ -12,6 +12,7 @@ node_modules/
 # Self-hosting secrets (examples are committed, real files are not)
 selfhost/.env
 selfhost/.env.convex
+selfhost/preview/config.env
 
 # System Files
 .DS_Store

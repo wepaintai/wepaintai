@@ -6,22 +6,42 @@ export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# shellcheck source=pool-common.sh
-source "$SCRIPT_DIR/pool-common.sh"
+ROOT_DEFAULT="${PREVIEW_ROOT:-$HOME/apps/wepaintai-previews}"
+if [ -f "$ROOT_DEFAULT/bin/pool-common.sh" ]; then
+  # Prefer the trusted host-installed pool helpers (installed by setup-pool.sh)
+  # rather than mutating $ROOT/bin/* from untrusted PR branches.
+  # shellcheck disable=SC1090
+  source "$ROOT_DEFAULT/bin/pool-common.sh"
+else
+  # shellcheck source=pool-common.sh
+  source "$SCRIPT_DIR/pool-common.sh"
+fi
 
 PR="${1:?usage: deploy-preview.sh <pr-number>}"
 preview_validate_pr "$PR"
 
 ROOT="$PREVIEW_ROOT"
 DEST="$ROOT/prs/pr-$PR"
-FRONTEND_PORT=$((3300 + PR % 700))
 FRONTEND_HOST="preview-pr-$PR.wepaint.ai"
+
+# Never allow preview builds to overwrite the production checkout's .env.production
+if [ "$PWD" = "$HOME/apps/wepaintai" ]; then
+  echo "Refusing to run preview deploy inside production checkout ($PWD)" >&2
+  exit 1
+fi
 
 mkdir -p "$ROOT/prs" "$ROOT/slots" "$ROOT/caddy" "$ROOT/logs" \
   "$ROOT/bin" "$ROOT/queue"
-cp "$SCRIPT_DIR/pool-common.sh" "$SCRIPT_DIR/slot-compose.yml" \
-  "$SCRIPT_DIR/remove-preview.sh" "$ROOT/bin/"
-chmod +x "$ROOT/bin/pool-common.sh" "$ROOT/bin/remove-preview.sh"
+
+SLOT_COMPOSE="$ROOT/bin/slot-compose.yml"
+REMOVE_SCRIPT="$ROOT/bin/remove-preview.sh"
+[ -f "$SLOT_COMPOSE" ] || SLOT_COMPOSE="$SCRIPT_DIR/slot-compose.yml"
+[ -x "$REMOVE_SCRIPT" ] || REMOVE_SCRIPT="$SCRIPT_DIR/remove-preview.sh"
+
+if [ -n "${PREVIEW_POLAR_API_BASE_URL:-}" ] && [ "$PREVIEW_POLAR_API_BASE_URL" != "https://sandbox-api.polar.sh" ]; then
+  echo "PREVIEW_POLAR_API_BASE_URL must point to Polar sandbox (https://sandbox-api.polar.sh)" >&2
+  exit 1
+fi
 
 if [ -z "${PREVIEW_GOOGLE_CLIENT_ID:-}" ] || [ -z "${PREVIEW_GOOGLE_CLIENT_SECRET:-}" ]; then
   echo "Preview Google OAuth credentials are missing from $PREVIEW_CONFIG" >&2
@@ -37,6 +57,7 @@ fi
 slot=""
 new_slot="false"
 blocking_pr=""
+trap 'preview_release_lock' EXIT
 preview_acquire_lock
 for candidate in $(seq 1 "$PREVIEW_POOL_SIZE"); do
   owner="$(preview_slot_owner "$candidate" || true)"
@@ -63,12 +84,15 @@ fi
 if [ -z "$slot" ]; then
   [ -f "$ROOT/queue/pr-$PR" ] || date +%s > "$ROOT/queue/pr-$PR"
   preview_release_lock
+  trap - EXIT
   echo "POOL_WAITING owner_pr=$blocking_pr"
   exit 75
 fi
 rm -f "$ROOT/queue/pr-$PR"
 preview_release_lock
+trap - EXIT
 
+FRONTEND_PORT=$((3300 + slot))
 slot_dir="$(preview_slot_dir "$slot")"
 compose_env="$slot_dir/compose.env"
 backend_env="$slot_dir/backend.env"
@@ -85,7 +109,7 @@ cleanup_failed_new_slot() {
   trap - EXIT
   if [ "$status" -ne 0 ] && [ "$new_slot" = "true" ]; then
     echo "New preview slot failed to deploy; releasing slot $slot" >&2
-    "$ROOT/bin/remove-preview.sh" "$PR" || true
+    "$REMOVE_SCRIPT" "$PR" || true
   fi
   exit "$status"
 }
@@ -137,7 +161,12 @@ EOF
   append_preview_env REPLICATE_TIMEOUT_SECONDS PREVIEW_REPLICATE_TIMEOUT_SECONDS
   append_preview_env GEMINI_API_KEY PREVIEW_GEMINI_API_KEY
   append_preview_env POLAR_API_KEY PREVIEW_POLAR_API_KEY
-  append_preview_env POLAR_WEBHOOK_SECRET PREVIEW_POLAR_WEBHOOK_SECRET
+  slot_polar_webhook_var="PREVIEW_POLAR_WEBHOOK_SECRET_${slot}"
+  if [ -n "${!slot_polar_webhook_var:-}" ]; then
+    append_preview_env POLAR_WEBHOOK_SECRET "$slot_polar_webhook_var"
+  else
+    append_preview_env POLAR_WEBHOOK_SECRET PREVIEW_POLAR_WEBHOOK_SECRET
+  fi
   append_preview_env POLAR_PRODUCT_ID_50 PREVIEW_POLAR_PRODUCT_ID_50
   append_preview_env POLAR_PRODUCT_ID_125 PREVIEW_POLAR_PRODUCT_ID_125
   append_preview_env POLAR_API_BASE_URL PREVIEW_POLAR_API_BASE_URL
@@ -151,7 +180,7 @@ fi
 corepack pnpm install
 
 docker compose --env-file "$compose_env" \
-  -f "$ROOT/bin/slot-compose.yml" -p "$project" up -d backend
+  -f "$SLOT_COMPOSE" -p "$project" up -d backend
 
 cat > "$ROOT/caddy/slot-$slot.caddy.tmp" <<EOF
 @slot${slot}api host $api_host
@@ -181,7 +210,11 @@ if [ -z "$ready" ]; then
 fi
 
 if [ "$new_slot" = "true" ]; then
-  admin_key="$(docker exec "wepaintai-preview-slot-$slot" ./generate_admin_key.sh)"
+  admin_key="$(docker exec "wepaintai-preview-slot-$slot" ./generate_admin_key.sh | tr -d '\r' | awk 'NF { last = $NF } END { print last }')"
+  if [ -z "$admin_key" ]; then
+    echo "Failed to capture admin key for preview slot $slot" >&2
+    exit 1
+  fi
   cat > "$deploy_env" <<EOF
 CONVEX_SELF_HOSTED_URL=http://127.0.0.1:$api_port
 CONVEX_SELF_HOSTED_ADMIN_KEY=$admin_key
@@ -199,7 +232,6 @@ cat > .env.production <<EOF
 VITE_CONVEX_URL=https://$api_host
 VITE_CONVEX_SITE_URL=https://$site_host
 VITE_APP_URL=https://$FRONTEND_HOST
-VITE_PASSWORD_PROTECTION_ENABLED=false
 VITE_AUTH_DISABLED=false
 VITE_INTERNAL_HIDE_ADMIN_PANEL=false
 EOF
@@ -285,9 +317,21 @@ if [ -z "$frontend_ready" ]; then
   exit 1
 fi
 
-curl -fsS "https://$site_host/health" >/dev/null
-curl -fsS "https://$api_host/version" >/dev/null
-curl -fsS "https://$FRONTEND_HOST/" >/dev/null
+verify_public_url() {
+  local url="$1"
+  for _ in $(seq 1 10); do
+    if curl -fsS --max-time 10 "$url" >/dev/null; then
+      return 0
+    fi
+    sleep 2
+  done
+  echo "Public health check failed for $url" >&2
+  return 1
+}
+
+verify_public_url "https://$site_host/health"
+verify_public_url "https://$api_host/version"
+verify_public_url "https://$FRONTEND_HOST/"
 
 cat > "$DEST/preview.env" <<EOF
 PR=$PR

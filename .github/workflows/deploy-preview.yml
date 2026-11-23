@@ -20,7 +20,10 @@ concurrency:
 
 jobs:
   deploy:
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]'))
     runs-on: [self-hosted, mini]
     env:
       PR: ${{ github.event.pull_request.number || inputs.pr }}
@@ -29,10 +32,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
+          case "$PR" in
+            ''|0|*[!0-9]*)
+              echo "Invalid PR number: $PR" >&2
+              exit 1
+              ;;
+          esac
           HEAD_REPO=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq .head.repo.full_name)
           STATE=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq .state)
+          AUTHOR=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq .user.login)
           test "$HEAD_REPO" = "$GITHUB_REPOSITORY"
           test "$STATE" = "open"
+          test "$AUTHOR" != "dependabot[bot]"
 
       - uses: actions/checkout@v4
         with:
@@ -42,6 +54,7 @@ jobs:
         id: deploy
         run: |
           LOG=$(mktemp)
+          trap 'rm -f "$LOG"' EXIT
           set +e
           ./selfhost/preview/deploy-preview.sh "$PR" 2>&1 | tee "$LOG"
           STATUS=${PIPESTATUS[0]}

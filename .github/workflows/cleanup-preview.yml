@@ -12,27 +12,45 @@ permissions:
 
 jobs:
   cleanup:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]'
     runs-on: [self-hosted, mini]
     steps:
       - name: Tear down preview and release pool slot
+        id: remove
         env:
           PR: ${{ github.event.pull_request.number }}
         run: |
           SCRIPT="$HOME/apps/wepaintai-previews/bin/remove-preview.sh"
           if [ -x "$SCRIPT" ]; then
-            "$SCRIPT" "$PR"
+            OUT="$("$SCRIPT" "$PR")"
+            echo "$OUT"
+            SLOT="$(printf '%s\n' "$OUT" | sed -n 's/.*POOL_REMOVED.*slot=\([^ ]*\).*/\1/p' | tail -1)"
+            echo "slot=${SLOT:-none}" >> "$GITHUB_OUTPUT"
           else
             echo "No remover installed on this machine; nothing to do."
+            echo "slot=none" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Start the oldest queued preview
+      - name: Start the oldest open queued preview
+        if: steps.remove.outputs.slot != 'none'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
           QUEUE="$HOME/apps/wepaintai-previews/queue"
           [ -d "$QUEUE" ] || exit 0
-          NEXT_FILE=$(find "$QUEUE" -type f -name 'pr-*' -print0 | xargs -0 stat -f '%m %N' 2>/dev/null | sort -n | head -1 | cut -d' ' -f2-)
-          [ -n "$NEXT_FILE" ] || exit 0
-          NEXT_PR=${NEXT_FILE##*/pr-}
-          gh workflow run deploy-preview.yml -f pr="$NEXT_PR"
+          for NEXT_FILE in $(find "$QUEUE" -type f -name 'pr-*' -print0 | xargs -0 stat -f '%m %N' 2>/dev/null | sort -n | cut -d' ' -f2-); do
+            NEXT_PR="${NEXT_FILE##*/pr-}"
+            case "$NEXT_PR" in
+              ''|0|*[!0-9]*) rm -f "$NEXT_FILE"; continue ;;
+            esac
+            STATE="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$NEXT_PR" --jq .state 2>/dev/null || echo closed)"
+            if [ "$STATE" != "open" ]; then
+              rm -f "$NEXT_FILE"
+              continue
+            fi
+            gh workflow run deploy-preview.yml -f pr="$NEXT_PR"
+            break
+          done
