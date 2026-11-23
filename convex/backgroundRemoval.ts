@@ -138,15 +138,17 @@ export const removeBackground = action({
         return await fail("Failed to save the background-removed image.", "billed");
       }
 
+      // Records the output blob with the status, or deletes it if the result
+      // can't be written.
       const completion = await ctx.runMutation(internal.aiOperations.completeOperation, {
         operationType: "background-removal",
         operationId,
         resultImageUrl: storageUrl,
+        resultStorageId: storedId,
         guestKey: args.guestKey,
         editKey: args.editKey,
       });
       if (completion !== "completed") {
-        await ctx.storage.delete(storedId).catch(() => {});
         throw new ConvexError(
           completion === "access_lost"
             ? "You no longer have access to this painting, so the result was discarded."

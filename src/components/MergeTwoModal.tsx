@@ -11,7 +11,7 @@ interface MergeTwoModalProps {
   onClose: () => void
   sessionId: Id<'paintingSessions'>
   layers: Layer[]
-  onMergeComplete: (imageUrl: string) => void
+  onMergeComplete: (imageUrl: string, storageId?: Id<'_storage'>) => void
 }
 
 type MergeMode = 'full' | 'left_right' | 'top_bottom'
@@ -65,7 +65,8 @@ export function MergeTwoModal({
       })
 
       if (result.success && 'imageUrl' in result && result.imageUrl) {
-        onMergeComplete(result.imageUrl)
+        const storageId = 'storageId' in result ? result.storageId : undefined
+        onMergeComplete(result.imageUrl, storageId)
         onClose()
       } else {
         setError(('error' in result && result.error) || 'Merge failed')

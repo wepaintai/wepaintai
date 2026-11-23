@@ -52,7 +52,7 @@ function BackgroundRemovalModalWrapper({
   sessionId: Id<"paintingSessions">
   canvasRef: React.RefObject<CanvasRef | null>
   onClose: () => void
-  onRemovalComplete: (imageUrl: string) => void
+  onRemovalComplete: (imageUrl: string, storageId?: Id<"_storage">) => void
   layers: Layer[]
   activeLayerId?: string
 }) {
@@ -104,7 +104,7 @@ function AIGenerationModalWrapper({
   sessionId: Id<"paintingSessions">
   canvasRef: React.RefObject<CanvasRef | null>
   onClose: () => void
-  onGenerationComplete: (imageUrl: string) => void
+  onGenerationComplete: (imageUrl: string, storageId?: Id<"_storage">) => void
   layers: Layer[]
   strokes: any[]
 }) {
@@ -773,7 +773,7 @@ export function PaintingView() {
     setShowBackgroundRemoval(true)
   }, [canEdit])
 
-  const handleAIGenerationComplete = useCallback(async (imageUrl: string) => {
+  const handleAIGenerationComplete = useCallback(async (imageUrl: string, storageId?: Id<"_storage">) => {
     if (!sessionId) return
     
     // Add the generated image to the canvas
@@ -823,6 +823,7 @@ export function PaintingView() {
           guestKey: getGuestKey(sessionId) || undefined,
           editKey: getEditKey(sessionId) || undefined,
           imageUrl,
+          storageId,
           width: img.naturalWidth || img.width,
           height: img.naturalHeight || img.height,
           canvasWidth: canvasDimensions.width,

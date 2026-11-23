@@ -34,7 +34,10 @@ export const generateImage = action({
     guestKey: v.optional(v.string()),
     editKey: v.optional(v.string()),
   },
-  handler: async (ctx, args): Promise<{ success: boolean; imageUrl?: string; error?: string }> => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ success: boolean; imageUrl?: string; storageId?: Id<"_storage">; error?: string }> => {
     debugLog('[AI-GEN] generateImage action called with prompt:', args.prompt);
     debugLog('[AI-GEN] Weight parameter (UI):', args.weight ?? 0.85);
     debugLog('[AI-GEN] Image data length:', args.imageData.length);
@@ -112,8 +115,15 @@ export const generateImage = action({
         for (let i = 0; i < binaryString.length; i++) {
           bytes[i] = binaryString.charCodeAt(i);
         }
-        const storageId = await ctx.storage.store(new Blob([bytes], { type: 'image/png' }));
-        const url = await ctx.storage.getUrl(storageId);
+        const snapshotId = await ctx.storage.store(new Blob([bytes], { type: 'image/png' }));
+        // Track the snapshot on the row before anything else can fail: the
+        // row's terminal transition (or the stale sweep) deletes it.
+        const recorded = await ctx.runMutation(internal.aiOperations.recordCanvasSnapshot, {
+          operationId: generationId,
+          storageId: snapshotId,
+        });
+        if (!recorded) throw new Error('Operation is no longer pending');
+        const url = await ctx.storage.getUrl(snapshotId);
         if (!url) throw new Error('Failed to get storage URL');
         imageUrl = url;
         debugLog('[AI-GEN] Canvas image stored, URL:', imageUrl);
@@ -201,15 +211,17 @@ export const generateImage = action({
         return await fail("Failed to save the generated image.", "billed");
       }
 
+      // Records the output blob and releases the canvas snapshot in one
+      // transaction; deletes the output itself if the result isn't written.
       const completion = await ctx.runMutation(internal.aiOperations.completeOperation, {
         operationType: "ai-generation",
         operationId: generationId,
         resultImageUrl: finalUrl,
+        resultStorageId: storedId,
         guestKey: args.guestKey,
         editKey: args.editKey,
       });
       if (completion !== "completed") {
-        if (storedId) await ctx.storage.delete(storedId).catch(() => {});
         return {
           success: false,
           error:
@@ -219,7 +231,7 @@ export const generateImage = action({
         };
       }
 
-      return { success: true, imageUrl: finalUrl };
+      return { success: true, imageUrl: finalUrl, storageId: storedId };
     } catch (error) {
       console.error("AI generation error:", error instanceof Error ? error.message : String(error));
       if (predictionId) await cancelPrediction(replicateToken, predictionId);
@@ -245,27 +257,28 @@ export const getSessionGenerations = query({
     }
     // Take a larger window then filter, so a run of failed/moderated rows
     // doesn't shrink the strip; then keep the 10 most recent usable results.
-    // Only Convex-storage URLs are usable — direct Replicate URLs (the
-    // storage-failure fallback) expire and would render as broken thumbnails.
+    // Only results backed by Convex storage are usable (the URL is derived
+    // from the blob, which also covers legacy rows without resultImageUrl).
     const generations = await ctx.db
       .query("aiGenerations")
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
       .order("desc")
       .take(50);
-    return generations
-      .filter(
-        (g) =>
-          g.status === "completed" &&
-          g.resultImageUrl &&
-          g.resultImageUrl.includes("/api/storage/")
-      )
-      .slice(0, 10)
-      .map((g) => ({
+    const results = [];
+    for (const g of generations) {
+      if (results.length >= 10) break;
+      if (g.status !== "completed" || !g.generatedImageId) continue;
+      const url = await ctx.storage.getUrl(g.generatedImageId);
+      if (!url) continue;
+      results.push({
         _id: g._id,
         prompt: g.prompt,
-        resultImageUrl: g.resultImageUrl as string,
+        resultImageUrl: url,
+        generatedImageId: g.generatedImageId,
         provider: g.provider,
         createdAt: g.createdAt,
-      }));
+      });
+    }
+    return results;
   },
 });

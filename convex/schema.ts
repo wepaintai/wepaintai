@@ -211,7 +211,8 @@ const schema = defineSchema({
   }).index("by_expires", ["expiresAt"])
     .index("by_session", ["sessionId"])
     .index("by_open_expires", ["consumedAt", "expiresAt"])
-    .index("by_rate_key", ["rateKey", "createdAt"]),
+    .index("by_rate_key", ["rateKey", "createdAt"])
+    .index("by_storage", ["storageId"]),
 
   // AI generation requests and results
   aiGenerations: defineTable({
@@ -237,12 +238,17 @@ const schema = defineSchema({
       strength: v.optional(v.number()),
       style: v.optional(v.string()),
     })),
-  }).index("by_session", ["sessionId"]),
+  }).index("by_session", ["sessionId"])
+    .index("by_generated_image", ["generatedImageId"])
+    .index("by_canvas_snapshot", ["canvasSnapshotId"])
+    .index("by_status_created", ["status", "createdAt"]),
 
-  // AI-generated images (stores URLs directly)
+  // AI-generated image layers. `storageId` is the backing Convex blob this
+  // layer owns (rows written before storage tracking only have `imageUrl`).
   aiGeneratedImages: defineTable({
     sessionId: v.id("paintingSessions"),
     imageUrl: v.string(),
+    storageId: v.optional(v.id("_storage")),
     width: v.number(),
     height: v.number(),
     x: v.number(),
@@ -255,7 +261,8 @@ const schema = defineSchema({
     opacity: v.number(),
     layerOrder: v.number(),
     createdAt: v.number(),
-  }).index("by_session", ["sessionId", "layerOrder"]),
+  }).index("by_session", ["sessionId", "layerOrder"])
+    .index("by_storage", ["storageId"]),
 
   // Deleted strokes for undo/redo functionality
   deletedStrokes: defineTable({
@@ -374,9 +381,14 @@ const schema = defineSchema({
     status: aiOperationStatus,
     error: v.optional(v.string()),
     resultImageUrl: v.optional(v.string()),
+    // Convex blob holding the merged output
+    mergedImageStorageId: v.optional(v.id("_storage")),
     replicateId: v.optional(v.string()),
     createdAt: v.number(),
-  }).index("by_session", ["sessionId"]),
+    completedAt: v.optional(v.number()),
+  }).index("by_session", ["sessionId"])
+    .index("by_merged_storage", ["mergedImageStorageId"])
+    .index("by_status_created", ["status", "createdAt"]),
 
   // Background removal requests: the operation row that keys the token debit,
   // refunds, and stale-operation sweeps (same lifecycle as aiGenerations).
@@ -387,9 +399,14 @@ const schema = defineSchema({
     status: aiOperationStatus,
     error: v.optional(v.string()),
     resultImageUrl: v.optional(v.string()),
+    // Convex blob holding the background-removed output
+    resultStorageId: v.optional(v.id("_storage")),
     replicateId: v.optional(v.string()),
     createdAt: v.number(),
-  }).index("by_session", ["sessionId"]),
+    completedAt: v.optional(v.number()),
+  }).index("by_session", ["sessionId"])
+    .index("by_result_storage", ["resultStorageId"])
+    .index("by_status_created", ["status", "createdAt"]),
 });
 
 export default schema;

@@ -51,4 +51,13 @@ crons.interval(
   {}
 );
 
+// Settle AI operations whose action died: refund rows that never reached the
+// provider, mark provider-accepted rows failed_billed, free canvas snapshots
+crons.interval(
+  "cleanup stale ai operations",
+  { minutes: 15 },
+  internal.aiOperations.cleanupStaleOperations,
+  {}
+);
+
 export default crons;

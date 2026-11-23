@@ -11,6 +11,13 @@
  *   completeOperation       re-check session access, then write the result
  *   failOperation           terminal failure; refunds first when outcome = "refund"
  *   refundOperation         idempotent refund keyed by the row (no ctx.auth)
+ *   recordCanvasSnapshot    track the temporary canvas blob sent to the provider
+ *   cleanupStaleOperations  cron: settle rows whose action died (refund/billed)
+ *
+ * Storage: the output blob is recorded on the row by completeOperation (in the
+ * same transaction as the status) and is deleted there instead whenever the
+ * result is not written. The temporary canvas snapshot is released (field
+ * cleared + blob deleted) in the same mutation that makes the row terminal.
  *
  * Billing policy: refund only when the provider never accepted the request
  * (request rejected / 4xx validation / network error before acceptance, or our
@@ -24,7 +31,14 @@
  */
 import { v } from "convex/values";
 import { internalMutation, type MutationCtx } from "./_generated/server";
+import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
+import {
+  deleteStorageIfUnreferenced,
+  safeDeleteStorage,
+  STALE_OPERATION_TIMEOUT_MS,
+  STALE_OPERATIONS_BATCH_SIZE,
+} from "./storageLifecycle";
 import { assertCanModifySession } from "./sessionAuth";
 import { debitUserForOperation, refundUserForOperation, tokenOperationValidator } from "./tokens";
 import { getTokenCost, isPromptTooLong, MAX_PROMPT_LENGTH, type TokenOperationType } from "./tokenPolicy";
@@ -106,6 +120,48 @@ async function refundOperationRow(
 }
 
 /**
+ * Clear and delete the temporary canvas snapshot of a generation row. Called
+ * in the same mutation that makes the row terminal, so the field is never
+ * cleared without the blob going too (or vice versa).
+ */
+async function releaseCanvasSnapshot(ctx: MutationCtx, row: OperationRow): Promise<void> {
+  if (!("canvasSnapshotId" in row) || !row.canvasSnapshotId) return;
+  await ctx.db.patch(row._id as Id<"aiGenerations">, { canvasSnapshotId: undefined });
+  await deleteStorageIfUnreferenced(ctx, row.canvasSnapshotId);
+}
+
+type FailOutcome = "refund" | "billed";
+type FailResult = {
+  status: "failed" | "failed_billed" | "already_terminal";
+  refunded: boolean;
+};
+
+/**
+ * Shared by failOperation and the stale-operation sweep: refund first (when
+ * outcome = "refund"), then mark the row terminal and release its snapshot.
+ * Terminal rows are never rewritten.
+ */
+async function failOperationRow(
+  ctx: MutationCtx,
+  operationType: TokenOperationType,
+  row: OperationRow,
+  outcome: FailOutcome,
+  error: string,
+): Promise<FailResult> {
+  if (isTerminalOperationStatus(row.status)) {
+    return { status: "already_terminal", refunded: false };
+  }
+  let refunded = false;
+  if (outcome === "refund") {
+    refunded = (await refundOperationRow(ctx, operationType, row, error)).refunded;
+  }
+  const status = outcome === "refund" ? ("failed" as const) : ("failed_billed" as const);
+  await ctx.db.patch(row._id, { status, error: error.slice(0, 500), completedAt: Date.now() });
+  await releaseCanvasSnapshot(ctx, row);
+  return { status, refunded };
+}
+
+/**
  * Idempotent refund keyed by the operation row. The user is derived from the
  * stored row (never ctx.auth), so crons and scheduled jobs can call it. Credits
  * only if that user has a matching usage debit, at most once per operation.
@@ -167,17 +223,7 @@ export const failOperation = internalMutation({
   handler: async (ctx, args) => {
     const row = await loadOperationRow(ctx, args.operationType, args.operationId);
     if (!row) return { status: "not_found" as const, refunded: false };
-    if (isTerminalOperationStatus(row.status)) {
-      return { status: "already_terminal" as const, refunded: false };
-    }
-
-    let refunded = false;
-    if (args.outcome === "refund") {
-      refunded = (await refundOperationRow(ctx, args.operationType, row, args.error)).refunded;
-    }
-    const status = args.outcome === "refund" ? ("failed" as const) : ("failed_billed" as const);
-    await ctx.db.patch(row._id, { status, error: args.error.slice(0, 500) });
-    return { status, refunded };
+    return await failOperationRow(ctx, args.operationType, row, args.outcome, args.error);
   },
 });
 
@@ -325,6 +371,9 @@ export const completeOperation = internalMutation({
     operationType: tokenOperationValidator,
     operationId: v.string(),
     resultImageUrl: v.string(),
+    // The stored output blob. Recorded on the row with the status; deleted
+    // here if the result is not written (so the action never has to).
+    resultStorageId: v.id("_storage"),
     guestKey: v.optional(v.string()),
     editKey: v.optional(v.string()),
   },
@@ -336,8 +385,15 @@ export const completeOperation = internalMutation({
   ),
   handler: async (ctx, args) => {
     const row = await loadOperationRow(ctx, args.operationType, args.operationId);
-    if (!row) return "not_found" as const;
-    if (isTerminalOperationStatus(row.status)) return "already_terminal" as const;
+    if (!row) {
+      await safeDeleteStorage(ctx, args.resultStorageId);
+      return "not_found" as const;
+    }
+    if (isTerminalOperationStatus(row.status)) {
+      // A late action lost the race (e.g. the stale sweep settled the row).
+      await deleteStorageIfUnreferenced(ctx, args.resultStorageId);
+      return "already_terminal" as const;
+    }
 
     const session = await ctx.db.get(row.sessionId);
     const identity = await ctx.auth.getUserIdentity();
@@ -353,19 +409,115 @@ export const completeOperation = internalMutation({
       }
     }
 
+    const completedAt = Date.now();
     if (!allowed) {
       await ctx.db.patch(row._id, {
         status: "failed_billed",
         error: "Session is no longer accessible; result discarded",
+        completedAt,
       });
+      await releaseCanvasSnapshot(ctx, row);
+      await deleteStorageIfUnreferenced(ctx, args.resultStorageId);
       return "access_lost" as const;
     }
 
-    await ctx.db.patch(row._id, {
-      status: "completed",
+    const base = {
+      status: "completed" as const,
       error: undefined,
       resultImageUrl: args.resultImageUrl,
-    });
+      completedAt,
+    };
+    if (args.operationType === "ai-generation") {
+      await ctx.db.patch(row._id as Id<"aiGenerations">, {
+        ...base,
+        generatedImageId: args.resultStorageId,
+      });
+    } else if (args.operationType === "image-merge") {
+      await ctx.db.patch(row._id as Id<"imageMerges">, {
+        ...base,
+        mergedImageStorageId: args.resultStorageId,
+      });
+    } else {
+      await ctx.db.patch(row._id as Id<"backgroundRemovals">, {
+        ...base,
+        resultStorageId: args.resultStorageId,
+      });
+    }
+    await releaseCanvasSnapshot(ctx, row);
     return "completed" as const;
+  },
+});
+
+/**
+ * Record the temporary canvas snapshot (sent to the provider by URL) on its
+ * generation row right after it is stored, so a dying action can't leak it:
+ * the row's terminal transition (or the stale sweep) deletes it. If the row
+ * is gone or already terminal the blob is deleted here instead.
+ */
+export const recordCanvasSnapshot = internalMutation({
+  args: {
+    operationId: v.string(),
+    storageId: v.id("_storage"),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const id = ctx.db.normalizeId("aiGenerations", args.operationId);
+    const row = id ? await ctx.db.get(id) : null;
+    if (!row || isTerminalOperationStatus(row.status)) {
+      await safeDeleteStorage(ctx, args.storageId);
+      return false;
+    }
+    await ctx.db.patch(row._id, { canvasSnapshotId: args.storageId });
+    return true;
+  },
+});
+
+const STALE_OPERATION_ERROR = "Operation timed out";
+
+/**
+ * Cron: settle AI operations whose action died. A `pending` row never reached
+ * the provider, so it is refunded (`failed`); a `processing` row may have been
+ * accepted and billed by the provider, so it becomes `failed_billed`. Both go
+ * through the same atomic path as failOperation (refund first, terminal rows
+ * untouched, canvas snapshot released). Output blobs are not touched: new
+ * code records them only on completion, and a legacy row's output may be
+ * referenced only by URL from an AI layer. Bounded per run; reschedules itself
+ * while a batch comes back full.
+ */
+export const cleanupStaleOperations = internalMutation({
+  args: {},
+  returns: v.object({ refunded: v.number(), billed: v.number() }),
+  handler: async (ctx) => {
+    const cutoff = Date.now() - STALE_OPERATION_TIMEOUT_MS;
+    let refunded = 0;
+    let billed = 0;
+    let more = false;
+
+    const tables = [
+      ["aiGenerations", "ai-generation"],
+      ["imageMerges", "image-merge"],
+      ["backgroundRemovals", "background-removal"],
+    ] as const;
+
+    for (const [table, operationType] of tables) {
+      for (const status of ["pending", "processing"] as const) {
+        const rows: OperationRow[] = await ctx.db
+          .query(table)
+          .withIndex("by_status_created", (q) => q.eq("status", status).lt("createdAt", cutoff))
+          .take(STALE_OPERATIONS_BATCH_SIZE);
+        if (rows.length === STALE_OPERATIONS_BATCH_SIZE) more = true;
+        const outcome: FailOutcome = status === "pending" ? "refund" : "billed";
+        for (const row of rows) {
+          const result = await failOperationRow(ctx, operationType, row, outcome, STALE_OPERATION_ERROR);
+          if (result.status === "failed") refunded += 1;
+          if (result.status === "failed_billed") billed += 1;
+        }
+      }
+    }
+
+    if (more) {
+      await ctx.scheduler.runAfter(0, internal.aiOperations.cleanupStaleOperations, {});
+    }
+    return { refunded, billed };
   },
 });

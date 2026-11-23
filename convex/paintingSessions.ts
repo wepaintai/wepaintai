@@ -9,6 +9,7 @@ import {
   isSessionOwner,
   keysMatch,
 } from "./sessionAuth";
+import { deleteStorageIfUnreferenced } from "./storageLifecycle";
 import { isPromptTooLong, MAX_PROMPT_LENGTH } from "./tokenPolicy";
 
 function generateEditKey(excludeKeys: Array<string | undefined> = []): string {
@@ -412,9 +413,9 @@ export const restoreSession = mutation({
 
 // Soft-deleted sessions are restorable for this long before the purge cron
 // hard-deletes them and their associated documents.
-const DELETED_SESSION_GRACE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+export const DELETED_SESSION_GRACE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const PURGE_SESSIONS_PER_RUN = 5;
-const PURGE_DOCS_PER_TABLE = 200;
+export const PURGE_DOCS_PER_TABLE = 200;
 
 /**
  * Hard-delete sessions whose grace window has expired, along with their
@@ -435,29 +436,78 @@ export const purgeDeletedSessions = internalMutation({
 
     for (const session of expired) {
       let drained = true;
+      const sessionId = session._id;
+      // Blobs referenced by deleted rows; freed once no live row references them
+      const candidateBlobs = new Set<Id<"_storage">>();
+      const track = (id: Id<"_storage"> | undefined) => {
+        if (id) candidateBlobs.add(id);
+      };
 
-      // Uploaded images carry storage files that must be deleted too
       const uploads = await ctx.db
         .query("uploadedImages")
-        .withIndex("by_session", (q) => q.eq("sessionId", session._id))
+        .withIndex("by_session", (q) => q.eq("sessionId", sessionId))
         .take(PURGE_DOCS_PER_TABLE);
       for (const doc of uploads) {
-        await ctx.storage.delete(doc.storageId).catch(() => {});
+        track(doc.storageId);
         await ctx.db.delete(doc._id);
       }
       if (uploads.length === PURGE_DOCS_PER_TABLE) drained = false;
 
-      // AI generation records may reference stored snapshots/results
       const generations = await ctx.db
         .query("aiGenerations")
-        .withIndex("by_session", (q) => q.eq("sessionId", session._id))
+        .withIndex("by_session", (q) => q.eq("sessionId", sessionId))
         .take(PURGE_DOCS_PER_TABLE);
       for (const doc of generations) {
-        if (doc.canvasSnapshotId) await ctx.storage.delete(doc.canvasSnapshotId).catch(() => {});
-        if (doc.generatedImageId) await ctx.storage.delete(doc.generatedImageId).catch(() => {});
+        track(doc.canvasSnapshotId);
+        track(doc.generatedImageId);
         await ctx.db.delete(doc._id);
       }
       if (generations.length === PURGE_DOCS_PER_TABLE) drained = false;
+
+      const aiImages = await ctx.db
+        .query("aiGeneratedImages")
+        .withIndex("by_session", (q) => q.eq("sessionId", sessionId))
+        .take(PURGE_DOCS_PER_TABLE);
+      for (const doc of aiImages) {
+        track(doc.storageId);
+        await ctx.db.delete(doc._id);
+      }
+      if (aiImages.length === PURGE_DOCS_PER_TABLE) drained = false;
+
+      const merges = await ctx.db
+        .query("imageMerges")
+        .withIndex("by_session", (q) => q.eq("sessionId", sessionId))
+        .take(PURGE_DOCS_PER_TABLE);
+      for (const doc of merges) {
+        track(doc.mergedImageStorageId);
+        await ctx.db.delete(doc._id);
+      }
+      if (merges.length === PURGE_DOCS_PER_TABLE) drained = false;
+
+      const removals = await ctx.db
+        .query("backgroundRemovals")
+        .withIndex("by_session", (q) => q.eq("sessionId", sessionId))
+        .take(PURGE_DOCS_PER_TABLE);
+      for (const doc of removals) {
+        track(doc.resultStorageId);
+        await ctx.db.delete(doc._id);
+      }
+      if (removals.length === PURGE_DOCS_PER_TABLE) drained = false;
+
+      const intents = await ctx.db
+        .query("imageUploadIntents")
+        .withIndex("by_session", (q) => q.eq("sessionId", sessionId))
+        .take(PURGE_DOCS_PER_TABLE);
+      for (const doc of intents) {
+        track(doc.storageId);
+        await ctx.db.delete(doc._id);
+      }
+      if (intents.length === PURGE_DOCS_PER_TABLE) drained = false;
+
+      // Rows are gone, so reference counting only sees other live references
+      for (const storageId of candidateBlobs) {
+        await deleteStorageIfUnreferenced(ctx, storageId);
+      }
 
       // Remaining tables keyed by sessionId (no storage references)
       const sessionQueries = [
@@ -468,9 +518,6 @@ export const purgeDeletedSessions = internalMutation({
         ctx.db.query("viewerStates").withIndex("by_session_viewer", (q) => q.eq("sessionId", session._id)),
         ctx.db.query("webrtcSignals").withIndex("by_session_to", (q) => q.eq("sessionId", session._id)),
         ctx.db.query("paintLayers").withIndex("by_session", (q) => q.eq("sessionId", session._id)),
-        ctx.db.query("aiGeneratedImages").withIndex("by_session", (q) => q.eq("sessionId", session._id)),
-        ctx.db.query("imageMerges").withIndex("by_session", (q) => q.eq("sessionId", session._id)),
-        ctx.db.query("backgroundRemovals").withIndex("by_session", (q) => q.eq("sessionId", session._id)),
       ];
       for (const query of sessionQueries) {
         const docs = await query.take(PURGE_DOCS_PER_TABLE);
