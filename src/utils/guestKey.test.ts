@@ -27,16 +27,16 @@ describe('parseEditKeyFromUrl', () => {
     })
   })
 
-  test('gracefully accepts and scrubs ?edit= query parameter fallback', () => {
+  test('never accepts a ?edit= query parameter as a key, but scrubs it', () => {
     expect(parseEditKeyFromUrl('?session=abc123&edit=query_secret', '')).toEqual({
-      editKey: 'query_secret',
+      editKey: null,
       cleanedSearch: '?session=abc123',
       cleanedHash: '',
       hadEditParam: true,
     })
   })
 
-  test('prefers #edit= over ?edit= and scrubs both', () => {
+  test('takes the key only from #edit= and scrubs both', () => {
     expect(parseEditKeyFromUrl('?session=abc123&edit=from_query', '#edit=from_hash')).toEqual({
       editKey: 'from_hash',
       cleanedSearch: '?session=abc123',
@@ -114,5 +114,34 @@ describe('editKey storage and URL consumption', () => {
     expect(key).toBe('secret-from-hash')
     expect(getEditKey('sess-2')).toBe('secret-from-hash')
     expect(replaceState).toHaveBeenCalledWith({ idx: 0 }, '', '/?session=sess-2')
+  })
+
+  test('scrubs the token from the URL even when no session can be determined', () => {
+    const replaceState = vi.fn()
+    vi.stubGlobal('window', {
+      location: { pathname: '/', search: '', hash: '#edit=orphan-token' },
+      history: { state: null, replaceState },
+      sessionStorage: { getItem: () => null, setItem: vi.fn() },
+      localStorage: { getItem: () => null, setItem: () => {} },
+    })
+    expect(consumeEditKeyFromWindowUrl()).toBeNull()
+    expect(replaceState).toHaveBeenCalledWith(null, '', '/')
+  })
+
+  test('uses ?session= from the URL (else the fallback) and ignores ?edit=', () => {
+    const replaceState = vi.fn()
+    const storageMap = new Map<string, string>()
+    vi.stubGlobal('window', {
+      location: { pathname: '/', search: '?edit=from-query', hash: '' },
+      history: { state: null, replaceState },
+      sessionStorage: {
+        getItem: (k: string) => storageMap.get(k) ?? null,
+        setItem: (k: string, v: string) => storageMap.set(k, v),
+      },
+      localStorage: { getItem: () => null, setItem: () => {} },
+    })
+    expect(consumeEditKeyFromWindowUrl('sess-1')).toBeNull()
+    expect(getEditKey('sess-1')).toBeNull()
+    expect(replaceState).toHaveBeenCalledWith(null, '', '/')
   })
 })

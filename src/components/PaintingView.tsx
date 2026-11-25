@@ -410,15 +410,12 @@ export function PaintingView() {
     }
   }, [paintLayers, activePaintLayerId])
 
-  // Immediately extract and scrub any #edit= or ?edit= token from the URL
-  // on initial load and whenever the hash changes (e.g., pasted edit link).
+  // Extract and scrub any #edit= token from the URL on initial load (client.tsx
+  // already did this before analytics started) and whenever the hash changes
+  // (e.g., an edit link pasted into the address bar of an open tab).
   useEffect(() => {
     const captureFromUrl = () => {
-      const urlParams = new URLSearchParams(window.location.search)
-      const targetSessionId = urlParams.get('session') || sessionId
-      if (targetSessionId) {
-        consumeEditKeyFromWindowUrl(targetSessionId)
-      }
+      consumeEditKeyFromWindowUrl(sessionId)
     }
     captureFromUrl()
     window.addEventListener('hashchange', captureFromUrl)

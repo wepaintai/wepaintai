@@ -116,10 +116,10 @@ export function removeEditKey(sessionId: string) {
 
 /**
  * Pure parser for collaboration edit links.
- * Prefers URL hash fragment `#edit=<token>` (never sent over HTTP or Referer),
- * and gracefully accepts `?edit=<token>` if pasted as a query parameter.
- * Strips any `edit` parameter from both hash and search so callers can scrub
- * the address bar via `history.replaceState`.
+ * The token is accepted ONLY from the URL fragment `#edit=<token>`, which is
+ * never sent over HTTP (no server/proxy logs, no Referer). A stray `?edit=`
+ * query parameter is never used as a key, but it is still stripped so the
+ * caller can scrub it from the address bar (and analytics).
  */
 export function parseEditKeyFromUrl(
   search: string,
@@ -133,7 +133,7 @@ export function parseEditKeyFromUrl(
   let editKey: string | null = null
   let hadEditParam = false
 
-  // 1. Check hash fragment first (#edit=<token> or #foo=1&edit=<token>)
+  // 1. Hash fragment (#edit=<token> or #foo=1&edit=<token>)
   let cleanedHash = hash
   if (hash && hash.length > 1) {
     const rawHash = hash.startsWith('#') ? hash.slice(1) : hash
@@ -150,14 +150,12 @@ export function parseEditKeyFromUrl(
     }
   }
 
-  // 2. Also inspect query string (?edit=<token>) and always scrub it if present
+  // 2. Query string: never a source of keys, but always scrubbed
   let cleanedSearch = search
   if (search) {
     const searchParams = new URLSearchParams(search)
     if (searchParams.has('edit')) {
       hadEditParam = true
-      const val = searchParams.get('edit')?.trim()
-      if (!editKey && val) editKey = val
       searchParams.delete('edit')
       const remainingSearch = searchParams.toString()
       cleanedSearch = remainingSearch ? `?${remainingSearch}` : ''
@@ -168,25 +166,35 @@ export function parseEditKeyFromUrl(
 }
 
 /**
- * Extract `#edit=<token>` or `?edit=<token>` from the current browser URL,
- * persist it in `sessionStorage` keyed by `sessionId`, and scrub the secret
- * from the address bar via `history.replaceState`.
+ * Extract `#edit=<token>` from the current browser URL, persist it in
+ * `sessionStorage` for the session named by `?session=` (or
+ * `fallbackSessionId` when the URL has none), and scrub the secret from the
+ * address bar via `history.replaceState`. The scrub happens even when no
+ * session can be determined, so the token never lingers in the URL.
+ *
+ * Called from client.tsx before analytics initialize (so PostHog never reads
+ * the token from `window.location`) and again from PaintingView on hash
+ * changes.
  */
-export function consumeEditKeyFromWindowUrl(sessionId: string | null | undefined): string | null {
-  if (!sessionId || typeof window === 'undefined') return null
+export function consumeEditKeyFromWindowUrl(
+  fallbackSessionId?: string | null,
+): string | null {
+  if (typeof window === 'undefined') return null
   try {
     const { editKey, cleanedSearch, cleanedHash, hadEditParam } = parseEditKeyFromUrl(
       window.location.search,
       window.location.hash,
     )
-    if (editKey) {
+    const sessionId =
+      new URLSearchParams(window.location.search).get('session') || fallbackSessionId || null
+    if (editKey && sessionId) {
       setEditKey(sessionId, editKey)
     }
     if (hadEditParam) {
       const cleanUrl = `${window.location.pathname}${cleanedSearch}${cleanedHash}`
       window.history.replaceState(window.history.state, '', cleanUrl)
     }
-    return editKey
+    return sessionId ? editKey : null
   } catch {
     return null
   }
