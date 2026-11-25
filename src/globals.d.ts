@@ -6,6 +6,7 @@ declare global {
   interface ImportMetaEnv {
     readonly VITE_CONVEX_URL: string;
     readonly VITE_AUTH_DISABLED?: string;
+    readonly VITE_APP_URL?: string;
   }
 
   interface ImportMeta {
