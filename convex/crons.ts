@@ -43,4 +43,12 @@ crons.interval(
   {}
 );
 
+// Clean up expired single-use image upload intents and abandoned uploads
+crons.interval(
+  "cleanup expired upload intents",
+  { minutes: 15 },
+  internal.images.cleanupExpiredUploadIntents,
+  {}
+);
+
 export default crons;

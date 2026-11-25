@@ -30,8 +30,8 @@ export function ImageUploadModal({
   const [preview, setPreview] = useState<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   
-  const generateUploadUrl = useMutation(api.images.generateUploadUrl)
-  const uploadImage = useMutation(api.images.uploadImage)
+  const createUploadIntent = useMutation(api.images.createUploadIntent)
+  const commitImageUpload = useMutation(api.images.commitImageUpload)
 
   const handleFileSelect = useCallback(async (file: File) => {
     console.log('File selected:', file.name, 'Type:', file.type, 'Size:', file.size)
@@ -98,8 +98,8 @@ export function ImageUploadModal({
           canvasHeight,
           onImageUploaded,
         },
-        generateUploadUrl,
-        uploadImage
+        createUploadIntent,
+        commitImageUpload
       )
 
       if (result.success) {

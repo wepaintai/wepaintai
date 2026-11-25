@@ -177,7 +177,38 @@ const schema = defineSchema({
     opacity: v.number(),
     layerOrder: v.number(),
   }).index("by_session", ["sessionId", "layerOrder"]) 
-    .index("by_user", ["userId"]),
+    .index("by_user", ["userId"])
+    .index("by_storage", ["storageId"]),
+
+  // Single-use upload intents. The bytes are POSTed to the `/uploads/image`
+  // HTTP action with the intent's secret upload token; that action validates
+  // and stores them and records `storageId` (plus the decoded metadata) here
+  // in one step, so a committed image can only ever reference a blob that was
+  // uploaded through this intent.
+  imageUploadIntents: defineTable({
+    sessionId: v.id("paintingSessions"),
+    userId: v.optional(v.id("users")),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+    consumedAt: v.optional(v.number()),
+    storageId: v.optional(v.id("_storage")),
+    // SHA-256 (hex) of the upload token returned once by createUploadIntent.
+    // Optional only for intents created by the pre-token flow, which can no
+    // longer be uploaded to.
+    uploadTokenHash: v.optional(v.string()),
+    // Rate-limit bucket: "user:<id>", "guest:<sessionId>" or "anon:<sessionId>"
+    rateKey: v.optional(v.string()),
+    // Server-decoded metadata of the uploaded blob, recorded with storageId
+    uploadedAt: v.optional(v.number()),
+    mimeType: v.optional(v.string()),
+    width: v.optional(v.number()),
+    height: v.optional(v.number()),
+    // Set when the cleanup cron deleted the blob of an expired, unconsumed intent
+    abandonedAt: v.optional(v.number()),
+  }).index("by_expires", ["expiresAt"])
+    .index("by_session", ["sessionId"])
+    .index("by_open_expires", ["consumedAt", "expiresAt"])
+    .index("by_rate_key", ["rateKey", "createdAt"]),
 
   // AI generation requests and results
   aiGenerations: defineTable({
