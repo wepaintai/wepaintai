@@ -26,6 +26,7 @@ import type * as paintLayers from "../paintLayers.js";
 import type * as paintingSessions from "../paintingSessions.js";
 import type * as polar from "../polar.js";
 import type * as polarPackages from "../polarPackages.js";
+import type * as polarReconcile from "../polarReconcile.js";
 import type * as polarWebhook from "../polarWebhook.js";
 import type * as presence from "../presence.js";
 import type * as previewSeed from "../previewSeed.js";
@@ -63,6 +64,7 @@ declare const fullApi: ApiFromModules<{
   paintingSessions: typeof paintingSessions;
   polar: typeof polar;
   polarPackages: typeof polarPackages;
+  polarReconcile: typeof polarReconcile;
   polarWebhook: typeof polarWebhook;
   presence: typeof presence;
   previewSeed: typeof previewSeed;
