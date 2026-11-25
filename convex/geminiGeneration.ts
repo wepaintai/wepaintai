@@ -17,7 +17,10 @@ export const generateImage = action({
     guestKey: v.optional(v.string()),
     editKey: v.optional(v.string()),
   },
-  handler: async (ctx, args): Promise<{ success: boolean; imageUrl?: string; error?: string }> => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ success: boolean; imageUrl?: string; storageId?: Id<"_storage">; error?: string }> => {
     if (isPromptTooLong(args.prompt)) {
       return { success: false, error: `Prompt is too long (max ${MAX_PROMPT_LENGTH} characters).` };
     }
@@ -158,15 +161,17 @@ export const generateImage = action({
         return await fail('Failed to store generated image.', "billed");
       }
 
+      // Records the output blob with the status, or deletes it if the result
+      // can't be written.
       const completion = await ctx.runMutation(internal.aiOperations.completeOperation, {
         operationType: "ai-generation",
         operationId: generationId,
         resultImageUrl: storageUrl,
+        resultStorageId: storageId,
         guestKey: args.guestKey,
         editKey: args.editKey,
       });
       if (completion !== "completed") {
-        await ctx.storage.delete(storageId).catch(() => {});
         return {
           success: false,
           error:
@@ -176,7 +181,7 @@ export const generateImage = action({
         };
       }
 
-      return { success: true, imageUrl: storageUrl };
+      return { success: true, imageUrl: storageUrl, storageId };
     } catch (error) {
       console.error('[GEMINI] Generation error:', error);
       return await fail('An error occurred while processing the AI result.', "billed");

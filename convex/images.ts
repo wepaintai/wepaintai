@@ -10,7 +10,6 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { assertCanModifySession, canReadSession, keysMatch } from "./sessionAuth";
 import {
-  assertAllowedAiImageUrl,
   assertFiniteNumber,
   assertValidImageDimensions,
   MAX_AI_IMAGE_DIMENSION,
@@ -24,6 +23,11 @@ import {
   UPLOAD_RATE_WINDOW_MS,
 } from "./imageValidation";
 import { generateUploadToken, sha256Hex } from "./uploadToken";
+import {
+  deleteStorageIfUnreferenced,
+  resolveAIOutputOwner,
+  transferAIOutputToLayer,
+} from "./storageLifecycle";
 
 // ---------------------------------------------------------------------------
 // Image upload flow (AUD-009)
@@ -95,23 +99,6 @@ async function checkIntentForUpload(
     return { ok: false, status: 404, error: "Session not found" };
   }
   return null;
-}
-
-/** Delete a blob unless an image record references it. */
-async function deleteUnreferencedBlob(
-  ctx: { db: QueryCtx["db"]; storage: { delete: (id: Id<"_storage">) => Promise<void> } },
-  storageId: Id<"_storage">,
-) {
-  const attached = await ctx.db
-    .query("uploadedImages")
-    .withIndex("by_storage", (q) => q.eq("storageId", storageId))
-    .first();
-  if (attached) return;
-  try {
-    await ctx.storage.delete(storageId);
-  } catch {
-    // Already deleted
-  }
 }
 
 // Create a single-use upload intent for the caller. The returned uploadToken
@@ -203,7 +190,7 @@ export const attachUploadToIntent = internalMutation({
     const now = Date.now();
     const failure = await checkIntentForUpload(ctx, intent, args.uploadTokenHash, now);
     if (failure || !intent) {
-      await deleteUnreferencedBlob(ctx, args.storageId);
+      await deleteStorageIfUnreferenced(ctx, args.storageId);
       return failure ?? { ok: false, status: 403, error: "Invalid upload token" };
     }
     await ctx.db.patch(intent._id, {
@@ -371,14 +358,17 @@ export const uploadImage = mutation({
   },
 });
 
-// Add an AI-generated image record (stores URL directly).
-// The URL must point at this deployment's file storage (or a known provider
-// CDN) and the client-supplied dimensions are bounded. PR #106 replaces this
-// with a storageId binding so the server derives the URL itself.
+// Add an AI-generated image layer from an AI output blob. The blob must be an
+// unplaced output of a completed AI operation of this session (ownership moves
+// to the new layer) or a blob already placed in this session; the URL is
+// derived from the blob server-side, never taken from the client. Client
+// dimensions are bounded.
 export const addAIGeneratedImage = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
-    imageUrl: v.string(),
+    storageId: v.id("_storage"),
+    // Ignored; accepted only so clients that still send it keep validating.
+    imageUrl: v.optional(v.string()),
     width: v.number(),
     height: v.number(),
     canvasWidth: v.optional(v.number()),
@@ -391,15 +381,15 @@ export const addAIGeneratedImage = mutation({
     if (!session) throw new Error("Session not found");
     await assertCanModifySession(ctx, session, args.guestKey, { editKey: args.editKey });
 
-    const safeImageUrl = assertAllowedAiImageUrl(args.imageUrl, [
-      process.env.CONVEX_CLOUD_URL,
-      process.env.CONVEX_SITE_URL,
-    ]);
     const { width, height } = assertValidImageDimensions(
       args.width,
       args.height,
       MAX_AI_IMAGE_DIMENSION
     );
+
+    const outputOwner = await resolveAIOutputOwner(ctx, args.sessionId, args.storageId);
+    const persistedImageUrl = await ctx.storage.getUrl(args.storageId);
+    if (!persistedImageUrl) throw new Error("Storage object not found");
 
     // Get the current max layer order from ALL images (uploaded and AI)
     const uploadedImages = await ctx.db
@@ -446,7 +436,8 @@ export const addAIGeneratedImage = mutation({
     // Store the original AI image dimensions and calculate scale/position
     const imageId = await ctx.db.insert("aiGeneratedImages", {
       sessionId: args.sessionId,
-      imageUrl: safeImageUrl,
+      imageUrl: persistedImageUrl,
+      storageId: args.storageId,
       width,
       height,
       x: x,
@@ -459,6 +450,8 @@ export const addAIGeneratedImage = mutation({
       layerOrder: newLayerOrder,
       createdAt: Date.now(),
     });
+    // The layer now owns the blob; the operation row keeps only a marker
+    await transferAIOutputToLayer(ctx, outputOwner, imageId);
 
     return imageId;
   },
@@ -501,18 +494,22 @@ export const getSessionImages = query({
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
       .collect();
 
-    // AI images already have URLs
-    const aiWithType = aiImages.map(image => ({
-      ...image,
-      _id: image._id as any, // Keep the original AI image ID
-      url: image.imageUrl,
-      type: "ai-generated" as const,
-      // Map to match uploaded image structure
-      storageId: null as any,
-      filename: "ai-generated.png",
-      mimeType: "image/png",
-      userId: undefined,
-    }));
+    // Resolve fresh URLs for storage-backed AI images; legacy rows only have imageUrl
+    const aiWithType = await Promise.all(
+      aiImages.map(async (image) => ({
+        ...image,
+        _id: image._id as any, // Keep the original AI image ID
+        url: image.storageId
+          ? (await ctx.storage.getUrl(image.storageId)) ?? image.imageUrl
+          : image.imageUrl,
+        type: "ai-generated" as const,
+        // Map to match uploaded image structure
+        storageId: (image.storageId ?? null) as any,
+        filename: "ai-generated.png",
+        mimeType: "image/png",
+        userId: undefined,
+      }))
+    );
 
     // Combine and sort by layer order
     const allImages = [...uploadedWithUrls, ...aiWithType];
@@ -714,11 +711,10 @@ export const deleteImage = mutation({
       await ctx.db.delete(ds._id);
     }
 
-    // Delete from storage
-    await ctx.storage.delete(image.storageId);
-
-    // Delete the record
+    // Delete the record first so reference counting excludes this row, then
+    // the blob unless another live record still references it
     await ctx.db.delete(args.imageId);
+    await deleteStorageIfUnreferenced(ctx, image.storageId);
 
     // Get all remaining images (both uploaded and AI) to properly reorder
     const remainingUploadedImages = await ctx.db
@@ -784,14 +780,13 @@ export const cleanupExpiredUploadIntents = internalMutation({
       )
       .take(CLEANUP_BATCH_SIZE);
     for (const intent of expiredOpen) {
-      if (intent.storageId) {
-        await deleteUnreferencedBlob(ctx, intent.storageId);
-      }
+      // Clear the intent's reference first so reference counting excludes it
       await ctx.db.patch(intent._id, {
         consumedAt: now,
         abandonedAt: now,
         storageId: undefined,
       });
+      await deleteStorageIfUnreferenced(ctx, intent.storageId);
     }
 
     const stale = await ctx.db
@@ -801,10 +796,10 @@ export const cleanupExpiredUploadIntents = internalMutation({
       )
       .take(CLEANUP_BATCH_SIZE);
     for (const intent of stale) {
-      if (intent.consumedAt === undefined && intent.storageId) {
-        await deleteUnreferencedBlob(ctx, intent.storageId);
-      }
       await ctx.db.delete(intent._id);
+      if (intent.consumedAt === undefined) {
+        await deleteStorageIfUnreferenced(ctx, intent.storageId);
+      }
     }
 
     if (
@@ -835,7 +830,15 @@ export const getAIGeneratedImages = query({
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
       .collect();
     
-    return aiImages.sort((a, b) => a.layerOrder - b.layerOrder);
+    const resolved = await Promise.all(
+      aiImages.map(async (image) => ({
+        ...image,
+        imageUrl: image.storageId
+          ? (await ctx.storage.getUrl(image.storageId)) ?? image.imageUrl
+          : image.imageUrl,
+      }))
+    );
+    return resolved.sort((a, b) => a.layerOrder - b.layerOrder);
   },
 });
 
@@ -957,8 +960,10 @@ export const deleteAIImage = mutation({
       await ctx.db.delete(ds._id);
     }
 
-    // Delete the record
+    // Delete the record first so reference counting excludes this row, then
+    // the backing blob unless another live record still references it
     await ctx.db.delete(args.imageId);
+    await deleteStorageIfUnreferenced(ctx, image.storageId);
     console.log('[deleteAIImage] AI image deleted successfully');
 
     // Get all remaining images (both uploaded and AI) to properly reorder

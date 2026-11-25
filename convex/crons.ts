@@ -51,4 +51,29 @@ crons.interval(
   {}
 );
 
+// Settle AI operations whose action died: refund rows that never reached the
+// provider, mark provider-accepted rows failed_billed, free canvas snapshots
+crons.interval(
+  "cleanup stale ai operations",
+  { minutes: 15 },
+  internal.aiOperations.cleanupStaleOperations,
+  {}
+);
+
+// Delete AI outputs that were never placed on the canvas within their TTL
+crons.interval(
+  "expire unplaced ai outputs",
+  { hours: 1 },
+  internal.storageLifecycle.expireUnplacedOutputs,
+  {}
+);
+
+// Backstop: delete blobs older than 24h that nothing references
+crons.interval(
+  "sweep orphaned storage",
+  { hours: 24 },
+  internal.storageLifecycle.sweepOrphanedStorage,
+  {}
+);
+
 export default crons;

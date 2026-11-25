@@ -14,7 +14,7 @@ interface AIGenerationModalProps {
   canvasDataUrl: string
   canvasWidth?: number
   canvasHeight?: number
-  onGenerationComplete: (imageUrl: string) => void
+  onGenerationComplete: (imageUrl: string, storageId: Id<'_storage'>) => void
 }
 
 export function AIGenerationModal({
@@ -95,7 +95,7 @@ export function AIGenerationModal({
       console.log('Result type:', typeof result)
       console.log('Result keys:', result ? Object.keys(result) : 'null')
       
-      if (result.success && 'imageUrl' in result && result.imageUrl) {
+      if (result.success && result.imageUrl && result.storageId) {
         console.log('Generated image URL:', result.imageUrl)
         // Save the prompt to both session and user history (best-effort: a
         // history write failure must not hide a successful generation)
@@ -105,7 +105,7 @@ export function AIGenerationModal({
         } catch (historyError) {
           console.warn('Failed to save prompt history:', historyError)
         }
-        onGenerationComplete(result.imageUrl)
+        onGenerationComplete(result.imageUrl, result.storageId)
         onClose()
       } else {
         setError(('error' in result && result.error) || 'Generation failed')
@@ -362,7 +362,7 @@ export function AIGenerationModal({
                   <button
                     key={gen._id}
                     onClick={() => {
-                      onGenerationComplete(gen.resultImageUrl)
+                      onGenerationComplete(gen.resultImageUrl, gen.generatedImageId)
                       onClose()
                     }}
                     disabled={isGenerating}

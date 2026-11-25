@@ -186,6 +186,32 @@ function commitArgs(
   }
 }
 
+/**
+ * A completed AI generation of `sessionId` with an unplaced output blob, in
+ * the shape completeOperation writes it.
+ */
+async function seedCompletedOutput(
+  t: TestBackend,
+  sessionId: Id<'paintingSessions'>,
+): Promise<Id<'_storage'>> {
+  return await t.run(async (ctx) => {
+    const storageId = await ctx.storage.store(new Blob([makePngBytes(200, 100)], { type: 'image/png' }))
+    const now = Date.now()
+    await ctx.db.insert('aiGenerations', {
+      sessionId,
+      prompt: 'seeded',
+      status: 'completed',
+      provider: 'gemini',
+      generatedImageId: storageId,
+      resultImageUrl: (await ctx.storage.getUrl(storageId)) ?? undefined,
+      createdAt: now,
+      completedAt: now,
+      outputExpiresAt: now + 60_000,
+    })
+    return storageId
+  })
+}
+
 /** Create an intent, upload `bytes` through the HTTP action, expect 200. */
 async function uploadThroughIntent(
   t: TestBackend,
@@ -775,7 +801,7 @@ describe('image upload flow: intent -> POST /uploads/image -> commit (AUD-009)',
     await t.mutation(api.images.commitImageUpload, commitArgs(sessionId, intent, { guestKey }))
     await t.mutation(api.images.addAIGeneratedImage, {
       sessionId,
-      imageUrl: `${STORAGE_ORIGIN}/api/storage/guest-ai`,
+      storageId: await seedCompletedOutput(t, sessionId),
       width: 100,
       height: 100,
       guestKey,
@@ -936,50 +962,46 @@ describe('image mutation authorization', () => {
     expect(state.hasBlob).toBe(true)
   })
 
-  test('addAIGeneratedImage accepts only this deployment\'s storage (or provider CDN) URLs and bounds sizes', async () => {
+  test('addAIGeneratedImage derives the URL from a session-owned output blob and bounds sizes', async () => {
     const ownerAuthId = 'ai-owner'
     const { t, sessionId } = await seedImages({ ownerAuthId })
     const owner = t.withIdentity({ subject: ownerAuthId })
-    const add = (imageUrl: string, extra: Record<string, number> = {}) =>
+    const storageId = await seedCompletedOutput(t, sessionId)
+    const add = (extra: Record<string, unknown> = {}) =>
       owner.mutation(api.images.addAIGeneratedImage, {
         sessionId,
-        imageUrl,
+        storageId,
         width: 200,
         height: 100,
         ...extra,
       })
 
-    const storageImageId = await add(`${STORAGE_ORIGIN}/api/storage/abc-123`, {
+    await expect(add({ width: 0 })).rejects.toThrow('Image dimensions')
+    await expect(add({ width: 9000 })).rejects.toThrow('Image dimensions')
+
+    // A client-supplied URL is ignored: the stored URL is the blob's own
+    const imageId = await add({
+      imageUrl: 'https://example.com/tracker.png',
       canvasWidth: 1e12,
       canvasHeight: Number.NaN,
     })
-    const stored = await t.run((ctx) => ctx.db.get(storageImageId))
-    expect(stored?.imageUrl).toBe(`${STORAGE_ORIGIN}/api/storage/abc-123`)
+    const stored = await t.run((ctx) => ctx.db.get(imageId))
+    const blobUrl = await t.run((ctx) => ctx.storage.getUrl(storageId))
+    expect(stored?.imageUrl).toBe(blobUrl)
+    expect(stored?.storageId).toBe(storageId)
     // Absurd client canvas hints are clamped / replaced by the session's
     expect(stored!.x).toBeLessThanOrEqual(8192 / 2)
     expect(Number.isFinite(stored!.y)).toBe(true)
 
-    await add('https://pbxt.replicate.delivery/out/result.png')
-
-    for (const bad of [
-      'https://example.com/tracker.png',
-      `${STORAGE_ORIGIN}/not-storage/abc`,
-      'https://some-deployment.convex.cloud.evil.example/api/storage/x',
-      'https://user:pass@pbxt.replicate.delivery/x.png',
-      'http://pbxt.replicate.delivery/x.png',
-      'javascript:alert(1)',
-      'not a url',
-    ]) {
-      await expect(add(bad)).rejects.toThrow(/image URL|Image URL/)
-    }
-    await expect(add(`${STORAGE_ORIGIN}/api/storage/x`, { width: 0 })).rejects.toThrow('Image dimensions')
-    await expect(add(`${STORAGE_ORIGIN}/api/storage/x`, { width: 9000 })).rejects.toThrow('Image dimensions')
+    // A blob that is not an AI output of this session is refused
+    const stray = await t.run((ctx) => ctx.storage.store(new Blob(['stray'])))
+    await expect(add({ storageId: stray })).rejects.toThrow('does not belong to this session')
 
     const outsider = t.withIdentity({ subject: 'outsider' })
     await expect(
       outsider.mutation(api.images.addAIGeneratedImage, {
         sessionId,
-        imageUrl: `${STORAGE_ORIGIN}/api/storage/abc`,
+        storageId,
         width: 100,
         height: 100,
       }),

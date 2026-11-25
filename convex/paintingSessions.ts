@@ -1,6 +1,7 @@
 import { internalMutation, mutation, query, type MutationCtx } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { v } from "convex/values";
-import { Doc, Id } from "./_generated/dataModel";
+import { Doc, Id, type TableNames } from "./_generated/dataModel";
 import { createUserWithWelcomeTokens } from "./users";
 import {
   assertCanModifySession,
@@ -9,6 +10,7 @@ import {
   isSessionOwner,
   keysMatch,
 } from "./sessionAuth";
+import { deleteStorageIfUnreferenced } from "./storageLifecycle";
 import { isPromptTooLong, MAX_PROMPT_LENGTH } from "./tokenPolicy";
 
 function generateEditKey(excludeKeys: Array<string | undefined> = []): string {
@@ -178,6 +180,9 @@ function sanitizeSession(session: Doc<"paintingSessions">) {
     editKey,
     clearHistory: _clearHistory,
     redoStack: _redoStack,
+    // Purge bookkeeping is server-internal too
+    purgeStartedAt: _purgeStartedAt,
+    purgeTurn: _purgeTurn,
     ...rest
   } = session;
   return {
@@ -382,7 +387,7 @@ export const restoreSession = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
   },
-  returns: v.union(v.literal("restored"), v.literal("not_found")),
+  returns: v.union(v.literal("restored"), v.literal("not_found"), v.literal("expired")),
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) {
@@ -403,6 +408,14 @@ export const restoreSession = mutation({
     }
 
     if (session.deletedAt === undefined) return "restored"; // already live
+    // Past the grace window (or once the purge has started deleting its
+    // children) a session can't come back partially purged.
+    if (
+      session.purgeStartedAt !== undefined ||
+      session.deletedAt < Date.now() - DELETED_SESSION_GRACE_MS
+    ) {
+      return "expired";
+    }
     // Restoring never revives the old collaboration link: any edit link that
     // was shared before the delete stays dead until the owner enables a new one.
     await ctx.db.patch(args.sessionId, { deletedAt: undefined, editKey: undefined });
@@ -412,78 +425,215 @@ export const restoreSession = mutation({
 
 // Soft-deleted sessions are restorable for this long before the purge cron
 // hard-deletes them and their associated documents.
-const DELETED_SESSION_GRACE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
-const PURGE_SESSIONS_PER_RUN = 5;
-const PURGE_DOCS_PER_TABLE = 200;
+export const DELETED_SESSION_GRACE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+// Per purge run: newly expired sessions queued, queued sessions visited, and
+// child documents deleted in total / per session turn. Runs reschedule
+// themselves immediately while work remains, so these bound one transaction,
+// not overall throughput.
+export const PURGE_ENQUEUE_PER_RUN = 50;
+export const PURGE_SESSIONS_PER_RUN = 10;
+export const PURGE_DOCS_PER_RUN = 400;
+export const PURGE_DOCS_PER_SESSION_TURN = 200;
+// Rows of storage-bearing tables per run. Freeing each referenced blob costs
+// a reference check (~9 index reads), so these get a tighter cap to keep a run
+// well inside Convex's per-transaction read/call limits.
+export const PURGE_STORAGE_DOCS_PER_RUN = 100;
+
+type PurgeCtx = MutationCtx;
+
+/**
+ * Delete up to `limit` child documents of one session (storage-bearing tables
+ * first), then free every blob those rows referenced that no live row still
+ * references. Returns how many documents were deleted and whether the session
+ * has no children left.
+ */
+async function purgeSessionChildren(
+  ctx: PurgeCtx,
+  sessionId: Id<"paintingSessions">,
+  limit: number,
+  storageLimit: number,
+): Promise<{ deleted: number; storageDeleted: number; drained: boolean }> {
+  const candidateBlobs = new Set<Id<"_storage">>();
+  const track = (id: Id<"_storage"> | undefined) => {
+    if (id) candidateBlobs.add(id);
+  };
+
+  // Each step takes at most `n` rows of one table, deletes them, and returns
+  // how many it deleted. The first STORAGE_STEPS steps reference blobs.
+  const STORAGE_STEPS = 6;
+  const steps: Array<(n: number) => Promise<number>> = [
+    async (n) => {
+      const docs = await ctx.db.query("uploadedImages").withIndex("by_session", (q) => q.eq("sessionId", sessionId)).take(n);
+      for (const doc of docs) {
+        track(doc.storageId);
+        await ctx.db.delete(doc._id);
+      }
+      return docs.length;
+    },
+    async (n) => {
+      const docs = await ctx.db.query("aiGenerations").withIndex("by_session", (q) => q.eq("sessionId", sessionId)).take(n);
+      for (const doc of docs) {
+        track(doc.canvasSnapshotId);
+        track(doc.generatedImageId);
+        await ctx.db.delete(doc._id);
+      }
+      return docs.length;
+    },
+    async (n) => {
+      const docs = await ctx.db.query("aiGeneratedImages").withIndex("by_session", (q) => q.eq("sessionId", sessionId)).take(n);
+      for (const doc of docs) {
+        track(doc.storageId);
+        await ctx.db.delete(doc._id);
+      }
+      return docs.length;
+    },
+    async (n) => {
+      const docs = await ctx.db.query("imageMerges").withIndex("by_session", (q) => q.eq("sessionId", sessionId)).take(n);
+      for (const doc of docs) {
+        track(doc.mergedImageStorageId);
+        await ctx.db.delete(doc._id);
+      }
+      return docs.length;
+    },
+    async (n) => {
+      const docs = await ctx.db.query("backgroundRemovals").withIndex("by_session", (q) => q.eq("sessionId", sessionId)).take(n);
+      for (const doc of docs) {
+        track(doc.resultStorageId);
+        await ctx.db.delete(doc._id);
+      }
+      return docs.length;
+    },
+    async (n) => {
+      const docs = await ctx.db.query("imageUploadIntents").withIndex("by_session", (q) => q.eq("sessionId", sessionId)).take(n);
+      for (const doc of docs) {
+        track(doc.storageId);
+        await ctx.db.delete(doc._id);
+      }
+      return docs.length;
+    },
+    // Tables without storage references
+    async (n) => deleteAll(ctx, await ctx.db.query("strokes").withIndex("by_session", (q) => q.eq("sessionId", sessionId)).take(n)),
+    async (n) => deleteAll(ctx, await ctx.db.query("deletedStrokes").withIndex("by_session_deleted", (q) => q.eq("sessionId", sessionId)).take(n)),
+    async (n) => deleteAll(ctx, await ctx.db.query("liveStrokes").withIndex("by_session", (q) => q.eq("sessionId", sessionId)).take(n)),
+    async (n) => deleteAll(ctx, await ctx.db.query("userPresence").withIndex("by_session", (q) => q.eq("sessionId", sessionId)).take(n)),
+    async (n) => deleteAll(ctx, await ctx.db.query("viewerStates").withIndex("by_session_viewer", (q) => q.eq("sessionId", sessionId)).take(n)),
+    async (n) => deleteAll(ctx, await ctx.db.query("webrtcSignals").withIndex("by_session_to", (q) => q.eq("sessionId", sessionId)).take(n)),
+    async (n) => deleteAll(ctx, await ctx.db.query("paintLayers").withIndex("by_session", (q) => q.eq("sessionId", sessionId)).take(n)),
+  ];
+
+  let remaining = limit;
+  let storageRemaining = storageLimit;
+  let drained = true;
+  for (const [index, step] of steps.entries()) {
+    const isStorageStep = index < STORAGE_STEPS;
+    const n = isStorageStep ? Math.min(remaining, storageRemaining) : remaining;
+    if (n <= 0) {
+      drained = false;
+      break;
+    }
+    const deleted = await step(n);
+    // A full batch may have left more rows behind
+    if (deleted === n) drained = false;
+    remaining -= deleted;
+    if (isStorageStep) storageRemaining -= deleted;
+  }
+
+  // The rows are gone, so reference counting only sees other live references
+  for (const storageId of candidateBlobs) {
+    await deleteStorageIfUnreferenced(ctx, storageId);
+  }
+  return { deleted: limit - remaining, storageDeleted: storageLimit - storageRemaining, drained };
+}
+
+async function deleteAll(ctx: PurgeCtx, docs: Array<{ _id: Id<TableNames> }>): Promise<number> {
+  for (const doc of docs) await ctx.db.delete(doc._id);
+  return docs.length;
+}
 
 /**
  * Hard-delete sessions whose grace window has expired, along with their
- * associated documents and storage files. Reads/writes are bounded per run;
- * a session with more documents than the per-table cap is drained across
- * successive runs and its own doc is only deleted once everything else is
- * gone (so no orphans are left behind).
+ * associated documents and storage files.
+ *
+ * Expired sessions are first queued (purgeStartedAt, which also blocks
+ * restoreSession) and then served round-robin by `purgeTurn`: each visit
+ * deletes a bounded batch of the session's children and moves it to the back
+ * of the queue, so a huge session can't starve the rest. A session's own doc
+ * is deleted only once every child table is empty. Each run is bounded and
+ * reschedules itself immediately while any work remains.
  */
 export const purgeDeletedSessions = internalMutation({
   args: {},
-  returns: v.null(),
+  returns: v.object({
+    queued: v.number(),
+    purged: v.number(),
+    deletedDocs: v.number(),
+    rescheduled: v.boolean(),
+  }),
   handler: async (ctx) => {
-    const cutoff = Date.now() - DELETED_SESSION_GRACE_MS;
-    const expired = await ctx.db
+    const now = Date.now();
+    const cutoff = now - DELETED_SESSION_GRACE_MS;
+
+    const lastQueued = await ctx.db
       .query("paintingSessions")
-      .withIndex("by_deleted", (q) => q.gt("deletedAt", 0).lt("deletedAt", cutoff))
+      .withIndex("by_purge_turn", (q) => q.gt("purgeTurn", 0))
+      .order("desc")
+      .first();
+    let nextTurn = (lastQueued?.purgeTurn ?? 0) + 1;
+
+    // 1. Queue sessions whose grace window just passed
+    const newlyExpired = await ctx.db
+      .query("paintingSessions")
+      .withIndex("by_purge_started_deleted", (q) =>
+        q.eq("purgeStartedAt", undefined).gt("deletedAt", 0).lt("deletedAt", cutoff),
+      )
+      .take(PURGE_ENQUEUE_PER_RUN);
+    for (const session of newlyExpired) {
+      await ctx.db.patch(session._id, { purgeStartedAt: now, purgeTurn: nextTurn++ });
+    }
+
+    // 2. Serve queued sessions round-robin within the run's document budget
+    const queue = await ctx.db
+      .query("paintingSessions")
+      .withIndex("by_purge_turn", (q) => q.gt("purgeTurn", 0))
       .take(PURGE_SESSIONS_PER_RUN);
 
-    for (const session of expired) {
-      let drained = true;
-
-      // Uploaded images carry storage files that must be deleted too
-      const uploads = await ctx.db
-        .query("uploadedImages")
-        .withIndex("by_session", (q) => q.eq("sessionId", session._id))
-        .take(PURGE_DOCS_PER_TABLE);
-      for (const doc of uploads) {
-        await ctx.storage.delete(doc.storageId).catch(() => {});
-        await ctx.db.delete(doc._id);
+    let budget = PURGE_DOCS_PER_RUN;
+    let storageBudget = PURGE_STORAGE_DOCS_PER_RUN;
+    let workRemains =
+      newlyExpired.length === PURGE_ENQUEUE_PER_RUN || queue.length === PURGE_SESSIONS_PER_RUN;
+    let purged = 0;
+    for (const session of queue) {
+      if (budget <= 0) {
+        workRemains = true;
+        break;
       }
-      if (uploads.length === PURGE_DOCS_PER_TABLE) drained = false;
-
-      // AI generation records may reference stored snapshots/results
-      const generations = await ctx.db
-        .query("aiGenerations")
-        .withIndex("by_session", (q) => q.eq("sessionId", session._id))
-        .take(PURGE_DOCS_PER_TABLE);
-      for (const doc of generations) {
-        if (doc.canvasSnapshotId) await ctx.storage.delete(doc.canvasSnapshotId).catch(() => {});
-        if (doc.generatedImageId) await ctx.storage.delete(doc.generatedImageId).catch(() => {});
-        await ctx.db.delete(doc._id);
-      }
-      if (generations.length === PURGE_DOCS_PER_TABLE) drained = false;
-
-      // Remaining tables keyed by sessionId (no storage references)
-      const sessionQueries = [
-        ctx.db.query("strokes").withIndex("by_session", (q) => q.eq("sessionId", session._id)),
-        ctx.db.query("deletedStrokes").withIndex("by_session_deleted", (q) => q.eq("sessionId", session._id)),
-        ctx.db.query("liveStrokes").withIndex("by_session", (q) => q.eq("sessionId", session._id)),
-        ctx.db.query("userPresence").withIndex("by_session", (q) => q.eq("sessionId", session._id)),
-        ctx.db.query("viewerStates").withIndex("by_session_viewer", (q) => q.eq("sessionId", session._id)),
-        ctx.db.query("webrtcSignals").withIndex("by_session_to", (q) => q.eq("sessionId", session._id)),
-        ctx.db.query("paintLayers").withIndex("by_session", (q) => q.eq("sessionId", session._id)),
-        ctx.db.query("aiGeneratedImages").withIndex("by_session", (q) => q.eq("sessionId", session._id)),
-        ctx.db.query("imageMerges").withIndex("by_session", (q) => q.eq("sessionId", session._id)),
-        ctx.db.query("backgroundRemovals").withIndex("by_session", (q) => q.eq("sessionId", session._id)),
-      ];
-      for (const query of sessionQueries) {
-        const docs = await query.take(PURGE_DOCS_PER_TABLE);
-        for (const doc of docs) await ctx.db.delete(doc._id);
-        if (docs.length === PURGE_DOCS_PER_TABLE) drained = false;
-      }
-
+      const { deleted, storageDeleted, drained } = await purgeSessionChildren(
+        ctx,
+        session._id,
+        Math.min(budget, PURGE_DOCS_PER_SESSION_TURN),
+        storageBudget,
+      );
+      budget -= deleted;
+      storageBudget -= storageDeleted;
       if (drained) {
         await ctx.db.delete(session._id);
+        purged += 1;
         console.log("[purgeDeletedSessions] Hard-deleted session", session._id);
+      } else {
+        await ctx.db.patch(session._id, { purgeTurn: nextTurn++ });
+        workRemains = true;
       }
     }
-    return null;
+
+    if (workRemains) {
+      await ctx.scheduler.runAfter(0, internal.paintingSessions.purgeDeletedSessions, {});
+    }
+    return {
+      queued: newlyExpired.length,
+      purged,
+      deletedDocs: PURGE_DOCS_PER_RUN - budget,
+      rescheduled: workRemains,
+    };
   },
 });
 

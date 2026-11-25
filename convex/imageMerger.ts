@@ -36,7 +36,11 @@ export const getLayerImageUrl = internalQuery({
       .first();
       
     if (aiImage) {
-      return { url: aiImage.imageUrl, type: "ai-generated" };
+      // Prefer a fresh URL from the backing blob; legacy layers only have a URL
+      const url = aiImage.storageId
+        ? (await ctx.storage.getUrl(aiImage.storageId)) ?? aiImage.imageUrl
+        : aiImage.imageUrl;
+      return { url, type: "ai-generated" };
     }
     
     // Check if it's a regular uploaded image
@@ -68,7 +72,10 @@ export const mergeImages = action({
     guestKey: v.optional(v.string()),
     editKey: v.optional(v.string()),
   },
-  handler: async (ctx, args): Promise<{ success: boolean; imageUrl?: string; error?: string }> => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ success: boolean; imageUrl?: string; storageId?: Id<"_storage">; error?: string }> => {
     console.log('[IMAGE-MERGE] mergeImages action called with:', {
       firstLayerId: args.firstLayerId,
       secondLayerId: args.secondLayerId,
@@ -245,15 +252,17 @@ export const mergeImages = action({
         return await fail("Failed to save the merged image.", "billed");
       }
 
+      // Records the output blob with the status, or deletes it if the result
+      // can't be written.
       const completion = await ctx.runMutation(internal.aiOperations.completeOperation, {
         operationType: "image-merge",
         operationId: mergeId,
         resultImageUrl: finalUrl,
+        resultStorageId: storedId,
         guestKey: args.guestKey,
         editKey: args.editKey,
       });
       if (completion !== "completed") {
-        if (storedId) await ctx.storage.delete(storedId).catch(() => {});
         return {
           success: false,
           error:
@@ -263,7 +272,7 @@ export const mergeImages = action({
         };
       }
 
-      return { success: true, imageUrl: finalUrl };
+      return { success: true, imageUrl: finalUrl, storageId: storedId };
     } catch (error) {
       console.error("[IMAGE-MERGE] Image merge error:", error instanceof Error ? error.message : String(error));
       if (predictionId) await cancelPrediction(replicateToken, predictionId);

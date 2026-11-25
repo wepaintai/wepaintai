@@ -35,6 +35,7 @@ import type * as presence from "../presence.js";
 import type * as previewSeed from "../previewSeed.js";
 import type * as replicate from "../replicate.js";
 import type * as sessionAuth from "../sessionAuth.js";
+import type * as storageLifecycle from "../storageLifecycle.js";
 import type * as strokes from "../strokes.js";
 import type * as tokenPolicy from "../tokenPolicy.js";
 import type * as tokens from "../tokens.js";
@@ -78,6 +79,7 @@ declare const fullApi: ApiFromModules<{
   previewSeed: typeof previewSeed;
   replicate: typeof replicate;
   sessionAuth: typeof sessionAuth;
+  storageLifecycle: typeof storageLifecycle;
   strokes: typeof strokes;
   tokenPolicy: typeof tokenPolicy;
   tokens: typeof tokens;
