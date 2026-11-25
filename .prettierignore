@@ -4,6 +4,8 @@ node_modules
 .nitro
 .tanstack
 .vite
+.claude
+.agents
 dist
 convex/_generated
 src/routeTree.gen.ts

@@ -86,9 +86,9 @@ Note: No test runner is configured yet.
 - `VITE_CONVEX_URL`: Backend URL (auto-set by dev commands)
 - `VITE_CONVEX_SITE_URL`: Convex HTTP actions URL (`.convex.site` for cloud, `https://site.wepaint.ai` for self-hosted prod) — used by the Better Auth server proxy
 - `VITE_INTERNAL_HIDE_ADMIN_PANEL`: Hide debug panel in production
-- `VITE_PASSWORD_PROTECTION_ENABLED`: Enable/disable password protection (set to 'true' for production, 'false' for local dev)
 - `VITE_AUTH_DISABLED`: Disable all auth for local dev (set to 'true' to bypass auth, 'false' or unset for normal auth flow)
 - Frontend env vars must be prefixed with `VITE_`
+- `AUTH_TRUSTED_HOSTS` (optional, frontend server runtime env): extra comma-separated hosts/origins whose `X-Forwarded-Host` the `/api/auth` proxy may forward. Built in: `app.wepaint.ai`, `wepaint.ai`, `www.wepaint.ai`, `preview-pr-<N>.wepaint.ai`, `preview-auth-<N>.wepaint.ai`, plus hosts of `SITE_URL`/`APP_URL`/`VITE_APP_URL` if set and localhost in dev; any other forwarded host is replaced by the request's own host
 
 #### Convex Backend Environment Variables
 

@@ -13,6 +13,8 @@ export default tseslint.config(
       '.nitro',
       '.tanstack',
       '.vite',
+      '.claude',
+      '.agents',
       'dist',
       'convex/_generated',
       'src/routeTree.gen.ts',

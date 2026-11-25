@@ -1,5 +1,8 @@
 # Self-hosted Convex backend + dashboard for wepaintai.
-# Based on the official compose file from get-convex/convex-backend.
+# Based on the official compose file from github.com/get-convex/convex-backend.
+# Images are published under ghcr.io/convex/* (the old ghcr.io/get-convex/*
+# paths now return 403) and are pinned by digest; override with
+# CONVEX_BACKEND_IMAGE / CONVEX_DASHBOARD_IMAGE in selfhost/.env to upgrade.
 #
 # Usage (from the selfhost/ directory):
 #   cp .env.example .env   # fill in values
@@ -7,14 +10,12 @@
 #   docker compose exec backend ./generate_admin_key.sh
 services:
   backend:
-    # Pin to a specific tag before relying on this in production:
-    # https://github.com/get-convex/convex-backend/pkgs/container/convex-backend
-    image: ${CONVEX_BACKEND_IMAGE:-ghcr.io/get-convex/convex-backend:latest}
+    image: ${CONVEX_BACKEND_IMAGE:-ghcr.io/convex/convex-backend@sha256:d4e012c68640830310139632481f8d1c1915bdf66de5c3a594a99799eab51679}
     stop_grace_period: 10s
     stop_signal: SIGINT
     ports:
-      - "3210:3210" # deployment API + WebSocket sync (VITE_CONVEX_URL points here)
-      - "3211:3211" # HTTP actions (Polar webhooks point here)
+      - "${CONVEX_BIND_HOST:-127.0.0.1}:3210:3210" # deployment API + WebSocket sync (VITE_CONVEX_URL points here)
+      - "${CONVEX_BIND_HOST:-127.0.0.1}:3211:3211" # HTTP actions (Polar webhooks point here)
     volumes:
       - data:/convex/data
     environment:
@@ -35,12 +36,14 @@ services:
     restart: unless-stopped
 
   dashboard:
-    image: ${CONVEX_DASHBOARD_IMAGE:-ghcr.io/get-convex/convex-dashboard:latest}
+    image: ${CONVEX_DASHBOARD_IMAGE:-ghcr.io/convex/convex-dashboard@sha256:2cb0f7e51597ea41d08147649f9f65cb2676aa96ce1f2fce1531116a408e1c98}
     stop_grace_period: 10s
     stop_signal: SIGINT
     ports:
-      # LAN-only by design: do NOT route this through the tunnel.
-      - "6791:6791"
+      # Loopback-only by default; never route it through the tunnel. Reach it
+      # remotely with an SSH tunnel (see selfhost/README.md). Override
+      # CONVEX_BIND_HOST only if LAN access is explicitly needed.
+      - "${CONVEX_BIND_HOST:-127.0.0.1}:6791:6791"
     environment:
       - NEXT_PUBLIC_DEPLOYMENT_URL=${NEXT_PUBLIC_DEPLOYMENT_URL:-http://127.0.0.1:3210}
     depends_on:

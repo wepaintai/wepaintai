@@ -125,11 +125,12 @@ export const CLIENT_ID_STORAGE = 'wepaint_client_id_v1'
 let inMemoryClientId: string | null = null
 
 export function getClientId(): string {
-  if (inMemoryClientId) return inMemoryClientId
+  // Never cache a module-level singleton during SSR: a shared Node process
+  // would leak one client ID across all SSR users and mismatch hydration.
   if (typeof window === 'undefined') {
-    inMemoryClientId = generateGuestKey()
-    return inMemoryClientId
+    return generateGuestKey()
   }
+  if (inMemoryClientId) return inMemoryClientId
   try {
     let id = window.localStorage.getItem(CLIENT_ID_STORAGE)
     if (!id) {

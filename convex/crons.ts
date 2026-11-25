@@ -35,4 +35,12 @@ crons.interval(
   {}
 );
 
+// Settle Polar purchases stuck in pending (e.g. a lost webhook delivery)
+crons.interval(
+  "reconcile pending polar purchases",
+  { minutes: 15 },
+  internal.polarReconcile.reconcilePendingPurchases,
+  {}
+);
+
 export default crons;

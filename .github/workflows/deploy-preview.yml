@@ -1,7 +1,15 @@
 name: Deploy PR preview
 
+# Security model (see selfhost/preview/README.md "Security invariants"):
+# - `pull_request_target` and `workflow_dispatch` always run THIS file from the
+#   default branch, so a PR cannot edit the guards, the environment gate, or
+#   which scripts run. (With `pull_request`, GitHub would run the PR's copy.)
+# - The deploy scripts run from a trusted `main` checkout in `trusted/`; the PR
+#   head is checked out as data in `pr/` and passed to them by path + SHA.
+# - Neither checkout persists the token, and no secrets are exposed to the
+#   deploy step. Building the PR still executes PR code on the runner.
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, reopened, synchronize]
   workflow_dispatch:
     inputs:
@@ -20,30 +28,74 @@ concurrency:
 
 jobs:
   deploy:
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]'))
     runs-on: [self-hosted, mini]
+    # Configure required reviewers on this environment (Settings > Environments)
+    # to gate every preview deploy behind a maintainer approval.
+    environment: preview
     env:
       PR: ${{ github.event.pull_request.number || inputs.pr }}
     steps:
       - name: Verify same-repository open PR
+        id: verify
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          HEAD_REPO=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq .head.repo.full_name)
-          STATE=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq .state)
+          export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
+          case "$PR" in
+            ''|0|*[!0-9]*)
+              echo "Invalid PR number: $PR" >&2
+              exit 1
+              ;;
+          esac
+          IFS=$'\t' read -r HEAD_REPO STATE AUTHOR HEAD_SHA < <(
+            gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" \
+              --jq '[.head.repo.full_name, .state, .user.login, .head.sha] | @tsv'
+          )
           test "$HEAD_REPO" = "$GITHUB_REPOSITORY"
           test "$STATE" = "open"
+          test "$AUTHOR" != "dependabot[bot]"
+          case "$HEAD_SHA" in
+            *[!0-9a-f]*|'') echo "Invalid head SHA: $HEAD_SHA" >&2; exit 1 ;;
+          esac
+          test "${#HEAD_SHA}" -eq 40
+          echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v4
+      # The self-hosted workspace persists between runs; start from empty so a
+      # previous run's files (including the pre-split root checkout) can never
+      # be picked up by module resolution or the scripts.
+      - name: Reset workspace
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+
+      # Trusted scripts: always the default branch, never the PR.
+      - name: Check out trusted deploy scripts (main)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: refs/pull/${{ github.event.pull_request.number || inputs.pr }}/head
+          ref: ${{ github.event.repository.default_branch }}
+          path: trusted
+          persist-credentials: false
+
+      # PR source as data, pinned to the SHA verified above.
+      - name: Check out PR source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ steps.verify.outputs.head_sha }}
+          path: pr
+          persist-credentials: false
 
       - name: Build and deploy full-stack preview
         id: deploy
+        env:
+          HEAD_SHA: ${{ steps.verify.outputs.head_sha }}
         run: |
           LOG=$(mktemp)
+          trap 'rm -f "$LOG"' EXIT
           set +e
-          ./selfhost/preview/deploy-preview.sh "$PR" 2>&1 | tee "$LOG"
+          "$GITHUB_WORKSPACE/trusted/selfhost/preview/deploy-preview.sh" \
+            "$PR" "$GITHUB_WORKSPACE/pr" "$HEAD_SHA" 2>&1 | tee "$LOG"
           STATUS=${PIPESTATUS[0]}
           set -e
 

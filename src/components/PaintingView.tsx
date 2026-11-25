@@ -171,6 +171,14 @@ function AIGenerationModalWrapper({
   )
 }
 
+const DEFAULT_BRUSH_SETTINGS: BrushSettings = {
+  smoothing: 0.5,
+  thinning: 0.5,
+  streamline: 0.5,
+  startTaper: 0,
+  endTaper: 0,
+}
+
 export function PaintingView() {
   const { isSignedIn, isLoaded } = useAuthState()
   const authDisabled = import.meta.env.VITE_AUTH_DISABLED === 'true'
@@ -181,32 +189,31 @@ export function PaintingView() {
   const [opacity, setOpacity] = useState(1.0)
   const [colorMode, setColorMode] = useState<'solid' | 'rainbow'>('solid')
   
-  // Brush settings for perfect-freehand - load from localStorage if available
-  const [brushSettings, setBrushSettings] = useState<BrushSettings>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('brushSettings')
-      if (saved) {
-        try {
-          return JSON.parse(saved)
-        } catch (e) {
-          console.error('Failed to parse saved brush settings:', e)
-        }
-      }
-    }
-    return {
-      smoothing: 0.5,
-      thinning: 0.5,
-      streamline: 0.5,
-      startTaper: 0,
-      endTaper: 0,
-    }
-  })
-  
-
-  // Save brush settings to localStorage when they change
+  // Brush settings for perfect-freehand. Start from the defaults on both the
+  // server and the first client render (so hydration matches), then restore
+  // any saved settings from localStorage after mount.
+  const [brushSettings, setBrushSettings] = useState<BrushSettings>(DEFAULT_BRUSH_SETTINGS)
+  const brushSettingsLoadedRef = useRef(false)
   useEffect(() => {
-    if (typeof window !== 'undefined') {
+    try {
+      const saved = localStorage.getItem('brushSettings')
+      if (saved) setBrushSettings({ ...DEFAULT_BRUSH_SETTINGS, ...JSON.parse(saved) })
+    } catch (e) {
+      console.error('Failed to parse saved brush settings:', e)
+    }
+  }, [])
+
+  // Save brush settings to localStorage when they change. Skip the mount run
+  // so the defaults never overwrite saved settings before they are restored.
+  useEffect(() => {
+    if (!brushSettingsLoadedRef.current) {
+      brushSettingsLoadedRef.current = true
+      return
+    }
+    try {
       localStorage.setItem('brushSettings', JSON.stringify(brushSettings))
+    } catch {
+      // Quota exceeded / private mode: settings just won't persist
     }
   }, [brushSettings])
 
@@ -322,7 +329,9 @@ export function PaintingView() {
   }, [strokes, sessionId, currentUser])
   
   // Get AI generated images separately
-  const aiImages = useQuery(api.images.getAIGeneratedImages, validSessionId ? { sessionId: validSessionId, guestKey: (typeof window !== 'undefined' ? (JSON.parse(localStorage.getItem('wepaint_guest_keys_v1') || '{}') || {})[validSessionId as any] : undefined) } : 'skip')
+  // validSessionId is only set after mount, so this never reads storage
+  // during SSR or the hydration render.
+  const aiImages = useQuery(api.images.getAIGeneratedImages, validSessionId ? { sessionId: validSessionId, guestKey: imageGuestKey } : 'skip')
   const updateAIImageTransformMutation = useMutation(api.images.updateAIImageTransform)
   const deleteAIImageMutation = useMutation(api.images.deleteAIImage)
   const updateAIImageLayerOrderMutation = useMutation(api.images.updateAIImageLayerOrder)
@@ -443,6 +452,13 @@ export function PaintingView() {
       initSession()
     }
   }, [createNewSession, sessionId, effectiveIsSignedIn, isSignedIn, isLoaded, authDisabled])
+
+  // Whether the page was opened with ?session=. Unknown (null) on the server
+  // and during hydration so both render the same neutral placeholder.
+  const [hasSessionParam, setHasSessionParam] = useState<boolean | null>(null)
+  useEffect(() => {
+    setHasSessionParam(new URLSearchParams(window.location.search).has('session'))
+  }, [])
 
   // Surface an error instead of spinning forever if session load/creation hangs
   // (backend unreachable, session creation failed, etc.)
@@ -1181,7 +1197,7 @@ export function PaintingView() {
           ) : (
             <div className="text-center">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-              <p className="text-gray-600">{sessionId || (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('session')) ? 'Loading session...' : 'Creating painting session...'}</p>
+              <p className="text-gray-600">{sessionId || hasSessionParam ? 'Loading session...' : hasSessionParam === false ? 'Creating painting session...' : 'Loading...'}</p>
             </div>
           ))}
         </div>

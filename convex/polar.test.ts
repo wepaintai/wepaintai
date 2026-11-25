@@ -63,7 +63,8 @@ function checkoutUpdatedEvent(
     amount: number
     currency: string
     externalCustomerId: string | null
-  }> = {}
+  }> = {},
+  type: 'checkout.updated' | 'checkout.expired' = 'checkout.updated'
 ) {
   const now = new Date().toISOString()
   const checkout = {
@@ -77,7 +78,7 @@ function checkoutUpdatedEvent(
   }
 
   return {
-    type: 'checkout.updated',
+    type,
     timestamp: now,
     data: {
       id: checkout.checkoutId,
@@ -503,6 +504,12 @@ describe('server-authoritative Polar token packages', () => {
         completedCheckout(userId, { status: 'open' })
       )
     ).resolves.toEqual({ outcome: 'rejected', reason: 'status' })
+    await expect(
+      t.mutation(
+        internal.polarWebhook.validateAndCompletePurchase,
+        completedCheckout(userId, { status: 'confirmed' })
+      )
+    ).resolves.toEqual({ outcome: 'rejected', reason: 'status' })
 
     const state = await t.run(async (ctx) => ({
       user: await ctx.db.get(userId),
@@ -676,5 +683,637 @@ describe('Polar webhook security and delivery handling', () => {
     expect(afterRetry.user?.tokens).toBe(53)
     expect(afterRetry.purchase?.status).toBe('completed')
     expect(afterRetry.transactions).toHaveLength(1)
+  })
+
+  test('does not credit unsettled confirmed checkouts and marks failed checkouts failed', async () => {
+    const t = createTestBackend()
+    const userId = await seedUser(t, identity.subject, 'polar-test@example.com')
+    await t.mutation(internal.polarWebhook.createPendingPurchase, {
+      userId,
+      checkoutId: 'checkout-50',
+      packageKey: '50_tokens',
+    })
+
+    const confirmed = await deliverWebhook(t, checkoutUpdatedEvent(userId, { status: 'confirmed' }))
+    expect(confirmed.status).toBe(200)
+
+    const afterConfirmed = await t.run(async (ctx) => ({
+      user: await ctx.db.get(userId),
+      purchase: await ctx.db
+        .query('polarPurchases')
+        .withIndex('by_checkout', (q) => q.eq('checkoutId', 'checkout-50'))
+        .unique(),
+      transactions: await ctx.db.query('tokenTransactions').collect(),
+    }))
+    expect(afterConfirmed.user?.tokens).toBe(3)
+    expect(afterConfirmed.purchase?.status).toBe('pending')
+    expect(afterConfirmed.transactions).toHaveLength(0)
+
+    const failed = await deliverWebhook(t, checkoutUpdatedEvent(userId, { status: 'failed' }))
+    expect(failed.status).toBe(200)
+
+    const afterFailed = await t.run(async (ctx) => ({
+      user: await ctx.db.get(userId),
+      purchase: await ctx.db
+        .query('polarPurchases')
+        .withIndex('by_checkout', (q) => q.eq('checkoutId', 'checkout-50'))
+        .unique(),
+      transactions: await ctx.db.query('tokenTransactions').collect(),
+    }))
+    expect(afterFailed.user?.tokens).toBe(3)
+    expect(afterFailed.purchase?.status).toBe('failed')
+    expect(afterFailed.transactions).toHaveLength(0)
+
+    expect(afterFailed.purchase?.failureReason).toBe('checkout_failed')
+  })
+})
+
+function orderPaidEvent(
+  userId: Id<'users'>,
+  overrides: Partial<{
+    checkoutId: string | null
+    paid: boolean
+    billingReason: string
+  }> = {}
+) {
+  const now = new Date().toISOString()
+  const order = {
+    checkoutId: 'checkout-50' as string | null,
+    paid: true,
+    billingReason: 'purchase',
+    ...overrides,
+  }
+
+  return {
+    type: 'order.paid',
+    timestamp: now,
+    data: {
+      id: 'order-50',
+      created_at: now,
+      modified_at: null,
+      status: order.paid ? 'paid' : 'pending',
+      paid: order.paid,
+      subtotal_amount: 499,
+      discount_amount: 0,
+      net_amount: 499,
+      tax_amount: 0,
+      total_amount: 499,
+      applied_balance_amount: 0,
+      due_amount: 0,
+      refunded_amount: 0,
+      refunded_tax_amount: 0,
+      currency: 'usd',
+      billing_reason: order.billingReason,
+      billing_name: null,
+      billing_address: null,
+      invoice_number: null,
+      is_invoice_generated: false,
+      receipt_number: null,
+      customer_id: 'polar-customer',
+      product_id: 'polar-product-50',
+      discount_id: null,
+      subscription_id: null,
+      checkout_id: order.checkoutId,
+      metadata: {},
+      platform_fee_amount: 0,
+      platform_fee_currency: null,
+      customer: {
+        id: 'polar-customer',
+        created_at: now,
+        modified_at: null,
+        metadata: {},
+        external_id: String(userId),
+        email: 'polar-test@example.com',
+        email_verified: true,
+        type: 'individual',
+        name: null,
+        billing_address: null,
+        tax_id: null,
+        organization_id: 'polar-organization',
+        deleted_at: null,
+        avatar_url: 'https://example.com/avatar.png',
+      },
+      product: null,
+      discount: null,
+      subscription: null,
+      items: [],
+      description: '50 Token Pack',
+      refundable_amount: 499,
+      refundable_tax_amount: 0,
+    },
+  }
+}
+
+// Shape of `GET /v1/checkouts/{id}` (snake_case REST, not the SDK model).
+function polarCheckoutResponse(
+  userId: Id<'users'>,
+  overrides: Partial<{
+    id: string
+    status: string
+    product_id: string | null
+    amount: number
+    currency: string
+    external_customer_id: string | null
+  }> = {}
+) {
+  return {
+    id: 'checkout-50',
+    status: 'succeeded',
+    product_id: 'polar-product-50',
+    amount: 499,
+    currency: 'usd',
+    external_customer_id: String(userId),
+    ...overrides,
+  }
+}
+
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  })
+}
+
+function checkoutIdFromUrl(input: string | URL | Request) {
+  const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+  const match = /\/v1\/checkouts\/([^/?]+)$/.exec(url)
+  if (!match) {
+    throw new Error(`Unexpected Polar request: ${url}`)
+  }
+  return decodeURIComponent(match[1])
+}
+
+async function readPurchaseState(
+  t: ReturnType<typeof createTestBackend>,
+  userId: Id<'users'>,
+  checkoutId = 'checkout-50'
+) {
+  return await t.run(async (ctx) => ({
+    user: await ctx.db.get(userId),
+    purchase: await ctx.db
+      .query('polarPurchases')
+      .withIndex('by_checkout', (q) => q.eq('checkoutId', checkoutId))
+      .unique(),
+    transactions: await ctx.db
+      .query('tokenTransactions')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect(),
+  }))
+}
+
+async function seedPendingPurchase(
+  t: ReturnType<typeof createTestBackend>,
+  userId: Id<'users'>,
+  checkoutId: string,
+  ageMs: number
+) {
+  await t.mutation(internal.polarWebhook.createPendingPurchase, {
+    userId,
+    checkoutId,
+    packageKey: '50_tokens',
+  })
+  await t.run(async (ctx) => {
+    const purchase = await ctx.db
+      .query('polarPurchases')
+      .withIndex('by_checkout', (q) => q.eq('checkoutId', checkoutId))
+      .unique()
+    if (!purchase) throw new Error('missing purchase')
+    await ctx.db.patch(purchase._id, { createdAt: Date.now() - ageMs })
+  })
+}
+
+function alertLines(spy: ReturnType<typeof vi.spyOn>) {
+  return spy.mock.calls
+    .map((call: unknown[]) => String(call[0]))
+    .filter((line: string) => line.startsWith('[POLAR-ALERT]'))
+}
+
+const MINUTE = 60 * 1000
+
+describe('Polar out-of-order and terminal-state delivery', () => {
+  test('a late failed or expired event never reverts a completed purchase', async () => {
+    const t = createTestBackend()
+    const userId = await seedUser(t, identity.subject, 'polar-test@example.com')
+    await t.mutation(internal.polarWebhook.createPendingPurchase, {
+      userId,
+      checkoutId: 'checkout-50',
+      packageKey: '50_tokens',
+    })
+
+    expect((await deliverWebhook(t, checkoutUpdatedEvent(userId))).status).toBe(200)
+    const failed = await deliverWebhook(t, checkoutUpdatedEvent(userId, { status: 'failed' }), {
+      webhookId: 'polar-delivery-2',
+    })
+    const expired = await deliverWebhook(
+      t,
+      checkoutUpdatedEvent(userId, { status: 'expired' }, 'checkout.expired'),
+      { webhookId: 'polar-delivery-3' }
+    )
+
+    expect(failed.status).toBe(200)
+    expect(expired.status).toBe(200)
+    const state = await readPurchaseState(t, userId)
+    expect(state.purchase?.status).toBe('completed')
+    expect(state.purchase?.failureReason).toBeUndefined()
+    expect(state.user?.tokens).toBe(53)
+    expect(state.transactions).toHaveLength(1)
+  })
+
+  test('a validated succeeded event completes a failed purchase exactly once', async () => {
+    const t = createTestBackend()
+    const userId = await seedUser(t, identity.subject, 'polar-test@example.com')
+    await t.mutation(internal.polarWebhook.createPendingPurchase, {
+      userId,
+      checkoutId: 'checkout-50',
+      packageKey: '50_tokens',
+    })
+
+    await deliverWebhook(t, checkoutUpdatedEvent(userId, { status: 'failed' }))
+    expect((await readPurchaseState(t, userId)).purchase?.status).toBe('failed')
+
+    const succeeded = await deliverWebhook(t, checkoutUpdatedEvent(userId), {
+      webhookId: 'polar-delivery-2',
+    })
+    const duplicate = await deliverWebhook(t, checkoutUpdatedEvent(userId), {
+      webhookId: 'polar-delivery-3',
+    })
+
+    expect(succeeded.status).toBe(200)
+    expect(duplicate.status).toBe(200)
+    const state = await readPurchaseState(t, userId)
+    expect(state.purchase?.status).toBe('completed')
+    expect(state.purchase?.failureReason).toBeUndefined()
+    expect(state.purchase?.failedAt).toBeUndefined()
+    expect(state.user?.tokens).toBe(53)
+    expect(state.transactions).toHaveLength(1)
+  })
+
+  test('a succeeded event still validates before completing a failed purchase', async () => {
+    const t = createTestBackend()
+    const userId = await seedUser(t, identity.subject, 'polar-test@example.com')
+    await t.mutation(internal.polarWebhook.createPendingPurchase, {
+      userId,
+      checkoutId: 'checkout-50',
+      packageKey: '50_tokens',
+    })
+    await t.mutation(internal.polarWebhook.markPurchaseFailed, {
+      checkoutId: 'checkout-50',
+      reason: 'checkout_failed',
+    })
+
+    await expect(
+      t.mutation(
+        internal.polarWebhook.validateAndCompletePurchase,
+        completedCheckout(userId, { amount: 1 })
+      )
+    ).resolves.toEqual({ outcome: 'rejected', reason: 'amount' })
+    const state = await readPurchaseState(t, userId)
+    expect(state.purchase?.status).toBe('failed')
+    expect(state.user?.tokens).toBe(3)
+  })
+
+  test('handles the checkout.expired event for pending purchases', async () => {
+    const t = createTestBackend()
+    const userId = await seedUser(t, identity.subject, 'polar-test@example.com')
+    await t.mutation(internal.polarWebhook.createPendingPurchase, {
+      userId,
+      checkoutId: 'checkout-50',
+      packageKey: '50_tokens',
+    })
+
+    const response = await deliverWebhook(
+      t,
+      checkoutUpdatedEvent(userId, { status: 'expired' }, 'checkout.expired')
+    )
+
+    expect(response.status).toBe(200)
+    const state = await readPurchaseState(t, userId)
+    expect(state.purchase?.status).toBe('failed')
+    expect(state.purchase?.failureReason).toBe('checkout_expired')
+    expect(state.user?.tokens).toBe(3)
+    expect(state.transactions).toHaveLength(0)
+  })
+
+  test('answers 200 with an alert, not 4xx, for signed events that fail business validation', async () => {
+    const t = createTestBackend()
+    const userId = await seedUser(t, identity.subject, 'polar-test@example.com')
+    await t.mutation(internal.polarWebhook.createPendingPurchase, {
+      userId,
+      checkoutId: 'checkout-50',
+      packageKey: '50_tokens',
+    })
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    const mismatched = await deliverWebhook(t, checkoutUpdatedEvent(userId, { amount: 1 }))
+    const unknown = await deliverWebhook(
+      t,
+      checkoutUpdatedEvent(userId, { checkoutId: 'unknown-checkout' }),
+      { webhookId: 'polar-delivery-2' }
+    )
+    const noProduct = await deliverWebhook(t, checkoutUpdatedEvent(userId, { productId: null }), {
+      webhookId: 'polar-delivery-3',
+    })
+
+    expect([mismatched.status, unknown.status, noProduct.status]).toEqual([200, 200, 200])
+    const alerts = alertLines(error)
+    expect(alerts).toHaveLength(3)
+    const logged = JSON.stringify(error.mock.calls)
+    expect(logged).toContain('"reason":"amount"')
+    expect(logged).toContain('"reason":"checkout"')
+    expect(logged).toContain('"reason":"product"')
+    expect(logged).not.toContain('checkout-client-secret')
+    const state = await readPurchaseState(t, userId)
+    expect(state.purchase?.status).toBe('pending')
+    expect(state.user?.tokens).toBe(3)
+    expect(state.transactions).toHaveLength(0)
+  })
+})
+
+describe('Polar order.paid fulfilment signal', () => {
+  test('re-fetches the checkout and credits once alongside checkout.updated', async () => {
+    const t = createTestBackend()
+    const userId = await seedUser(t, identity.subject, 'polar-test@example.com')
+    await t.mutation(internal.polarWebhook.createPendingPurchase, {
+      userId,
+      checkoutId: 'checkout-50',
+      packageKey: '50_tokens',
+    })
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      expect(checkoutIdFromUrl(input)).toBe('checkout-50')
+      expect(String(input)).toBe('https://sandbox-api.polar.sh/v1/checkouts/checkout-50')
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer polar-api-key')
+      return jsonResponse(polarCheckoutResponse(userId))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const paid = await deliverWebhook(t, orderPaidEvent(userId))
+    const updated = await deliverWebhook(t, checkoutUpdatedEvent(userId), {
+      webhookId: 'polar-delivery-2',
+    })
+    const paidAgain = await deliverWebhook(t, orderPaidEvent(userId), {
+      webhookId: 'polar-delivery-3',
+    })
+
+    expect([paid.status, updated.status, paidAgain.status]).toEqual([200, 200, 200])
+    // The second order.paid finds the purchase completed and skips the API.
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const state = await readPurchaseState(t, userId)
+    expect(state.purchase?.status).toBe('completed')
+    expect(state.user?.tokens).toBe(53)
+    expect(state.transactions).toHaveLength(1)
+  })
+
+  test('completes a failed purchase when Polar reports the checkout succeeded', async () => {
+    const t = createTestBackend()
+    const userId = await seedUser(t, identity.subject, 'polar-test@example.com')
+    await t.mutation(internal.polarWebhook.createPendingPurchase, {
+      userId,
+      checkoutId: 'checkout-50',
+      packageKey: '50_tokens',
+    })
+    await deliverWebhook(t, checkoutUpdatedEvent(userId, { status: 'failed' }))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse(polarCheckoutResponse(userId)))
+    )
+
+    const paid = await deliverWebhook(t, orderPaidEvent(userId), {
+      webhookId: 'polar-delivery-2',
+    })
+
+    expect(paid.status).toBe(200)
+    const state = await readPurchaseState(t, userId)
+    expect(state.purchase?.status).toBe('completed')
+    expect(state.user?.tokens).toBe(53)
+    expect(state.transactions).toHaveLength(1)
+  })
+
+  test('asks Polar to redeliver when the checkout lookup fails', async () => {
+    const t = createTestBackend()
+    const userId = await seedUser(t, identity.subject, 'polar-test@example.com')
+    await t.mutation(internal.polarWebhook.createPendingPurchase, {
+      userId,
+      checkoutId: 'checkout-50',
+      packageKey: '50_tokens',
+    })
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('upstream error', { status: 502 }))
+    )
+
+    const paid = await deliverWebhook(t, orderPaidEvent(userId))
+
+    expect(paid.status).toBe(503)
+    const state = await readPurchaseState(t, userId)
+    expect(state.purchase?.status).toBe('pending')
+    expect(state.user?.tokens).toBe(3)
+  })
+
+  test('does not ask for redelivery when Polar rejects the API key', async () => {
+    const t = createTestBackend()
+    const userId = await seedUser(t, identity.subject, 'polar-test@example.com')
+    await t.mutation(internal.polarWebhook.createPendingPurchase, {
+      userId,
+      checkoutId: 'checkout-50',
+      packageKey: '50_tokens',
+    })
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('forbidden', { status: 403 }))
+    )
+
+    const paid = await deliverWebhook(t, orderPaidEvent(userId))
+
+    expect(paid.status).toBe(200)
+    expect(alertLines(error)).toHaveLength(1)
+    expect((await readPurchaseState(t, userId)).purchase?.status).toBe('pending')
+  })
+
+  test('ignores orders that are not paid one-time checkout purchases', async () => {
+    const t = createTestBackend()
+    const userId = await seedUser(t, identity.subject, 'polar-test@example.com')
+    await t.mutation(internal.polarWebhook.createPendingPurchase, {
+      userId,
+      checkoutId: 'checkout-50',
+      packageKey: '50_tokens',
+    })
+    const fetchMock = vi.fn(async () => jsonResponse(polarCheckoutResponse(userId)))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const events = [
+      orderPaidEvent(userId, { billingReason: 'subscription_cycle' }),
+      orderPaidEvent(userId, { checkoutId: null }),
+      orderPaidEvent(userId, { paid: false }),
+    ]
+    for (const [index, event] of events.entries()) {
+      const response = await deliverWebhook(t, event, { webhookId: `polar-delivery-${index}` })
+      expect(response.status).toBe(200)
+    }
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect((await readPurchaseState(t, userId)).purchase?.status).toBe('pending')
+  })
+})
+
+describe('Polar pending purchase reconciliation', () => {
+  test('settles stale purchases from the authoritative checkout state', async () => {
+    const t = createTestBackend()
+    const userId = await seedUser(t, identity.subject, 'polar-test@example.com')
+    await seedPendingPurchase(t, userId, 'checkout-succeeded', 45 * MINUTE)
+    await seedPendingPurchase(t, userId, 'checkout-expired', 45 * MINUTE)
+    await seedPendingPurchase(t, userId, 'checkout-open', 45 * MINUTE)
+    await seedPendingPurchase(t, userId, 'checkout-fresh', 5 * MINUTE)
+    const statuses: Record<string, string> = {
+      'checkout-succeeded': 'succeeded',
+      'checkout-expired': 'expired',
+      'checkout-open': 'open',
+    }
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer polar-api-key')
+      const checkoutId = checkoutIdFromUrl(input)
+      const status = statuses[checkoutId]
+      if (!status) throw new Error(`unexpected lookup for ${checkoutId}`)
+      return jsonResponse(polarCheckoutResponse(userId, { id: checkoutId, status }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await t.action(internal.polarReconcile.reconcilePendingPurchases, {})
+
+    expect(result).toEqual({ skipped: false, checked: 3, settled: 2 })
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    const succeeded = await readPurchaseState(t, userId, 'checkout-succeeded')
+    expect(succeeded.purchase?.status).toBe('completed')
+    expect(succeeded.user?.tokens).toBe(53)
+    expect(succeeded.transactions).toHaveLength(1)
+    expect(succeeded.transactions[0].operationKey).toBe('polar-purchase:checkout-succeeded')
+    const expired = await readPurchaseState(t, userId, 'checkout-expired')
+    expect(expired.purchase?.status).toBe('failed')
+    expect(expired.purchase?.failureReason).toBe('checkout_expired')
+    expect((await readPurchaseState(t, userId, 'checkout-open')).purchase?.status).toBe('pending')
+    expect((await readPurchaseState(t, userId, 'checkout-fresh')).purchase?.status).toBe('pending')
+
+    // A second run only re-checks the still-open checkout; nothing is re-credited.
+    fetchMock.mockClear()
+    await t.action(internal.polarReconcile.reconcilePendingPurchases, {})
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(checkoutIdFromUrl(fetchMock.mock.calls[0][0])).toBe('checkout-open')
+    const after = await readPurchaseState(t, userId, 'checkout-succeeded')
+    expect(after.user?.tokens).toBe(53)
+    expect(after.transactions).toHaveLength(1)
+  })
+
+  test('does nothing when the Polar API key is not configured', async () => {
+    const t = createTestBackend()
+    const userId = await seedUser(t, identity.subject, 'polar-test@example.com')
+    await seedPendingPurchase(t, userId, 'checkout-50', 45 * MINUTE)
+    vi.stubEnv('POLAR_API_KEY', undefined)
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await t.action(internal.polarReconcile.reconcilePendingPurchases, {})
+
+    expect(result).toEqual({ skipped: true, checked: 0, settled: 0 })
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect((await readPurchaseState(t, userId)).purchase?.status).toBe('pending')
+  })
+
+  test('bounds each run to the batch size', async () => {
+    const t = createTestBackend()
+    const userId = await seedUser(t, identity.subject, 'polar-test@example.com')
+    for (let index = 0; index < 30; index += 1) {
+      await seedPendingPurchase(t, userId, `checkout-${index}`, (60 + index) * MINUTE)
+    }
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const fetchMock = vi.fn(async (input: string | URL | Request) =>
+      jsonResponse(polarCheckoutResponse(userId, { id: checkoutIdFromUrl(input), status: 'open' }))
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await t.action(internal.polarReconcile.reconcilePendingPurchases, {})
+
+    expect(result).toEqual({ skipped: false, checked: 25, settled: 0 })
+    expect(fetchMock).toHaveBeenCalledTimes(25)
+    // Oldest first: the five newest stale purchases wait for the next run.
+    const looked = fetchMock.mock.calls.map((call) => checkoutIdFromUrl(call[0]))
+    expect(looked).not.toContain('checkout-0')
+    expect(looked).toContain('checkout-29')
+  })
+
+  test('leaves purchases pending on lookup errors and gives up after the max age', async () => {
+    const t = createTestBackend()
+    const userId = await seedUser(t, identity.subject, 'polar-test@example.com')
+    await seedPendingPurchase(t, userId, 'checkout-recent', 45 * MINUTE)
+    await seedPendingPurchase(t, userId, 'checkout-ancient', 25 * 60 * MINUTE)
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('upstream error', { status: 500 }))
+    )
+
+    await t.action(internal.polarReconcile.reconcilePendingPurchases, {})
+
+    expect((await readPurchaseState(t, userId, 'checkout-recent')).purchase?.status).toBe('pending')
+    const ancient = await readPurchaseState(t, userId, 'checkout-ancient')
+    expect(ancient.purchase?.status).toBe('failed')
+    expect(ancient.purchase?.failureReason).toBe('reconcile_timeout')
+    expect(alertLines(error)).toHaveLength(1)
+    expect(ancient.user?.tokens).toBe(3)
+  })
+
+  test('stops the batch when Polar rejects the API key', async () => {
+    const t = createTestBackend()
+    const userId = await seedUser(t, identity.subject, 'polar-test@example.com')
+    await seedPendingPurchase(t, userId, 'checkout-a', 50 * MINUTE)
+    await seedPendingPurchase(t, userId, 'checkout-b', 40 * MINUTE)
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const fetchMock = vi.fn(async () => new Response('unauthorized', { status: 401 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await t.action(internal.polarReconcile.reconcilePendingPurchases, {})
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect((await readPurchaseState(t, userId, 'checkout-a')).purchase?.status).toBe('pending')
+    expect((await readPurchaseState(t, userId, 'checkout-b')).purchase?.status).toBe('pending')
+  })
+
+  test('removes a succeeded checkout that fails validation from the pending queue', async () => {
+    const t = createTestBackend()
+    const userId = await seedUser(t, identity.subject, 'polar-test@example.com')
+    await seedPendingPurchase(t, userId, 'checkout-50', 45 * MINUTE)
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse(polarCheckoutResponse(userId, { amount: 1 })))
+    )
+
+    await t.action(internal.polarReconcile.reconcilePendingPurchases, {})
+
+    const state = await readPurchaseState(t, userId)
+    expect(state.purchase?.status).toBe('failed')
+    expect(state.purchase?.failureReason).toBe('validation_rejected')
+    expect(state.user?.tokens).toBe(3)
+    expect(state.transactions).toHaveLength(0)
+    expect(alertLines(error)).toHaveLength(1)
+  })
+
+  test('rejects a lookup response for a different checkout', async () => {
+    const t = createTestBackend()
+    const userId = await seedUser(t, identity.subject, 'polar-test@example.com')
+    await seedPendingPurchase(t, userId, 'checkout-50', 45 * MINUTE)
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse(polarCheckoutResponse(userId, { id: 'checkout-other' })))
+    )
+
+    await t.action(internal.polarReconcile.reconcilePendingPurchases, {})
+
+    const state = await readPurchaseState(t, userId)
+    expect(state.purchase?.status).toBe('pending')
+    expect(state.user?.tokens).toBe(3)
   })
 })
