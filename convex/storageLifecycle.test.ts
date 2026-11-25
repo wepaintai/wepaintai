@@ -2,7 +2,11 @@ import { convexTest } from 'convex-test'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { api, internal } from './_generated/api'
 import type { Id } from './_generated/dataModel'
-import { DELETED_SESSION_GRACE_MS, PURGE_DOCS_PER_TABLE } from './paintingSessions'
+import {
+  DELETED_SESSION_GRACE_MS,
+  PURGE_DOCS_PER_RUN,
+  PURGE_DOCS_PER_SESSION_TURN,
+} from './paintingSessions'
 import schema from './schema'
 import { STALE_OPERATION_TIMEOUT_MS } from './storageLifecycle'
 import { modules } from './test.setup'
@@ -399,134 +403,213 @@ describe('AUD-010 cascading session purge (purgeDeletedSessions)', () => {
     expect(after.survivingBlobsExist.every((exists) => exists)).toBe(true)
   })
 
-  test('drains oversized sessions across multiple bounded runs and retries idempotently when blobs were already deleted', async () => {
-    const t = createTestBackend()
-    const expiredDeletedAt = Date.now() - DELETED_SESSION_GRACE_MS - 60_000
-    const aiImageCount = PURGE_DOCS_PER_TABLE + 12
-    const strokeCount = PURGE_DOCS_PER_TABLE + 15
+  test('a huge session drains across self-rescheduled runs while other sessions still progress', async () => {
+    vi.useFakeTimers()
+    try {
+      const t = createTestBackend()
+      const expiredDeletedAt = Date.now() - DELETED_SESSION_GRACE_MS - 60_000
+      const aiImageCount = PURGE_DOCS_PER_SESSION_TURN + 12
+      const strokeCount = PURGE_DOCS_PER_RUN * 3 + 15
 
-    const { sessionId, allBlobs } = await t.run(async (ctx) => {
-      const sessionId = await ctx.db.insert('paintingSessions', {
-        name: 'Huge expired session',
-        isPublic: false,
-        canvasWidth: 800,
-        canvasHeight: 600,
-        strokeCounter: strokeCount,
-        deletedAt: expiredDeletedAt,
+      const seeded = await t.run(async (ctx) => {
+        const newSession = (name: string, deletedAt: number) =>
+          ctx.db.insert('paintingSessions', {
+            name,
+            isPublic: false,
+            canvasWidth: 800,
+            canvasHeight: 600,
+            strokeCounter: 0,
+            deletedAt,
+          })
+        // The huge session expired first, so it is queued (and served) first
+        const hugeId = await newSession('Huge', expiredDeletedAt - 1_000)
+        const smallIds = [
+          await newSession('Small 1', expiredDeletedAt),
+          await newSession('Small 2', expiredDeletedAt),
+        ]
+
+        const blobs: Id<'_storage'>[] = []
+        for (let i = 0; i < aiImageCount; i++) {
+          const storageId = await ctx.storage.store(new Blob([`img-${i}`]))
+          blobs.push(storageId)
+          await ctx.db.insert('aiGeneratedImages', {
+            sessionId: hugeId,
+            imageUrl: `https://example.com/ai-${i}.png`,
+            storageId,
+            width: 64,
+            height: 64,
+            x: 0,
+            y: 0,
+            scale: 1,
+            rotation: 0,
+            opacity: 1,
+            layerOrder: i,
+            createdAt: expiredDeletedAt,
+          })
+        }
+        // Pre-delete one blob: purge must tolerate blobs that are already gone
+        await ctx.storage.delete(blobs[0])
+
+        const stroke = (sessionId: Id<'paintingSessions'>, i: number) =>
+          ctx.db.insert('strokes', {
+            sessionId,
+            userColor: '#000',
+            points: [{ x: i, y: i }],
+            brushColor: '#000',
+            brushSize: 2,
+            opacity: 1,
+            strokeOrder: i + 1,
+          })
+        for (let i = 0; i < strokeCount; i++) await stroke(hugeId, i)
+        for (const sessionId of smallIds) {
+          for (let i = 0; i < 3; i++) await stroke(sessionId, i)
+        }
+        return { hugeId, smallIds, blobs }
       })
 
-      const blobs: Id<'_storage'>[] = []
-      for (let i = 0; i < aiImageCount; i++) {
-        const storageId = await ctx.storage.store(new Blob([`img-${i}`]))
-        blobs.push(storageId)
-        await ctx.db.insert('aiGeneratedImages', {
-          sessionId,
-          imageUrl: `https://example.com/ai-${i}.png`,
-          storageId,
-          width: 64,
-          height: 64,
-          x: 0,
-          y: 0,
-          scale: 1,
-          rotation: 0,
-          opacity: 1,
-          layerOrder: i,
-          createdAt: expiredDeletedAt,
+      // One run: bounded, the huge session is not done, but the small ones are
+      const first = await t.mutation(internal.paintingSessions.purgeDeletedSessions, {})
+      expect(first).toMatchObject({ queued: 3, purged: 2, rescheduled: true })
+      expect(first.deletedDocs).toBeLessThanOrEqual(PURGE_DOCS_PER_RUN)
+      const afterFirst = await t.run(async (ctx) => ({
+        huge: await ctx.db.get(seeded.hugeId),
+        small: await Promise.all(seeded.smallIds.map((id) => ctx.db.get(id))),
+      }))
+      expect(afterFirst.huge?.purgeStartedAt).toBeDefined()
+      expect(afterFirst.small).toEqual([null, null])
+
+      // Restoring is refused once the purge has started
+      await t.run(async (ctx) => {
+        await ctx.db.insert('users', { authId: 'huge-owner', email: 'h@example.com' })
+      })
+      const ownerId = await t.run(async (ctx) =>
+        (await ctx.db.query('users').withIndex('by_auth_id', (q) => q.eq('authId', 'huge-owner')).first())!._id,
+      )
+      await t.run((ctx) => ctx.db.patch(seeded.hugeId, { createdBy: ownerId }))
+      expect(
+        await t
+          .withIdentity({ subject: 'huge-owner' })
+          .mutation(api.paintingSessions.restoreSession, { sessionId: seeded.hugeId }),
+      ).toBe('expired')
+
+      // The scheduled follow-up runs drain everything without waiting for the cron
+      await t.finishAllScheduledFunctions(vi.runAllTimers)
+      const after = await t.run(async (ctx) => ({
+        huge: await ctx.db.get(seeded.hugeId),
+        aiImages: await ctx.db
+          .query('aiGeneratedImages')
+          .withIndex('by_session', (q) => q.eq('sessionId', seeded.hugeId))
+          .collect(),
+        strokes: await ctx.db
+          .query('strokes')
+          .withIndex('by_session', (q) => q.eq('sessionId', seeded.hugeId))
+          .collect(),
+        blobsLeft: (await Promise.all(seeded.blobs.map((id) => ctx.storage.get(id)))).filter(Boolean)
+          .length,
+      }))
+      expect(after.huge).toBeNull()
+      expect(after.aiImages).toHaveLength(0)
+      expect(after.strokes).toHaveLength(0)
+      expect(after.blobsLeft).toBe(0)
+
+      // Idempotent no-op afterwards
+      expect(await t.mutation(internal.paintingSessions.purgeDeletedSessions, {})).toEqual({
+        queued: 0,
+        purged: 0,
+        deletedDocs: 0,
+        rescheduled: false,
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('a huge session yields its turn so sessions queued behind it are served', async () => {
+    const t = createTestBackend()
+    const expiredDeletedAt = Date.now() - DELETED_SESSION_GRACE_MS - 60_000
+    const ids = await t.run(async (ctx) => {
+      const make = async (name: string, strokes: number) => {
+        const sessionId = await ctx.db.insert('paintingSessions', {
+          name,
+          isPublic: false,
+          canvasWidth: 800,
+          canvasHeight: 600,
+          strokeCounter: 0,
+          deletedAt: expiredDeletedAt,
         })
+        for (let i = 0; i < strokes; i++) {
+          await ctx.db.insert('strokes', {
+            sessionId,
+            userColor: '#000',
+            points: [{ x: i, y: i }],
+            brushColor: '#000',
+            brushSize: 2,
+            opacity: 1,
+            strokeOrder: i + 1,
+          })
+        }
+        return sessionId
       }
-
-      // Share a few blobs with aiGenerations to ensure cross-batch ref-counting finishes cleanly
-      for (let i = 0; i < 5; i++) {
-        await ctx.db.insert('aiGenerations', {
-          sessionId,
-          prompt: `p-${i}`,
-          status: 'completed',
-          provider: 'gemini',
-          generatedImageId: blobs[blobs.length - 1 - i],
-          resultImageUrl: `https://example.com/ai-${i}.png`,
-          createdAt: expiredDeletedAt,
-        })
+      // Two huge sessions ahead of a small one: the run budget only covers the
+      // first two turns, so the small one waits exactly one run
+      return {
+        hugeA: await make('A', PURGE_DOCS_PER_SESSION_TURN * 4),
+        hugeB: await make('B', PURGE_DOCS_PER_SESSION_TURN * 4),
+        small: await make('C', 2),
       }
-
-      // Pre-delete one blob to prove idempotent handling of already-deleted storage objects
-      await ctx.storage.delete(blobs[0])
-
-      for (let i = 0; i < strokeCount; i++) {
-        await ctx.db.insert('strokes', {
-          sessionId,
-          userColor: '#000',
-          points: [{ x: i, y: i }],
-          brushColor: '#000',
-          brushSize: 2,
-          opacity: 1,
-          strokeOrder: i + 1,
-        })
-      }
-
-      return { sessionId, allBlobs: blobs }
     })
+    const turn = (id: Id<'paintingSessions'>) => t.run(async (ctx) => (await ctx.db.get(id))?.purgeTurn)
 
-    // Run 1: strictly bounded; parent session MUST NOT be deleted yet because children remain
     await t.mutation(internal.paintingSessions.purgeDeletedSessions, {})
+    expect(await t.run((ctx) => ctx.db.get(ids.small))).not.toBeNull()
+    // Both huge sessions moved behind the small one
+    expect((await turn(ids.hugeA))!).toBeGreaterThan((await turn(ids.small))!)
+    expect((await turn(ids.hugeB))!).toBeGreaterThan((await turn(ids.small))!)
 
-    const afterRun1 = await t.run(async (ctx) => ({
-      session: await ctx.db.get(sessionId),
-      remainingAIImages: (
-        await ctx.db
-          .query('aiGeneratedImages')
-          .withIndex('by_session', (q) => q.eq('sessionId', sessionId))
-          .collect()
-      ).length,
-      remainingStrokes: (
-        await ctx.db
-          .query('strokes')
-          .withIndex('by_session', (q) => q.eq('sessionId', sessionId))
-          .collect()
-      ).length,
-    }))
-
-    expect(afterRun1.session).not.toBeNull()
-    expect(afterRun1.remainingAIImages).toBe(aiImageCount - PURGE_DOCS_PER_TABLE)
-    expect(afterRun1.remainingStrokes).toBe(strokeCount - PURGE_DOCS_PER_TABLE)
-
-    // Run 2: drains all remaining child rows and deletes parent session
     await t.mutation(internal.paintingSessions.purgeDeletedSessions, {})
+    expect(await t.run((ctx) => ctx.db.get(ids.small))).toBeNull()
+    expect(await t.run((ctx) => ctx.db.get(ids.hugeA))).not.toBeNull()
+  })
+})
 
-    const afterRun2 = await t.run(async (ctx) => ({
-      session: await ctx.db.get(sessionId),
-      remainingAIImages: (
-        await ctx.db
-          .query('aiGeneratedImages')
-          .withIndex('by_session', (q) => q.eq('sessionId', sessionId))
-          .collect()
-      ).length,
-      remainingGenerations: (
-        await ctx.db
-          .query('aiGenerations')
-          .withIndex('by_session', (q) => q.eq('sessionId', sessionId))
-          .collect()
-      ).length,
-      remainingStrokes: (
-        await ctx.db
-          .query('strokes')
-          .withIndex('by_session', (q) => q.eq('sessionId', sessionId))
-          .collect()
-      ).length,
-      blobsRemaining: (await Promise.all(allBlobs.map((id) => ctx.storage.get(id)))).filter(
-        Boolean,
-      ).length,
+describe('restoreSession grace window', () => {
+  test('restores within the window, refuses past it or once purge started', async () => {
+    const t = createTestBackend()
+    const now = Date.now()
+    const ids = await t.run(async (ctx) => {
+      const userId = await ctx.db.insert('users', { authId: 'restorer', email: 'r@example.com' })
+      const make = (deletedAt: number, purgeStartedAt?: number) =>
+        ctx.db.insert('paintingSessions', {
+          createdBy: userId,
+          isPublic: false,
+          canvasWidth: 800,
+          canvasHeight: 600,
+          strokeCounter: 0,
+          deletedAt,
+          purgeStartedAt,
+        })
+      return {
+        recent: await make(now - 60_000),
+        pastGrace: await make(now - DELETED_SESSION_GRACE_MS - 60_000),
+        purging: await make(now - 60_000, now),
+      }
+    })
+    const owner = t.withIdentity({ subject: 'restorer' })
+    expect(await owner.mutation(api.paintingSessions.restoreSession, { sessionId: ids.recent })).toBe(
+      'restored',
+    )
+    expect(
+      await owner.mutation(api.paintingSessions.restoreSession, { sessionId: ids.pastGrace }),
+    ).toBe('expired')
+    expect(await owner.mutation(api.paintingSessions.restoreSession, { sessionId: ids.purging })).toBe(
+      'expired',
+    )
+    const state = await t.run(async (ctx) => ({
+      recent: await ctx.db.get(ids.recent),
+      pastGrace: await ctx.db.get(ids.pastGrace),
     }))
-
-    expect(afterRun2.session).toBeNull()
-    expect(afterRun2.remainingAIImages).toBe(0)
-    expect(afterRun2.remainingGenerations).toBe(0)
-    expect(afterRun2.remainingStrokes).toBe(0)
-    expect(afterRun2.blobsRemaining).toBe(0)
-
-    // Run 3: idempotent no-op
-    await expect(
-      t.mutation(internal.paintingSessions.purgeDeletedSessions, {}),
-    ).resolves.toBeNull()
+    expect(state.recent?.deletedAt).toBeUndefined()
+    expect(state.pastGrace?.deletedAt).toBeDefined()
   })
 })
 

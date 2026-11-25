@@ -57,8 +57,16 @@ const schema = defineSchema({
     // Soft delete: set when the owner deletes the session; hard-deleted by a
     // cron after a grace window. Unset means the session is live.
     deletedAt: v.optional(v.number()),
+    // Set when the purge cron starts hard-deleting a session whose grace
+    // window passed; from then on it can no longer be restored.
+    purgeStartedAt: v.optional(v.number()),
+    // Round-robin position in the purge queue (lowest goes next), so one huge
+    // session can't starve the others.
+    purgeTurn: v.optional(v.number()),
   }).index("by_creator", ["createdBy"])
-    .index("by_deleted", ["deletedAt"]),
+    .index("by_deleted", ["deletedAt"])
+    .index("by_purge_started_deleted", ["purgeStartedAt", "deletedAt"])
+    .index("by_purge_turn", ["purgeTurn"]),
 
   strokes: defineTable({
     sessionId: v.id("paintingSessions"),
