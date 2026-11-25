@@ -12,6 +12,12 @@ export const STALE_OPERATIONS_BATCH_SIZE = 100;
 export const UNPLACED_OUTPUT_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 export const OUTPUT_SWEEP_BATCH_SIZE = 100;
 
+// Blobs older than this that nothing references are deleted by the orphan
+// sweep. Comfortably longer than any in-flight window between storing a blob
+// and recording its id (upload intents, AI outputs, canvas snapshots).
+export const ORPHAN_BLOB_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+export const ORPHAN_SWEEP_BATCH_SIZE = 100;
+
 interface StorageDeleter {
   storage: {
     delete: (storageId: Id<"_storage">) => Promise<void>;
@@ -87,6 +93,16 @@ export async function isStorageReferenced(
     .withIndex("by_result_storage", (q) => q.eq("resultStorageId", storageId))
     .first();
   if (removalOutput) return true;
+
+  // AI layers written before storage tracking only stored the blob's URL
+  const url = await ctx.storage.getUrl(storageId);
+  if (url) {
+    const legacyLayer = await ctx.db
+      .query("aiGeneratedImages")
+      .withIndex("by_image_url", (q) => q.eq("imageUrl", url))
+      .first();
+    if (legacyLayer) return true;
+  }
 
   return false;
 }
@@ -249,5 +265,45 @@ export const expireUnplacedOutputs = internalMutation({
       await ctx.scheduler.runAfter(0, internal.storageLifecycle.expireUnplacedOutputs, {});
     }
     return { expired };
+  },
+});
+
+/**
+ * Cron backstop for blobs no code path got to delete: a blob stored right
+ * before an action died (before its id was recorded), uploads that were never
+ * committed, and blobs from before storage tracking. Walks `_storage` oldest
+ * first in bounded batches (rescheduling itself with a creation-time cursor)
+ * and deletes every blob older than ORPHAN_BLOB_TTL_MS that
+ * isStorageReferenced says nothing references; the check and the delete run
+ * in the same transaction.
+ */
+export const sweepOrphanedStorage = internalMutation({
+  args: { after: v.optional(v.number()) },
+  returns: v.object({ scanned: v.number(), deleted: v.number(), done: v.boolean() }),
+  handler: async (ctx, args) => {
+    const cutoff = Date.now() - ORPHAN_BLOB_TTL_MS;
+    const after = args.after;
+    const blobs = await ctx.db.system
+      .query("_storage")
+      .withIndex("by_creation_time", (q) =>
+        after !== undefined
+          ? q.gt("_creationTime", after).lt("_creationTime", cutoff)
+          : q.lt("_creationTime", cutoff),
+      )
+      .take(ORPHAN_SWEEP_BATCH_SIZE);
+
+    let deleted = 0;
+    for (const blob of blobs) {
+      if (await isStorageReferenced(ctx, blob._id)) continue;
+      if (await safeDeleteStorage(ctx, blob._id)) deleted += 1;
+    }
+
+    const done = blobs.length < ORPHAN_SWEEP_BATCH_SIZE;
+    if (!done) {
+      await ctx.scheduler.runAfter(0, internal.storageLifecycle.sweepOrphanedStorage, {
+        after: blobs[blobs.length - 1]._creationTime,
+      });
+    }
+    return { scanned: blobs.length, deleted, done };
   },
 });

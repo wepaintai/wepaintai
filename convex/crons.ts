@@ -68,4 +68,12 @@ crons.interval(
   {}
 );
 
+// Backstop: delete blobs older than 24h that nothing references
+crons.interval(
+  "sweep orphaned storage",
+  { hours: 24 },
+  internal.storageLifecycle.sweepOrphanedStorage,
+  {}
+);
+
 export default crons;

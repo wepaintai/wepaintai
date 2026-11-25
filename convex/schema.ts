@@ -278,7 +278,9 @@ const schema = defineSchema({
     layerOrder: v.number(),
     createdAt: v.number(),
   }).index("by_session", ["sessionId", "layerOrder"])
-    .index("by_storage", ["storageId"]),
+    .index("by_storage", ["storageId"])
+    // Layers written before storage tracking reference their blob only by URL
+    .index("by_image_url", ["imageUrl"]),
 
   // Deleted strokes for undo/redo functionality
   deletedStrokes: defineTable({

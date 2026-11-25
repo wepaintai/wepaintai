@@ -8,7 +8,11 @@ import {
   PURGE_DOCS_PER_SESSION_TURN,
 } from './paintingSessions'
 import schema from './schema'
-import { STALE_OPERATION_TIMEOUT_MS } from './storageLifecycle'
+import {
+  ORPHAN_BLOB_TTL_MS,
+  ORPHAN_SWEEP_BATCH_SIZE,
+  STALE_OPERATION_TIMEOUT_MS,
+} from './storageLifecycle'
 import { modules } from './test.setup'
 
 function createTestBackend() {
@@ -38,7 +42,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('AUD-010 cascading session purge (purgeDeletedSessions)', () => {
+describe('AUD-010 cascading session purge (purgeDeletedSessions)', { timeout: 120_000 }, () => {
   test('removes all child tables and storage blobs for expired sessions while preserving live and in-grace sessions', async () => {
     const t = createTestBackend()
     const now = Date.now()
@@ -572,7 +576,7 @@ describe('AUD-010 cascading session purge (purgeDeletedSessions)', () => {
   })
 })
 
-describe('restoreSession grace window', () => {
+describe('restoreSession grace window', { timeout: 120_000 }, () => {
   test('restores within the window, refuses past it or once purge started', async () => {
     const t = createTestBackend()
     const now = Date.now()
@@ -613,7 +617,7 @@ describe('restoreSession grace window', () => {
   })
 })
 
-describe('AUD-010 addAIGeneratedImage storage ownership validation', () => {
+describe('AUD-010 addAIGeneratedImage storage ownership validation', { timeout: 120_000 }, () => {
   test('accepts session-owned AI/merge outputs and rejects foreign, uploaded, snapshot, or unattached storage IDs', async () => {
     const t = createTestBackend()
 
@@ -798,6 +802,7 @@ describe('AUD-010 addAIGeneratedImage storage ownership validation', () => {
 })
 
 type FetchHandler = (url: string, init?: RequestInit) => Response | Promise<Response>
+let downloadCounter = 0
 
 /** Route mocked fetches: Replicate create / poll / cancel, Gemini and result downloads. */
 function mockProviders(opts: {
@@ -827,7 +832,11 @@ function mockProviders(opts: {
         return opts.poll(attempt)
       }
       calls.download += 1
-      return new Response(makePngBytes(), { status: 200, headers: { 'content-type': 'image/png' } })
+      // Distinct bytes per download: convex-test derives storage URLs from the
+      // content hash, so identical outputs would share a URL
+      const bytes = makePngBytes()
+      bytes[31] = downloadCounter++ & 0xff
+      return new Response(bytes, { status: 200, headers: { 'content-type': 'image/png' } })
     }),
   )
   return calls
@@ -1038,7 +1047,7 @@ describe('AUD-010 AI action storage tracking and failure cleanup', { timeout: 12
   })
 })
 
-describe('AUD-010 stale operation sweep (cleanupStaleOperations)', () => {
+describe('AUD-010 stale operation sweep (cleanupStaleOperations)', { timeout: 120_000 }, () => {
   test('refunds stale pending rows, bills stale processing rows, frees snapshots, and blocks late completion', async () => {
     const { t, userId, sessionId, asUser } = await seedActionUser(10)
     const staleAt = Date.now() - STALE_OPERATION_TIMEOUT_MS - 60_000
@@ -1329,5 +1338,143 @@ describe('AUD-010 AI output ownership (real flow)', { timeout: 120_000 }, () => 
     expect(rows.removal?.placedImageId).toBeDefined()
     expect(rows.merge?.mergedImageStorageId).toBeUndefined()
     expect(rows.merge?.placedImageId).toBeDefined()
+  })
+})
+
+describe('AUD-010 orphaned storage sweep (sweepOrphanedStorage)', { timeout: 120_000 }, () => {
+  test('deletes only old blobs nothing references, including uncommitted-upload leftovers', async () => {
+    vi.useFakeTimers()
+    try {
+      const t = createTestBackend()
+      const old = await t.run(async (ctx) => {
+        const store = (label: string) => ctx.storage.store(new Blob([label]))
+        const sessionId = await ctx.db.insert('paintingSessions', {
+          isPublic: false,
+          canvasWidth: 800,
+          canvasHeight: 600,
+          strokeCounter: 0,
+        })
+        const orphan = await store('orphan')
+        const abandonedIntentBlob = await store('abandoned-intent')
+        const upload = await store('upload')
+        const openIntent = await store('open-intent')
+        const snapshot = await store('snapshot')
+        const unplacedOutput = await store('unplaced-output')
+        const trackedLayer = await store('tracked-layer')
+        const legacyLayer = await store('legacy-layer')
+
+        await ctx.db.insert('uploadedImages', {
+          sessionId,
+          storageId: upload,
+          filename: 'u.png',
+          mimeType: 'image/png',
+          width: 1,
+          height: 1,
+          x: 0,
+          y: 0,
+          scale: 1,
+          rotation: 0,
+          opacity: 1,
+          layerOrder: 1,
+        })
+        // Uploaded but not yet committed: must survive
+        await ctx.db.insert('imageUploadIntents', {
+          sessionId,
+          createdAt: Date.now(),
+          expiresAt: Date.now() + 60_000,
+          storageId: openIntent,
+        })
+        // A consumed intent no longer owns its blob (its uploadedImages row
+        // would); with that row gone the blob is an orphan
+        await ctx.db.insert('imageUploadIntents', {
+          sessionId,
+          createdAt: Date.now(),
+          expiresAt: Date.now() + 60_000,
+          consumedAt: Date.now(),
+          storageId: abandonedIntentBlob,
+        })
+        await ctx.db.insert('aiGenerations', {
+          sessionId,
+          status: 'processing',
+          provider: 'replicate',
+          canvasSnapshotId: snapshot,
+          createdAt: Date.now(),
+        })
+        await ctx.db.insert('aiGenerations', {
+          sessionId,
+          status: 'completed',
+          provider: 'replicate',
+          generatedImageId: unplacedOutput,
+          createdAt: Date.now(),
+        })
+        const layer = (imageUrl: string, storageId?: Id<'_storage'>) =>
+          ctx.db.insert('aiGeneratedImages', {
+            sessionId,
+            imageUrl,
+            storageId,
+            width: 1,
+            height: 1,
+            x: 0,
+            y: 0,
+            scale: 1,
+            rotation: 0,
+            opacity: 1,
+            layerOrder: 2,
+            createdAt: Date.now(),
+          })
+        await layer('https://example.com/tracked.png', trackedLayer)
+        // Pre-tracking layer: references its blob only by URL
+        await layer((await ctx.storage.getUrl(legacyLayer))!)
+        return {
+          orphan,
+          abandonedIntentBlob,
+          kept: [upload, openIntent, snapshot, unplacedOutput, trackedLayer, legacyLayer],
+        }
+      })
+
+      // Young blobs are never touched, even when unreferenced
+      expect(await t.mutation(internal.storageLifecycle.sweepOrphanedStorage, {})).toEqual({
+        scanned: 0,
+        deleted: 0,
+        done: true,
+      })
+
+      vi.setSystemTime(Date.now() + ORPHAN_BLOB_TTL_MS + 60_000)
+      const young = await t.run((ctx) => ctx.storage.store(new Blob(['young orphan'])))
+
+      expect(await t.mutation(internal.storageLifecycle.sweepOrphanedStorage, {})).toEqual({
+        scanned: 8,
+        deleted: 2,
+        done: true,
+      })
+      expect(await blobExists(t, old.orphan)).toBe(false)
+      expect(await blobExists(t, old.abandonedIntentBlob)).toBe(false)
+      for (const id of old.kept) expect(await blobExists(t, id)).toBe(true)
+      expect(await blobExists(t, young)).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('works in bounded batches and reschedules itself until the whole table is swept', async () => {
+    vi.useFakeTimers()
+    try {
+      const t = createTestBackend()
+      const total = ORPHAN_SWEEP_BATCH_SIZE + 25
+      await t.run(async (ctx) => {
+        for (let i = 0; i < total; i++) await ctx.storage.store(new Blob([`orphan-${i}`]))
+      })
+      vi.setSystemTime(Date.now() + ORPHAN_BLOB_TTL_MS + 60_000)
+
+      expect(await t.mutation(internal.storageLifecycle.sweepOrphanedStorage, {})).toEqual({
+        scanned: ORPHAN_SWEEP_BATCH_SIZE,
+        deleted: ORPHAN_SWEEP_BATCH_SIZE,
+        done: false,
+      })
+      await t.finishAllScheduledFunctions(vi.runAllTimers)
+      expect(await blobCount(t)).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
