@@ -237,7 +237,14 @@ const schema = defineSchema({
     // Fields from existing data
     canvasSnapshotId: v.optional(v.id("_storage")),
     canvasHash: v.optional(v.string()), // Added missing field
-    generatedImageId: v.optional(v.id("_storage")), // Added missing field
+    generatedImageId: v.optional(v.id("_storage")), // Unplaced output blob
+    // Set once the output was placed on the canvas: ownership of the blob
+    // moved to that aiGeneratedImages row and the output reference was cleared
+    // (kept as history so the result can't be claimed again elsewhere).
+    placedImageId: v.optional(v.id("aiGeneratedImages")),
+    placedAt: v.optional(v.number()),
+    // An output still unplaced at this time is deleted by the output sweep.
+    outputExpiresAt: v.optional(v.number()),
     completedAt: v.optional(v.number()),
     processingStartedAt: v.optional(v.number()),
     processingDuration: v.optional(v.number()), // Added missing field
@@ -249,7 +256,8 @@ const schema = defineSchema({
   }).index("by_session", ["sessionId"])
     .index("by_generated_image", ["generatedImageId"])
     .index("by_canvas_snapshot", ["canvasSnapshotId"])
-    .index("by_status_created", ["status", "createdAt"]),
+    .index("by_status_created", ["status", "createdAt"])
+    .index("by_output_expires", ["outputExpiresAt"]),
 
   // AI-generated image layers. `storageId` is the backing Convex blob this
   // layer owns (rows written before storage tracking only have `imageUrl`).
@@ -389,14 +397,22 @@ const schema = defineSchema({
     status: aiOperationStatus,
     error: v.optional(v.string()),
     resultImageUrl: v.optional(v.string()),
-    // Convex blob holding the merged output
+    // Convex blob holding the (unplaced) merged output
     mergedImageStorageId: v.optional(v.id("_storage")),
+    // Set once the output was placed on the canvas: ownership of the blob
+    // moved to that aiGeneratedImages row and the output reference was cleared
+    // (kept as history so the result can't be claimed again elsewhere).
+    placedImageId: v.optional(v.id("aiGeneratedImages")),
+    placedAt: v.optional(v.number()),
+    // An output still unplaced at this time is deleted by the output sweep.
+    outputExpiresAt: v.optional(v.number()),
     replicateId: v.optional(v.string()),
     createdAt: v.number(),
     completedAt: v.optional(v.number()),
   }).index("by_session", ["sessionId"])
     .index("by_merged_storage", ["mergedImageStorageId"])
-    .index("by_status_created", ["status", "createdAt"]),
+    .index("by_status_created", ["status", "createdAt"])
+    .index("by_output_expires", ["outputExpiresAt"]),
 
   // Background removal requests: the operation row that keys the token debit,
   // refunds, and stale-operation sweeps (same lifecycle as aiGenerations).
@@ -407,14 +423,22 @@ const schema = defineSchema({
     status: aiOperationStatus,
     error: v.optional(v.string()),
     resultImageUrl: v.optional(v.string()),
-    // Convex blob holding the background-removed output
+    // Convex blob holding the (unplaced) background-removed output
     resultStorageId: v.optional(v.id("_storage")),
+    // Set once the output was placed on the canvas: ownership of the blob
+    // moved to that aiGeneratedImages row and the output reference was cleared
+    // (kept as history so the result can't be claimed again elsewhere).
+    placedImageId: v.optional(v.id("aiGeneratedImages")),
+    placedAt: v.optional(v.number()),
+    // An output still unplaced at this time is deleted by the output sweep.
+    outputExpiresAt: v.optional(v.number()),
     replicateId: v.optional(v.string()),
     createdAt: v.number(),
     completedAt: v.optional(v.number()),
   }).index("by_session", ["sessionId"])
     .index("by_result_storage", ["resultStorageId"])
-    .index("by_status_created", ["status", "createdAt"]),
+    .index("by_status_created", ["status", "createdAt"])
+    .index("by_output_expires", ["outputExpiresAt"]),
 });
 
 export default schema;

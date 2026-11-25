@@ -613,124 +613,6 @@ describe('restoreSession grace window', () => {
   })
 })
 
-describe('AUD-010 deleteAIImage reference-counted storage cleanup', () => {
-  test('deletes unreferenced blob, preserves shared blobs, and handles already-deleted blobs cleanly', async () => {
-    const t = createTestBackend()
-    const ownerAuthId = 'delete-ai-owner'
-
-    const seeded = await t.run(async (ctx) => {
-      const userId = await ctx.db.insert('users', {
-        authId: ownerAuthId,
-        email: 'owner@example.com',
-      })
-      const sessionId = await ctx.db.insert('paintingSessions', {
-        createdBy: userId,
-        isPublic: false,
-        canvasWidth: 800,
-        canvasHeight: 600,
-        strokeCounter: 0,
-        paintLayerOrder: 0,
-      })
-
-      const exclusiveBlob = await ctx.storage.store(new Blob(['exclusive']))
-      const sharedWithGenBlob = await ctx.storage.store(new Blob(['shared-gen']))
-      const sharedWithMergeBlob = await ctx.storage.store(new Blob(['shared-merge']))
-      const sharedWithSiblingBlob = await ctx.storage.store(new Blob(['shared-sibling']))
-      const alreadyGoneBlob = await ctx.storage.store(new Blob(['already-gone']))
-      await ctx.storage.delete(alreadyGoneBlob)
-
-      const insertAI = (storageId: Id<'_storage'>, layerOrder: number) =>
-        ctx.db.insert('aiGeneratedImages', {
-          sessionId,
-          imageUrl: `https://example.com/${layerOrder}.png`,
-          storageId,
-          width: 100,
-          height: 100,
-          x: 50,
-          y: 50,
-          scale: 1,
-          rotation: 0,
-          opacity: 1,
-          layerOrder,
-          createdAt: Date.now(),
-        })
-
-      const exclusiveImgId = await insertAI(exclusiveBlob, 1)
-      const genBackedImgId = await insertAI(sharedWithGenBlob, 2)
-      const mergeBackedImgId = await insertAI(sharedWithMergeBlob, 3)
-      const siblingImg1Id = await insertAI(sharedWithSiblingBlob, 4)
-      const siblingImg2Id = await insertAI(sharedWithSiblingBlob, 5)
-      const goneBlobImgId = await insertAI(alreadyGoneBlob, 6)
-
-      await ctx.db.insert('aiGenerations', {
-        sessionId,
-        status: 'completed',
-        provider: 'gemini',
-        generatedImageId: sharedWithGenBlob,
-        resultImageUrl: 'https://example.com/2.png',
-        createdAt: Date.now(),
-      })
-      await ctx.db.insert('imageMerges', {
-        sessionId,
-        firstLayerId: 'l1',
-        secondLayerId: 'l2',
-        mergeMode: 'full',
-        status: 'completed',
-        mergedImageStorageId: sharedWithMergeBlob,
-        resultImageUrl: 'https://example.com/3.png',
-        createdAt: Date.now(),
-      })
-
-      return {
-        exclusiveBlob,
-        sharedWithGenBlob,
-        sharedWithMergeBlob,
-        sharedWithSiblingBlob,
-        exclusiveImgId,
-        genBackedImgId,
-        mergeBackedImgId,
-        siblingImg1Id,
-        siblingImg2Id,
-        goneBlobImgId,
-      }
-    })
-
-    const owner = t.withIdentity({ subject: ownerAuthId })
-
-    // 1. Exclusive blob IS deleted when layer is deleted
-    await owner.mutation(api.images.deleteAIImage, { imageId: seeded.exclusiveImgId })
-    expect(await t.run(async (ctx) => (await ctx.storage.get(seeded.exclusiveBlob)) !== null)).toBe(
-      false,
-    )
-
-    // 2. Blob still referenced by aiGenerations is preserved
-    await owner.mutation(api.images.deleteAIImage, { imageId: seeded.genBackedImgId })
-    expect(
-      await t.run(async (ctx) => (await ctx.storage.get(seeded.sharedWithGenBlob)) !== null),
-    ).toBe(true)
-
-    // 3. Blob still referenced by imageMerges is preserved
-    await owner.mutation(api.images.deleteAIImage, { imageId: seeded.mergeBackedImgId })
-    expect(
-      await t.run(async (ctx) => (await ctx.storage.get(seeded.sharedWithMergeBlob)) !== null),
-    ).toBe(true)
-
-    // 4. Blob shared by two aiGeneratedImages survives deleting the first, then is deleted on the second
-    await owner.mutation(api.images.deleteAIImage, { imageId: seeded.siblingImg1Id })
-    expect(
-      await t.run(async (ctx) => (await ctx.storage.get(seeded.sharedWithSiblingBlob)) !== null),
-    ).toBe(true)
-    await owner.mutation(api.images.deleteAIImage, { imageId: seeded.siblingImg2Id })
-    expect(
-      await t.run(async (ctx) => (await ctx.storage.get(seeded.sharedWithSiblingBlob)) !== null),
-    ).toBe(false)
-
-    // 5. Already-deleted blob does not cause deleteAIImage to fail
-    await owner.mutation(api.images.deleteAIImage, { imageId: seeded.goneBlobImgId })
-    expect(await t.run((ctx) => ctx.db.get(seeded.goneBlobImgId))).toBeNull()
-  })
-})
-
 describe('AUD-010 addAIGeneratedImage storage ownership validation', () => {
   test('accepts session-owned AI/merge outputs and rejects foreign, uploaded, snapshot, or unattached storage IDs', async () => {
     const t = createTestBackend()
@@ -953,6 +835,10 @@ function mockProviders(opts: {
 
 const succeeded = (output: string) =>
   new Response(JSON.stringify({ status: 'succeeded', output }), { status: 200 })
+
+async function blobExists(t: ReturnType<typeof createTestBackend>, id: Id<'_storage'>) {
+  return await t.run(async (ctx) => (await ctx.storage.get(id)) !== null)
+}
 
 async function blobCount(t: ReturnType<typeof createTestBackend>) {
   return await t.run(async (ctx) => (await ctx.db.system.query('_storage').collect()).length)
@@ -1267,5 +1153,181 @@ describe('AUD-010 stale operation sweep (cleanupStaleOperations)', () => {
     expect(after.pendingGen?.status).toBe('failed')
     expect(after.lateBlob).toBeNull()
     expect(after.lateSnapshot).toBeNull()
+  })
+})
+
+describe('AUD-010 AI output ownership (real flow)', { timeout: 120_000 }, () => {
+  beforeEach(() => {
+    vi.stubEnv('REPLICATE_API_TOKEN', 'test-replicate-token')
+  })
+
+  async function generate(
+    asUser: Awaited<ReturnType<typeof seedActionUser>>['asUser'],
+    sessionId: Id<'paintingSessions'>,
+    prompt: string,
+  ) {
+    mockProviders({ poll: () => succeeded(`https://replicate.delivery/${prompt}.png`) })
+    const res = await asUser.action(api.aiGeneration.generateImage, {
+      sessionId,
+      prompt,
+      imageData: `data:image/png;base64,${VALID_BASE64_PNG}`,
+    })
+    if (!res.success || !res.storageId) throw new Error('Expected success')
+    return res.storageId
+  }
+
+  test('placing an output moves ownership to the layer; deleting the layer frees the blob', async () => {
+    const { t, sessionId, asUser } = await seedActionUser()
+    const storageId = await generate(asUser, sessionId, 'placed')
+
+    const layerId = await asUser.mutation(api.images.addAIGeneratedImage, {
+      sessionId,
+      imageUrl: 'https://ignored.example.com/x.png',
+      storageId,
+      width: 64,
+      height: 64,
+    })
+    const row = await t.run((ctx) => ctx.db.query('aiGenerations').first())
+    expect(row?.generatedImageId).toBeUndefined()
+    expect(row?.outputExpiresAt).toBeUndefined()
+    expect(row?.placedImageId).toBe(layerId)
+    expect(row?.placedAt).toBeDefined()
+
+    // The history strip still offers it, backed by the layer's blob
+    const history = await asUser.query(api.aiGeneration.getSessionGenerations, { sessionId })
+    expect(history.map((g) => g.generatedImageId)).toEqual([storageId])
+
+    // Re-placing from history shares the blob with the first layer
+    const secondLayerId = await asUser.mutation(api.images.addAIGeneratedImage, {
+      sessionId,
+      storageId,
+      imageUrl: 'https://ignored.example.com/x.png',
+      width: 64,
+      height: 64,
+    })
+
+    await asUser.mutation(api.images.deleteAIImage, { imageId: layerId })
+    expect(await blobExists(t, storageId)).toBe(true)
+    await asUser.mutation(api.images.deleteAIImage, { imageId: secondLayerId })
+    expect(await blobExists(t, storageId)).toBe(false)
+
+    // Freed: gone from history and can't be placed again
+    expect(await asUser.query(api.aiGeneration.getSessionGenerations, { sessionId })).toEqual([])
+    await expect(
+      asUser.mutation(api.images.addAIGeneratedImage, {
+        sessionId,
+        storageId,
+        imageUrl: 'https://ignored.example.com/x.png',
+        width: 64,
+        height: 64,
+      }),
+    ).rejects.toThrow('Storage object not found')
+  })
+
+  test('a placed output can not be claimed by another session', async () => {
+    const { t, userId, sessionId, asUser } = await seedActionUser()
+    const otherSessionId = await t.run((ctx) =>
+      ctx.db.insert('paintingSessions', {
+        createdBy: userId,
+        isPublic: false,
+        canvasWidth: 800,
+        canvasHeight: 600,
+        strokeCounter: 0,
+      }),
+    )
+    const storageId = await generate(asUser, sessionId, 'mine')
+    await asUser.mutation(api.images.addAIGeneratedImage, {
+      sessionId,
+      storageId,
+      imageUrl: 'https://ignored.example.com/x.png',
+      width: 64,
+      height: 64,
+    })
+    await expect(
+      asUser.mutation(api.images.addAIGeneratedImage, {
+        sessionId: otherSessionId,
+        storageId,
+        imageUrl: 'https://ignored.example.com/x.png',
+        width: 64,
+        height: 64,
+      }),
+    ).rejects.toThrow('Storage object does not belong to this session')
+  })
+
+  test('outputs never placed are deleted once their TTL passes; placed ones are kept', async () => {
+    const { t, sessionId, asUser } = await seedActionUser()
+    const unplaced = await generate(asUser, sessionId, 'unplaced')
+    const placed = await generate(asUser, sessionId, 'kept')
+    await asUser.mutation(api.images.addAIGeneratedImage, {
+      sessionId,
+      storageId: placed,
+      imageUrl: 'https://ignored.example.com/x.png',
+      width: 64,
+      height: 64,
+    })
+
+    // Not yet due
+    expect(await t.mutation(internal.storageLifecycle.expireUnplacedOutputs, {})).toEqual({
+      expired: 0,
+    })
+    await t.run(async (ctx) => {
+      for (const row of await ctx.db.query('aiGenerations').collect()) {
+        if (row.outputExpiresAt) await ctx.db.patch(row._id, { outputExpiresAt: Date.now() - 1 })
+      }
+    })
+    expect(await t.mutation(internal.storageLifecycle.expireUnplacedOutputs, {})).toEqual({
+      expired: 1,
+    })
+    const state = await t.run(async (ctx) => ({
+      unplaced: (await ctx.storage.get(unplaced)) !== null,
+      placed: (await ctx.storage.get(placed)) !== null,
+      rows: await ctx.db.query('aiGenerations').collect(),
+    }))
+    expect(state.unplaced).toBe(false)
+    expect(state.placed).toBe(true)
+    expect(state.rows.every((r) => r.generatedImageId === undefined)).toBe(true)
+    await expect(
+      asUser.mutation(api.images.addAIGeneratedImage, {
+        sessionId,
+        storageId: unplaced,
+        imageUrl: 'https://ignored.example.com/x.png',
+        width: 64,
+        height: 64,
+      }),
+    ).rejects.toThrow('Storage object not found')
+  })
+
+  test('merge and background-removal outputs transfer on placement too', async () => {
+    const { t, sessionId, layer1Id, layer2Id, asUser } = await seedActionUser()
+    const imageData = `data:image/png;base64,${VALID_BASE64_PNG}`
+    mockProviders({ poll: () => succeeded('https://replicate.delivery/bg.png') })
+    const bg = await asUser.action(api.backgroundRemoval.removeBackground, { sessionId, imageData })
+    mockProviders({ poll: () => succeeded('https://replicate.delivery/merged.png') })
+    const merge = await asUser.action(api.imageMerger.mergeImages, {
+      sessionId,
+      firstLayerId: layer1Id,
+      secondLayerId: layer2Id,
+      mergeMode: 'full',
+    })
+    if (!merge.storageId) throw new Error('Expected merge output')
+    for (const storageId of [bg.storageId, merge.storageId]) {
+      const layerId = await asUser.mutation(api.images.addAIGeneratedImage, {
+        sessionId,
+        storageId,
+        imageUrl: 'https://ignored.example.com/x.png',
+        width: 64,
+        height: 64,
+      })
+      await asUser.mutation(api.images.deleteAIImage, { imageId: layerId })
+      expect(await blobExists(t, storageId)).toBe(false)
+    }
+    const rows = await t.run(async (ctx) => ({
+      removal: await ctx.db.query('backgroundRemovals').first(),
+      merge: await ctx.db.query('imageMerges').first(),
+    }))
+    expect(rows.removal?.resultStorageId).toBeUndefined()
+    expect(rows.removal?.placedImageId).toBeDefined()
+    expect(rows.merge?.mergedImageStorageId).toBeUndefined()
+    expect(rows.merge?.placedImageId).toBeDefined()
   })
 })

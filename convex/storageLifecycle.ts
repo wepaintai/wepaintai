@@ -1,10 +1,16 @@
-import type { Id } from "./_generated/dataModel";
-import type { MutationCtx, QueryCtx } from "./_generated/server";
+import { v } from "convex/values";
+import type { Doc, Id } from "./_generated/dataModel";
+import { internalMutation, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { internal } from "./_generated/api";
 
 // Pending/processing AI operations older than this are settled by the
 // stale-operation sweep (the action that owned them has died).
 export const STALE_OPERATION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 export const STALE_OPERATIONS_BATCH_SIZE = 100;
+
+// AI outputs that are not placed on the canvas within this window are deleted.
+export const UNPLACED_OUTPUT_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+export const OUTPUT_SWEEP_BATCH_SIZE = 100;
 
 interface StorageDeleter {
   storage: {
@@ -101,17 +107,29 @@ export async function deleteStorageIfUnreferenced(
   return await safeDeleteStorage(ctx, storageId);
 }
 
+type AIOutputOwner =
+  | { kind: "generation"; row: Doc<"aiGenerations"> }
+  | { kind: "merge"; row: Doc<"imageMerges"> }
+  | { kind: "removal"; row: Doc<"backgroundRemovals"> }
+  // Already placed in this session: a further layer may share the blob (e.g.
+  // re-placing a result from the history strip); reference counting frees it
+  // when the last layer goes.
+  | { kind: "layer" };
+
 /**
- * Verify that `storageId` exists in Convex storage and was legitimately
- * produced by an AI generation, background removal, or image merge belonging
- * to `sessionId` (never another session, an arbitrary unattached blob, an
- * upload intent, a user-uploaded image, or a temporary canvas snapshot).
+ * Resolve who may hand `storageId` to a new AI layer of `sessionId`:
+ * - the unplaced output of a completed generation, merge or background
+ *   removal of this session (ownership then moves to the new layer); or
+ * - a blob already owned by an AI layer of this session.
+ * Anything else is rejected: other sessions' outputs, uploads, upload
+ * intents, canvas snapshots, unattached blobs, and outputs whose layer was
+ * deleted (the blob was freed with it).
  */
-export async function assertStorageAuthorizedForSessionAIImage(
+export async function resolveAIOutputOwner(
   ctx: QueryCtx,
   sessionId: Id<"paintingSessions">,
   storageId: Id<"_storage">,
-): Promise<void> {
+): Promise<AIOutputOwner> {
   const denied = () => new Error("Storage object does not belong to this session");
 
   const storageMetadata = await ctx.db.system.get("_storage", storageId);
@@ -125,13 +143,11 @@ export async function assertStorageAuthorizedForSessionAIImage(
     .withIndex("by_storage", (q) => q.eq("storageId", storageId))
     .first();
   if (uploaded) throw denied();
-
   const intent = await ctx.db
     .query("imageUploadIntents")
     .withIndex("by_storage", (q) => q.eq("storageId", storageId))
     .first();
   if (intent) throw denied();
-
   const snapshot = await ctx.db
     .query("aiGenerations")
     .withIndex("by_canvas_snapshot", (q) => q.eq("canvasSnapshotId", storageId))
@@ -150,18 +166,88 @@ export async function assertStorageAuthorizedForSessionAIImage(
     .query("backgroundRemovals")
     .withIndex("by_result_storage", (q) => q.eq("resultStorageId", storageId))
     .collect();
-  const existingAIImages = await ctx.db
+  const layers = await ctx.db
     .query("aiGeneratedImages")
     .withIndex("by_storage", (q) => q.eq("storageId", storageId))
     .collect();
 
-  const owners = [...generations, ...merges, ...removals, ...existingAIImages];
-  if (owners.some((owner) => owner.sessionId !== sessionId)) throw denied();
+  const all = [...generations, ...merges, ...removals, ...layers];
+  if (all.length === 0 || all.some((owner) => owner.sessionId !== sessionId)) throw denied();
 
-  const ownedBySession =
-    generations.some((g) => g.status === "completed") ||
-    merges.some((m) => m.status === "completed") ||
-    removals.some((r) => r.status === "completed") ||
-    existingAIImages.length > 0;
-  if (!ownedBySession) throw denied();
+  const generation = generations.find((g) => g.status === "completed");
+  if (generation) return { kind: "generation", row: generation };
+  const merge = merges.find((m) => m.status === "completed");
+  if (merge) return { kind: "merge", row: merge };
+  const removal = removals.find((r) => r.status === "completed");
+  if (removal) return { kind: "removal", row: removal };
+  if (layers.length > 0) return { kind: "layer" };
+  throw denied();
 }
+
+/**
+ * Move ownership of a placed output from its operation row to the new layer:
+ * clear the row's output reference (and expiry) and keep only a placement
+ * marker, so the history row no longer pins the blob.
+ */
+export async function transferAIOutputToLayer(
+  ctx: MutationCtx,
+  owner: AIOutputOwner,
+  imageId: Id<"aiGeneratedImages">,
+): Promise<void> {
+  const placed = { placedImageId: imageId, placedAt: Date.now(), outputExpiresAt: undefined };
+  if (owner.kind === "generation") {
+    await ctx.db.patch(owner.row._id, { ...placed, generatedImageId: undefined });
+  } else if (owner.kind === "merge") {
+    await ctx.db.patch(owner.row._id, { ...placed, mergedImageStorageId: undefined });
+  } else if (owner.kind === "removal") {
+    await ctx.db.patch(owner.row._id, { ...placed, resultStorageId: undefined });
+  }
+}
+
+/**
+ * Cron: delete AI outputs that were never placed on the canvas (the client
+ * discarded them, failed to place them, or went away) once their TTL passed.
+ * Clears the output reference and deletes the blob in one transaction.
+ * Bounded per run; reschedules itself while a batch comes back full.
+ */
+export const expireUnplacedOutputs = internalMutation({
+  args: {},
+  returns: v.object({ expired: v.number() }),
+  handler: async (ctx) => {
+    const now = Date.now();
+    let expired = 0;
+    let more = false;
+    const generations = await ctx.db
+      .query("aiGenerations")
+      .withIndex("by_output_expires", (q) => q.gt("outputExpiresAt", 0).lt("outputExpiresAt", now))
+      .take(OUTPUT_SWEEP_BATCH_SIZE);
+    for (const row of generations) {
+      await ctx.db.patch(row._id, { generatedImageId: undefined, outputExpiresAt: undefined });
+      await deleteStorageIfUnreferenced(ctx, row.generatedImageId);
+    }
+    const merges = await ctx.db
+      .query("imageMerges")
+      .withIndex("by_output_expires", (q) => q.gt("outputExpiresAt", 0).lt("outputExpiresAt", now))
+      .take(OUTPUT_SWEEP_BATCH_SIZE);
+    for (const row of merges) {
+      await ctx.db.patch(row._id, { mergedImageStorageId: undefined, outputExpiresAt: undefined });
+      await deleteStorageIfUnreferenced(ctx, row.mergedImageStorageId);
+    }
+    const removals = await ctx.db
+      .query("backgroundRemovals")
+      .withIndex("by_output_expires", (q) => q.gt("outputExpiresAt", 0).lt("outputExpiresAt", now))
+      .take(OUTPUT_SWEEP_BATCH_SIZE);
+    for (const row of removals) {
+      await ctx.db.patch(row._id, { resultStorageId: undefined, outputExpiresAt: undefined });
+      await deleteStorageIfUnreferenced(ctx, row.resultStorageId);
+    }
+    for (const batch of [generations, merges, removals]) {
+      expired += batch.length;
+      if (batch.length === OUTPUT_SWEEP_BATCH_SIZE) more = true;
+    }
+    if (more) {
+      await ctx.scheduler.runAfter(0, internal.storageLifecycle.expireUnplacedOutputs, {});
+    }
+    return { expired };
+  },
+});

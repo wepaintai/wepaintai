@@ -257,8 +257,11 @@ export const getSessionGenerations = query({
     }
     // Take a larger window then filter, so a run of failed/moderated rows
     // doesn't shrink the strip; then keep the 10 most recent usable results.
-    // Only results backed by Convex storage are usable (the URL is derived
-    // from the blob, which also covers legacy rows without resultImageUrl).
+    // A result is usable while its blob lives: the unplaced output itself, or
+    // (once placed) the blob of the layer it became. Outputs whose layer was
+    // deleted, or that expired unplaced, were freed and drop out. The URL is
+    // always derived from the blob (this also covers legacy rows that have
+    // generatedImageId but no resultImageUrl).
     const generations = await ctx.db
       .query("aiGenerations")
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
@@ -267,14 +270,21 @@ export const getSessionGenerations = query({
     const results = [];
     for (const g of generations) {
       if (results.length >= 10) break;
-      if (g.status !== "completed" || !g.generatedImageId) continue;
-      const url = await ctx.storage.getUrl(g.generatedImageId);
+      if (g.status !== "completed") continue;
+      let storageId = g.generatedImageId;
+      if (!storageId && g.placedImageId) {
+        const layer = await ctx.db.get(g.placedImageId);
+        if (layer && layer.sessionId === args.sessionId) storageId = layer.storageId;
+      }
+      if (!storageId) continue;
+      const url = await ctx.storage.getUrl(storageId);
       if (!url) continue;
       results.push({
         _id: g._id,
         prompt: g.prompt,
         resultImageUrl: url,
-        generatedImageId: g.generatedImageId,
+        // The blob to hand to addAIGeneratedImage when re-placing this result
+        generatedImageId: storageId,
         provider: g.provider,
         createdAt: g.createdAt,
       });

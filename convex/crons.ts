@@ -60,4 +60,12 @@ crons.interval(
   {}
 );
 
+// Delete AI outputs that were never placed on the canvas within their TTL
+crons.interval(
+  "expire unplaced ai outputs",
+  { hours: 1 },
+  internal.storageLifecycle.expireUnplacedOutputs,
+  {}
+);
+
 export default crons;

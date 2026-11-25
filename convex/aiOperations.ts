@@ -38,6 +38,7 @@ import {
   safeDeleteStorage,
   STALE_OPERATION_TIMEOUT_MS,
   STALE_OPERATIONS_BATCH_SIZE,
+  UNPLACED_OUTPUT_TTL_MS,
 } from "./storageLifecycle";
 import { assertCanModifySession } from "./sessionAuth";
 import { debitUserForOperation, refundUserForOperation, tokenOperationValidator } from "./tokens";
@@ -421,11 +422,14 @@ export const completeOperation = internalMutation({
       return "access_lost" as const;
     }
 
+    // The output stays owned by this row until it is placed on the canvas
+    // (addAIGeneratedImage moves it to the layer) or its TTL expires.
     const base = {
       status: "completed" as const,
       error: undefined,
       resultImageUrl: args.resultImageUrl,
       completedAt,
+      outputExpiresAt: completedAt + UNPLACED_OUTPUT_TTL_MS,
     };
     if (args.operationType === "ai-generation") {
       await ctx.db.patch(row._id as Id<"aiGenerations">, {

@@ -25,8 +25,9 @@ import {
 } from "./imageValidation";
 import { generateUploadToken, sha256Hex } from "./uploadToken";
 import {
-  assertStorageAuthorizedForSessionAIImage,
   deleteStorageIfUnreferenced,
+  resolveAIOutputOwner,
+  transferAIOutputToLayer,
 } from "./storageLifecycle";
 
 // ---------------------------------------------------------------------------
@@ -386,8 +387,9 @@ export const addAIGeneratedImage = mutation({
     );
 
     let persistedImageUrl: string;
+    let outputOwner: Awaited<ReturnType<typeof resolveAIOutputOwner>> | null = null;
     if (args.storageId !== undefined) {
-      await assertStorageAuthorizedForSessionAIImage(ctx, args.sessionId, args.storageId);
+      outputOwner = await resolveAIOutputOwner(ctx, args.sessionId, args.storageId);
       const storageUrl = await ctx.storage.getUrl(args.storageId);
       if (!storageUrl) throw new Error("Storage object not found");
       persistedImageUrl = storageUrl;
@@ -457,6 +459,8 @@ export const addAIGeneratedImage = mutation({
       layerOrder: newLayerOrder,
       createdAt: Date.now(),
     });
+    // The layer now owns the blob; the operation row keeps only a marker
+    if (outputOwner) await transferAIOutputToLayer(ctx, outputOwner, imageId);
 
     return imageId;
   },
