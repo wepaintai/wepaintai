@@ -324,7 +324,10 @@ export const reconcileCheckout = internalAction({
     }
 
     const result = await reconcilePurchase(ctx, config, purchase, args.source, Date.now())
-    if (result === 'retry' || result === 'unauthorized') {
+    // Only transient lookup failures are worth a redelivery. A rejected API
+    // key will not fix itself (the alert is already logged); the cron settles
+    // the purchase once the key is corrected.
+    if (result === 'retry') {
       return 'retry'
     }
     return result === 'settled' ? 'settled' : 'skipped'

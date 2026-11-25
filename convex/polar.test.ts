@@ -1110,6 +1110,27 @@ describe('Polar order.paid fulfilment signal', () => {
     expect(state.user?.tokens).toBe(3)
   })
 
+  test('does not ask for redelivery when Polar rejects the API key', async () => {
+    const t = createTestBackend()
+    const userId = await seedUser(t, identity.subject, 'polar-test@example.com')
+    await t.mutation(internal.polarWebhook.createPendingPurchase, {
+      userId,
+      checkoutId: 'checkout-50',
+      packageKey: '50_tokens',
+    })
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('forbidden', { status: 403 }))
+    )
+
+    const paid = await deliverWebhook(t, orderPaidEvent(userId))
+
+    expect(paid.status).toBe(200)
+    expect(alertLines(error)).toHaveLength(1)
+    expect((await readPurchaseState(t, userId)).purchase?.status).toBe('pending')
+  })
+
   test('ignores orders that are not paid one-time checkout purchases', async () => {
     const t = createTestBackend()
     const userId = await seedUser(t, identity.subject, 'polar-test@example.com')
