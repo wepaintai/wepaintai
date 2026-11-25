@@ -328,6 +328,20 @@ function getSnapshot(): SyncStatus {
   return state;
 }
 
+// The server never has a queue. Hydration must render this same snapshot even
+// if the rehydrated queue has already flipped `state` on the client; React
+// re-renders with the client snapshot right after hydrating.
+const SERVER_SNAPSHOT: SyncStatus = {
+  status: "ok",
+  kind: "unknown",
+  pendingStrokeCount: 0,
+  retrying: false,
+};
+
+function getServerSnapshot(): SyncStatus {
+  return SERVER_SNAPSHOT;
+}
+
 export function useSyncStatus(): SyncStatus {
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }

@@ -7,9 +7,9 @@ import {
 import { createServerFn } from '@tanstack/react-start'
 import type { ReactNode } from 'react'
 import { ConvexClientProvider } from '../lib/convex'
-import { PasswordProtection } from '../components/PasswordProtection'
 import appCss from '../styles/app.css?url'
 import { getToken } from '../lib/auth-server'
+import { buildContentSecurityPolicy } from '../lib/securityHeaders'
 
 function NotFoundComponent() {
   return (
@@ -59,6 +59,20 @@ export const Route = createRootRoute({
       },
     ],
   }),
+  // Sent with every SSR HTML response, including the 404 page. `ssr.nonce` is
+  // generated per request in router.tsx (absent in `vite dev`).
+  headers: ({ ssr }): Record<string, string> | undefined =>
+    ssr?.nonce
+      ? {
+          'Content-Security-Policy': buildContentSecurityPolicy({
+            nonce: ssr.nonce,
+            backendOrigins: [
+              import.meta.env.VITE_CONVEX_URL,
+              import.meta.env.VITE_CONVEX_SITE_URL,
+            ],
+          }),
+        }
+      : undefined,
   beforeLoad: async () => {
     const auth = await getAuth()
     return auth
@@ -72,9 +86,7 @@ function RootComponent() {
   return (
     <ConvexClientProvider initialToken={token}>
       <RootDocument>
-        <PasswordProtection>
-          <Outlet />
-        </PasswordProtection>
+        <Outlet />
       </RootDocument>
     </ConvexClientProvider>
   )
@@ -82,7 +94,7 @@ function RootComponent() {
 
 function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
   return (
-    <html>
+    <html lang="en">
       <head>
         <HeadContent />
       </head>

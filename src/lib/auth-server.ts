@@ -1,4 +1,5 @@
 import { convexBetterAuthReactStart } from '@convex-dev/better-auth/react-start'
+import { createAuthProxyHandler, hostsFromConfig } from './authProxy'
 
 const convexUrl =
   import.meta.env.VITE_CONVEX_URL ?? process.env.VITE_CONVEX_URL
@@ -16,41 +17,22 @@ export const { getToken } = convexBetterAuthReactStart({
 })
 
 /**
- * Proxy /api/auth/* to the Convex HTTP actions deployment.
- *
- * This replicates the header handling of the component's built-in `handler`,
- * but buffers the request body: the built-in handler forwards the body as a
- * stream, which undici cannot replay when the upstream responds early
- * (e.g. a 401 on bad credentials), turning auth errors into
- * 500 "fetch failed" responses.
+ * Proxy /api/auth/* to the Convex HTTP actions deployment (same-origin auth
+ * cookies). A client-supplied X-Forwarded-Host is forwarded only if it is one
+ * of the app's public hosts (app/www/apex wepaint.ai, preview-pr-N /
+ * preview-auth-N), a host from SITE_URL / APP_URL / VITE_APP_URL /
+ * AUTH_TRUSTED_HOSTS (comma-separated) in the server's runtime env, or
+ * localhost in development. Otherwise the request's own host is used.
  */
-export async function authProxyHandler(request: Request): Promise<Response> {
-  const requestUrl = new URL(request.url)
-  const target = `${convexSiteUrl}${requestUrl.pathname}${requestUrl.search}`
-
-  const headers = new Headers(request.headers)
-  headers.delete('transfer-encoding')
-  headers.delete('content-length')
-  headers.delete('connection')
-  headers.set('accept-encoding', 'identity')
-  headers.set('host', new URL(convexSiteUrl).host)
-  headers.set('x-forwarded-host', requestUrl.host)
-  headers.set('x-forwarded-proto', requestUrl.protocol.replace(/:$/, ''))
-  headers.set('x-better-auth-forwarded-host', requestUrl.host)
-  headers.set(
-    'x-better-auth-forwarded-proto',
-    requestUrl.protocol.replace(/:$/, ''),
-  )
-
-  const body =
-    request.method === 'GET' || request.method === 'HEAD'
-      ? undefined
-      : await request.arrayBuffer()
-
-  return fetch(target, {
-    method: request.method,
-    headers,
-    redirect: 'manual',
-    body,
-  })
-}
+export const authProxyHandler = createAuthProxyHandler({
+  convexSiteUrl,
+  trustedHosts: {
+    extraHosts: hostsFromConfig([
+      process.env.SITE_URL,
+      process.env.APP_URL,
+      import.meta.env.VITE_APP_URL ?? process.env.VITE_APP_URL,
+      process.env.AUTH_TRUSTED_HOSTS,
+    ]),
+    allowLocalhost: import.meta.env.DEV,
+  },
+})
