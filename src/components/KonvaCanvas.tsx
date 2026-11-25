@@ -7,7 +7,7 @@ import { useP2PPainting } from '../hooks/useP2PPainting'
 import { useSessionImages } from '../hooks/useSessionImages'
 import { Id } from '../../convex/_generated/dataModel'
 import { Layer as LayerType } from './ToolPanel'
-import { useQuery, useMutation, useAction } from 'convex/react'
+import { useQuery, useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import { shouldShowAdminFeatures } from '../utils/environment'
 import { uploadImageFile, validateImageFile, ACCEPTED_TYPES } from '../utils/imageUpload'
@@ -340,9 +340,9 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   const updateAIImageTransform = useMutation(api.images.updateAIImageTransform)
   const updatePaintLayerTransform = useMutation(api.paintLayers.updatePaintLayer)
   
-  // Image upload URL mutation + server-validated registration action
-  const generateUploadUrl = useMutation(api.images.generateUploadUrl)
-  const uploadImage = useAction(api.images.uploadImage)
+  // Image upload: intent (+ secret token) -> POST /uploads/image -> commit
+  const createUploadIntent = useMutation(api.images.createUploadIntent)
+  const commitImageUpload = useMutation(api.images.commitImageUpload)
 
   // P2P preview layer
   const {
@@ -1044,8 +1044,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
           canvasHeight: dimensions.height || 600,
           onImageUploaded,
         },
-        generateUploadUrl,
-        uploadImage
+        createUploadIntent,
+        commitImageUpload
       )
 
       if (!result.success) {
@@ -1056,7 +1056,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     } finally {
       setIsUploading(false)
     }
-  }, [sessionId, isUploading, dimensions, onImageUploaded, generateUploadUrl, uploadImage, guestKey])
+  }, [sessionId, isUploading, dimensions, onImageUploaded, createUploadIntent, commitImageUpload, guestKey])
 
   // Clipboard paste handler: allow when over canvas or toolbox and when AI modal not open
   useEffect(() => {
@@ -1116,8 +1116,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
             canvasHeight: dimensions.height || 600,
             onImageUploaded,
           },
-          generateUploadUrl,
-          uploadImage
+          createUploadIntent,
+          commitImageUpload
         );
         if (!result.success) {
           console.error('Pasted image upload failed:', result.error);
@@ -1141,8 +1141,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     dimensions.width,
     dimensions.height,
     onImageUploaded,
-    generateUploadUrl,
-    uploadImage,
+    createUploadIntent,
+    commitImageUpload,
   ]);
 
   // Expose methods via ref

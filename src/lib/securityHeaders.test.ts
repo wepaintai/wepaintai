@@ -61,6 +61,13 @@ describe('buildContentSecurityPolicy', () => {
     expect(csp.get('img-src')).not.toContain('ws://127.0.0.1:3210')
   })
 
+  it('allows fetch to the Convex site origin used by image uploads (/uploads/image)', () => {
+    const csp = parse(
+      buildContentSecurityPolicy({ nonce: 'n', backendOrigins: ['https://site.wepaint.ai'] }),
+    )
+    expect(csp.get('connect-src')).toEqual(expect.arrayContaining(['https://site.wepaint.ai']))
+  })
+
   it('rejects a nonce that could inject directives', () => {
     expect(() => buildContentSecurityPolicy({ nonce: "x'; script-src *" })).toThrow()
   })

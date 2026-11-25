@@ -1,6 +1,6 @@
 import React, { useRef, useState, useCallback } from 'react'
 import { Upload, X } from 'lucide-react'
-import { useAction, useMutation } from 'convex/react'
+import { useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import { Id } from '../../convex/_generated/dataModel'
 import { uploadImageFile, validateImageFile, ACCEPTED_TYPES } from '../utils/imageUpload'
@@ -30,8 +30,8 @@ export function ImageUploadModal({
   const [preview, setPreview] = useState<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   
-  const generateUploadUrl = useMutation(api.images.generateUploadUrl)
-  const uploadImage = useAction(api.images.uploadImage)
+  const createUploadIntent = useMutation(api.images.createUploadIntent)
+  const commitImageUpload = useMutation(api.images.commitImageUpload)
 
   const handleFileSelect = useCallback(async (file: File) => {
     console.log('File selected:', file.name, 'Type:', file.type, 'Size:', file.size)
@@ -98,8 +98,8 @@ export function ImageUploadModal({
           canvasHeight,
           onImageUploaded,
         },
-        generateUploadUrl,
-        uploadImage
+        createUploadIntent,
+        commitImageUpload
       )
 
       if (result.success) {

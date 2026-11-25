@@ -1,4 +1,5 @@
 import { Id } from '../../convex/_generated/dataModel'
+import { getErrorMessage } from './errorMessage'
 
 export const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB
 export const MAX_IMAGE_DIMENSION = 4096 // Longest edge; larger images are downscaled client-side
@@ -18,19 +19,36 @@ export interface ImageUploadResult {
   imageId?: Id<"uploadedImages">
 }
 
-interface UploadImageMutationArgs {
+export interface UploadIntent {
+  intentId: Id<"imageUploadIntents">
+  uploadToken: string
+}
+
+interface CommitImageUploadArgs {
   sessionId: Id<"paintingSessions">
   intentId: Id<"imageUploadIntents">
-  storageId: Id<"_storage">
+  uploadToken: string
   filename: string
-  mimeType: string
-  width: number
-  height: number
   x: number
   y: number
   canvasWidth?: number
   canvasHeight?: number
   guestKey?: string
+}
+
+/**
+ * URL of the Convex HTTP action that receives image bytes. Uses the Convex
+ * site origin (VITE_CONVEX_SITE_URL), falling back to the Convex Cloud
+ * convention of `<name>.convex.cloud` -> `<name>.convex.site`.
+ */
+export function getImageUploadEndpoint(
+  env: { VITE_CONVEX_SITE_URL?: string; VITE_CONVEX_URL?: string } = import.meta.env
+): string | null {
+  let site = env.VITE_CONVEX_SITE_URL
+  if (!site && env.VITE_CONVEX_URL && /\.convex\.cloud\/?$/.test(env.VITE_CONVEX_URL)) {
+    site = env.VITE_CONVEX_URL.replace(/\.convex\.cloud\/?$/, '.convex.site')
+  }
+  return site ? `${site.replace(/\/+$/, '')}/uploads/image` : null
 }
 
 export function validateImageFile(file: File): { valid: boolean; error?: string } {
@@ -174,14 +192,27 @@ export function downscaleImage(
   })
 }
 
+const UPLOAD_FAILED_MESSAGE = 'Failed to upload image. Please try again.'
+
+async function readUploadError(response: Response): Promise<string> {
+  try {
+    const body = (await response.json()) as { error?: unknown }
+    if (typeof body.error === 'string' && body.error) return body.error
+  } catch {
+    // Non-JSON error body
+  }
+  return response.status === 413 ? 'File size must be less than 5MB' : UPLOAD_FAILED_MESSAGE
+}
+
 export async function uploadImageFile(
   file: File,
   options: ImageUploadOptions,
-  generateUploadUrl: (args: {
+  createUploadIntent: (args: {
     sessionId: Id<"paintingSessions">
     guestKey?: string
-  }) => Promise<{ uploadUrl: string; intentId: Id<"imageUploadIntents"> }>,
-  uploadImage: (args: UploadImageMutationArgs) => Promise<Id<"uploadedImages">>
+  }) => Promise<UploadIntent>,
+  commitImageUpload: (args: CommitImageUploadArgs) => Promise<Id<"uploadedImages">>,
+  uploadEndpoint: string | null = getImageUploadEndpoint()
 ): Promise<ImageUploadResult> {
   const { sessionId, guestKey, canvasWidth = 800, canvasHeight = 600, onImageUploaded } = options
 
@@ -191,6 +222,9 @@ export async function uploadImageFile(
     if (!validation.valid) {
       return { success: false, error: validation.error }
     }
+    if (!uploadEndpoint) {
+      throw new Error('Image uploads are not configured')
+    }
 
     // Get image dimensions
     const originalDimensions = await getImageDimensions(file)
@@ -198,58 +232,53 @@ export async function uploadImageFile(
     // Preserve original resolution up to MAX_IMAGE_DIMENSION; downscale anything larger
     // so huge images don't flood the canvas/AI pipeline at full resolution
     let fileToUpload: File | Blob = file
-    let finalDimensions = originalDimensions
     let mimeType = file.type
     if (Math.max(originalDimensions.width, originalDimensions.height) > MAX_IMAGE_DIMENSION) {
       const resized = await downscaleImage(file)
       fileToUpload = resized.blob
-      finalDimensions = { width: resized.width, height: resized.height }
       mimeType = resized.mimeType
     }
-
-    // Generate single-use session-bound upload URL + intent
-    const { uploadUrl, intentId } = await generateUploadUrl({ sessionId, guestKey })
-
-    // Upload to Convex storage
-    const response = await fetch(uploadUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': mimeType },
-      body: fileToUpload,
-    })
-
-    if (!response.ok) {
-      throw new Error('Failed to upload file')
+    if (fileToUpload.size > MAX_FILE_SIZE) {
+      return { success: false, error: 'File size must be less than 5MB' }
     }
 
-    const { storageId } = await response.json() as { storageId: Id<"_storage"> }
+    // 1. Single-use, session-bound intent with a secret upload token
+    const { intentId, uploadToken } = await createUploadIntent({ sessionId, guestKey })
 
-    // Center the image on the canvas
-    const x = canvasWidth / 2
-    const y = canvasHeight / 2
+    // 2. Upload the bytes; the server validates them and binds the stored
+    //    blob to this intent (the client never sees or supplies a storageId)
+    const response = await fetch(uploadEndpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': mimeType,
+        'X-Upload-Intent': intentId,
+        'X-Upload-Token': uploadToken,
+      },
+      body: fileToUpload,
+    })
+    if (!response.ok) {
+      throw new Error(await readUploadError(response))
+    }
 
-    // Create image record (server re-verifies intent, size, magic bytes & dimensions)
-    const uploadArgs: UploadImageMutationArgs = {
+    // 3. Create the image layer, centered on the canvas. Type and
+    //    dimensions come from the server-side decode recorded on the intent.
+    const imageId = await commitImageUpload({
       sessionId,
       intentId,
-      storageId,
+      uploadToken,
       filename: file.name,
-      mimeType,
-      width: finalDimensions.width,
-      height: finalDimensions.height,
-      x,
-      y,
+      x: canvasWidth / 2,
+      y: canvasHeight / 2,
       canvasWidth,
       canvasHeight,
       guestKey,
-    }
-    
-    const imageId = await uploadImage(uploadArgs)
-    
+    })
+
     onImageUploaded?.(imageId)
-    
+
     return { success: true, imageId }
   } catch (err) {
     console.error('Upload error:', err)
-    return { success: false, error: 'Failed to upload image. Please try again.' }
+    return { success: false, error: getErrorMessage(err, UPLOAD_FAILED_MESSAGE) }
   }
 }
