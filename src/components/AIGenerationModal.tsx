@@ -5,6 +5,7 @@ import { api } from '../../convex/_generated/api'
 import type { Id } from '../../convex/_generated/dataModel'
 import { getGuestKey } from '../utils/guestKey'
 import { getErrorMessage } from '../utils/errorMessage'
+import { MAX_PROMPT_LENGTH } from '../../convex/tokenPolicy'
 
 interface AIGenerationModalProps {
   isOpen: boolean
@@ -47,12 +48,17 @@ export function AIGenerationModal({
       setError('Please enter a prompt')
       return
     }
+    const promptForRequest = withFlames ? `${prompt.trim()} with flames` : prompt.trim()
+    if (promptForRequest.length > MAX_PROMPT_LENGTH) {
+      setError(`Prompt is too long (max ${MAX_PROMPT_LENGTH} characters)`)
+      return
+    }
 
     setIsGenerating(true)
     setError(null)
 
     try {
-      const finalPrompt = withFlames ? `${prompt.trim()} with flames` : prompt.trim()
+      const finalPrompt = promptForRequest
       
       console.log('Calling generateImage with:', {
         sessionId,
@@ -86,9 +92,14 @@ export function AIGenerationModal({
       
       if (result.success && 'imageUrl' in result && result.imageUrl) {
         console.log('Generated image URL:', result.imageUrl)
-        // Save the prompt to both session and user history
-        await addAIPrompt({ sessionId, prompt: prompt.trim(), guestKey: getGuestKey(sessionId) || undefined })
-        await addUserPrompt({ prompt: prompt.trim() })
+        // Save the prompt to both session and user history (best-effort: a
+        // history write failure must not hide a successful generation)
+        try {
+          await addAIPrompt({ sessionId, prompt: prompt.trim(), guestKey: getGuestKey(sessionId) || undefined })
+          await addUserPrompt({ prompt: prompt.trim() })
+        } catch (historyError) {
+          console.warn('Failed to save prompt history:', historyError)
+        }
         onGenerationComplete(result.imageUrl)
         onClose()
       } else {
@@ -307,6 +318,7 @@ export function AIGenerationModal({
               id="prompt"
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
+              maxLength={MAX_PROMPT_LENGTH}
               placeholder="e.g., 'make it look like a watercolor painting' or 'add a sunset background'"
               className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none text-white placeholder-white/50"
               rows={2}
