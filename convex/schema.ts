@@ -23,6 +23,20 @@ const schema = defineSchema({
     // Last action metadata (e.g. for undoing a Clear)
     lastAction: v.optional(v.string()), // e.g., 'clear'
     lastClearBatchId: v.optional(v.string()),
+    // Linear undo history. Clears that are applied (and therefore undoable),
+    // oldest first; `order` is the strokeOrder slot the clear occupies.
+    clearHistory: v.optional(v.array(v.object({
+      batchId: v.string(),
+      order: v.number(),
+    }))),
+    // Redo stack (top = last element). "stroke" entries reference the
+    // deletedStrokes row holding the undone stroke; "clear" entries reference
+    // the clear batch id to re-apply. Any new stroke or clear empties it.
+    redoStack: v.optional(v.array(v.object({
+      kind: v.union(v.literal("stroke"), v.literal("clear")),
+      ref: v.string(),
+      order: v.number(),
+    }))),
     // AI generation prompts history
     aiPrompts: v.optional(v.array(v.string())), // Array of unique prompts used in this session
     // Soft delete: set when the owner deletes the session; hard-deleted by a
@@ -216,7 +230,8 @@ const schema = defineSchema({
     clearBatchId: v.optional(v.string()),
   }).index("by_session_deleted", ["sessionId", "deletedAt"])
     .index("by_session_layer_deleted", ["sessionId", "layerId", "deletedAt"])
-    .index("by_session_stroke", ["sessionId", "strokeOrder"]),
+    .index("by_session_stroke", ["sessionId", "strokeOrder"])
+    .index("by_session_clear_batch", ["sessionId", "clearBatchId"]),
 
   // Paint layers for multi-layer painting support
   paintLayers: defineTable({

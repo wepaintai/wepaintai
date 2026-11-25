@@ -114,7 +114,8 @@ const sessionObjectValidator = v.object({
  * know whether a guest owner exists.
  */
 function sanitizeSession(session: Doc<"paintingSessions">) {
-  const { guestOwnerKey, ...rest } = session;
+  // Undo/redo bookkeeping is server-internal and not part of the client shape.
+  const { guestOwnerKey, clearHistory: _clearHistory, redoStack: _redoStack, ...rest } = session;
   return { ...rest, hasGuestOwner: !!guestOwnerKey };
 }
 
