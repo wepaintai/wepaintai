@@ -316,7 +316,7 @@ This document tracks the repository audit findings so work can continue across s
 
 ### AUD-013: Eliminate duplicate editor subscriptions and side effects
 
-- Status: TODO
+- Status: DONE
 - Area: Frontend performance / Correctness
 - Files:
   - `src/components/PaintingView.tsx`
@@ -333,8 +333,8 @@ This document tracks the repository audit findings so work can continue across s
   - One active subscription per logical dataset per editor.
   - One presence heartbeat and one P2P manager per session tab.
   - Query/write counts are measured before and after.
-- Verification: Not run
-- Notes:
+- Verification: `src/context/PaintingEditorContext.test.ts` (one subscription per query and one heartbeat/pagehide listener/P2PManager per tab, also under React.StrictMode; edit-link collaborator and read-only viewer access threading; leave only on real unmount/session change; live P2P traffic re-rendering only its subscribers; a replaced manager's late events ignored), `src/hooks/useSessionImages.test.ts` (convex-test parity with `getAIGeneratedImages`), `src/lib/webrtc/P2PManager.test.ts` (destroy safety, ~30 Hz cursor throttle with trailing send), `src/utils/pendingStrokes.test.ts`.
+- Notes: Completed 2026-11-24 (PR #104). `PaintingEditorContext` owns the editor's Convex subscriptions (21 → 8 per authenticated tab), presence and the single P2P lifecycle, and threads AUD-005's `editKey`/`canEdit`/`isOwner`. Remote cursors, live strokes and P2P metrics live in an external store read with `useSyncExternalStore` by the components that draw them, so incoming packets don't re-render the editor.
 
 ### AUD-014: Make stroke storage and subscriptions scalable
 
