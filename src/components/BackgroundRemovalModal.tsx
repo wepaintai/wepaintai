@@ -14,7 +14,7 @@ interface BackgroundRemovalModalProps {
   canvasDataUrl: string
   layers: Layer[]
   activeLayerId?: string
-  onRemovalComplete: (imageUrl: string, storageId?: Id<'_storage'>) => void
+  onRemovalComplete: (imageUrl: string, storageId: Id<'_storage'>) => void
 }
 
 export function BackgroundRemovalModal({

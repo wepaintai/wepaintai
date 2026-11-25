@@ -52,7 +52,7 @@ function BackgroundRemovalModalWrapper({
   sessionId: Id<"paintingSessions">
   canvasRef: React.RefObject<CanvasRef | null>
   onClose: () => void
-  onRemovalComplete: (imageUrl: string, storageId?: Id<"_storage">) => void
+  onRemovalComplete: (imageUrl: string, storageId: Id<"_storage">) => void
   layers: Layer[]
   activeLayerId?: string
 }) {
@@ -104,7 +104,7 @@ function AIGenerationModalWrapper({
   sessionId: Id<"paintingSessions">
   canvasRef: React.RefObject<CanvasRef | null>
   onClose: () => void
-  onGenerationComplete: (imageUrl: string, storageId?: Id<"_storage">) => void
+  onGenerationComplete: (imageUrl: string, storageId: Id<"_storage">) => void
   layers: Layer[]
   strokes: any[]
 }) {
@@ -773,7 +773,7 @@ export function PaintingView() {
     setShowBackgroundRemoval(true)
   }, [canEdit])
 
-  const handleAIGenerationComplete = useCallback(async (imageUrl: string, storageId?: Id<"_storage">) => {
+  const handleAIGenerationComplete = useCallback(async (imageUrl: string, storageId: Id<"_storage">) => {
     if (!sessionId) return
     
     // Add the generated image to the canvas
@@ -822,7 +822,7 @@ export function PaintingView() {
           sessionId,
           guestKey: getGuestKey(sessionId) || undefined,
           editKey: getEditKey(sessionId) || undefined,
-          imageUrl,
+          // The server derives the layer URL from the blob
           storageId,
           width: img.naturalWidth || img.width,
           height: img.naturalHeight || img.height,

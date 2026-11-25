@@ -122,7 +122,32 @@ async function seedSharingFixture(options: {
       createdAt: Date.now(),
     })
 
-    return { ownerId, viewerId, sessionId, layerId, strokeId, uploadedImageId, aiImageId }
+    // An unplaced output of a completed AI generation (as completeOperation
+    // writes it): the only kind of blob addAIGeneratedImage accepts
+    const aiOutputStorageId = await ctx.storage.store(
+      new Blob([makePngBytes(64, 64)], { type: 'image/png' }),
+    )
+    await ctx.db.insert('aiGenerations', {
+      sessionId,
+      prompt: 'seeded output',
+      status: 'completed',
+      provider: 'gemini',
+      generatedImageId: aiOutputStorageId,
+      createdAt: Date.now(),
+      completedAt: Date.now(),
+      outputExpiresAt: Date.now() + 60_000,
+    })
+
+    return {
+      ownerId,
+      viewerId,
+      sessionId,
+      layerId,
+      strokeId,
+      uploadedImageId,
+      aiImageId,
+      aiOutputStorageId,
+    }
   })
 
   return {
@@ -151,10 +176,12 @@ async function expectEveryWriteDenied(
     strokeId: Id<'strokes'>
     uploadedImageId: Id<'uploadedImages'>
     aiImageId: Id<'aiGeneratedImages'>
+    aiOutputStorageId: Id<'_storage'>
   },
   keys: KeyArgs,
 ) {
-  const { sessionId, layerId, otherLayerId, strokeId, uploadedImageId, aiImageId } = ids
+  const { sessionId, layerId, otherLayerId, strokeId, uploadedImageId, aiImageId, aiOutputStorageId } =
+    ids
   // Owner-only mutations take no editKey argument at all
   const ownerKeys = keys.guestKey !== undefined ? { guestKey: keys.guestKey } : {}
   const denied: Array<[string, () => Promise<unknown>]> = [
@@ -174,7 +201,7 @@ async function expectEveryWriteDenied(
     ['liveStrokes.clearSessionLiveStrokes', () => caller.mutation(api.liveStrokes.clearSessionLiveStrokes, { sessionId, ...ownerKeys })],
     ['images.createUploadIntent', () => caller.mutation(api.images.createUploadIntent, { sessionId, ...keys })],
     ['images.addAIGeneratedImage', () => caller.mutation(api.images.addAIGeneratedImage, {
-      sessionId, imageUrl: 'https://example.com/vandal.png', width: 100, height: 100, ...keys,
+      sessionId, storageId: aiOutputStorageId, width: 100, height: 100, ...keys,
     })],
     ['images.updateImageTransform', () => caller.mutation(api.images.updateImageTransform, { imageId: uploadedImageId, x: 999, ...keys })],
     ['images.updateAIImageTransform', () => caller.mutation(api.images.updateAIImageTransform, { imageId: aiImageId, x: 999, ...keys })],
@@ -238,6 +265,7 @@ describe('AUD-005 public read-only viewing and secret edit links', () => {
       strokeId,
       uploadedImageId,
       aiImageId,
+      aiOutputStorageId,
       asViewer,
     } = await seedSharingFixture({ isPublic: true })
 
@@ -309,7 +337,7 @@ describe('AUD-005 public read-only viewing and secret edit links', () => {
       await expect(
         caller.mutation(api.images.addAIGeneratedImage, {
           sessionId,
-          imageUrl: 'https://example.com/vandal.png',
+          storageId: aiOutputStorageId,
           width: 100,
           height: 100,
         }),

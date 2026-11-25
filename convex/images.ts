@@ -10,7 +10,6 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { assertCanModifySession, canReadSession, keysMatch } from "./sessionAuth";
 import {
-  assertAllowedAiImageUrl,
   assertFiniteNumber,
   assertValidImageDimensions,
   MAX_AI_IMAGE_DIMENSION,
@@ -359,15 +358,17 @@ export const uploadImage = mutation({
   },
 });
 
-// Add an AI-generated image record. With a storageId the blob must be an AI
-// output of this session and the URL is derived from it server-side;
-// otherwise the URL must point at this deployment's file storage (or a known
-// provider CDN). Client-supplied dimensions are bounded.
+// Add an AI-generated image layer from an AI output blob. The blob must be an
+// unplaced output of a completed AI operation of this session (ownership moves
+// to the new layer) or a blob already placed in this session; the URL is
+// derived from the blob server-side, never taken from the client. Client
+// dimensions are bounded.
 export const addAIGeneratedImage = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
-    imageUrl: v.string(),
-    storageId: v.optional(v.id("_storage")),
+    storageId: v.id("_storage"),
+    // Ignored; accepted only so clients that still send it keep validating.
+    imageUrl: v.optional(v.string()),
     width: v.number(),
     height: v.number(),
     canvasWidth: v.optional(v.number()),
@@ -386,19 +387,9 @@ export const addAIGeneratedImage = mutation({
       MAX_AI_IMAGE_DIMENSION
     );
 
-    let persistedImageUrl: string;
-    let outputOwner: Awaited<ReturnType<typeof resolveAIOutputOwner>> | null = null;
-    if (args.storageId !== undefined) {
-      outputOwner = await resolveAIOutputOwner(ctx, args.sessionId, args.storageId);
-      const storageUrl = await ctx.storage.getUrl(args.storageId);
-      if (!storageUrl) throw new Error("Storage object not found");
-      persistedImageUrl = storageUrl;
-    } else {
-      persistedImageUrl = assertAllowedAiImageUrl(args.imageUrl, [
-        process.env.CONVEX_CLOUD_URL,
-        process.env.CONVEX_SITE_URL,
-      ]);
-    }
+    const outputOwner = await resolveAIOutputOwner(ctx, args.sessionId, args.storageId);
+    const persistedImageUrl = await ctx.storage.getUrl(args.storageId);
+    if (!persistedImageUrl) throw new Error("Storage object not found");
 
     // Get the current max layer order from ALL images (uploaded and AI)
     const uploadedImages = await ctx.db
@@ -460,7 +451,7 @@ export const addAIGeneratedImage = mutation({
       createdAt: Date.now(),
     });
     // The layer now owns the blob; the operation row keeps only a marker
-    if (outputOwner) await transferAIOutputToLayer(ctx, outputOwner, imageId);
+    await transferAIOutputToLayer(ctx, outputOwner, imageId);
 
     return imageId;
   },
