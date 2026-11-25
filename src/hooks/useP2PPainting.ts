@@ -17,6 +17,33 @@ export interface P2PPaintingOptions {
   userId: string;
   enabled?: boolean;
   presence?: Array<{ userName: string; userColor: string }>; // To get peer colors
+  /**
+   * Peer ids (user id strings) currently allowed to edit. When provided,
+   * stroke and cursor packets from any other peer are ignored, so a
+   * collaborator whose edit link was revoked can't keep painting into open
+   * data channels. Derived from presence, which only editors can write and
+   * which the server clears for collaborators on revoke/rotate.
+   */
+  allowedPeerIds?: ReadonlySet<string> | null;
+}
+
+/** Editor peer ids from presence rows (P2P peers are identified by user id). */
+export function editorPeerIdsFromPresence(
+  presence: ReadonlyArray<{ userId?: string | null }> | undefined,
+): Set<string> {
+  const ids = new Set<string>();
+  for (const row of presence ?? []) {
+    if (row.userId) ids.add(String(row.userId));
+  }
+  return ids;
+}
+
+/** True when a packet from `peerId` may be applied. */
+export function isPacketFromEditor(
+  peerId: string,
+  allowedPeerIds: ReadonlySet<string> | null | undefined,
+): boolean {
+  return !allowedPeerIds || allowedPeerIds.has(peerId);
 }
 
 export interface P2PPaintingResult {
@@ -35,6 +62,7 @@ export function useP2PPainting({
   userId,
   enabled = true,
   presence = [],
+  allowedPeerIds = null,
 }: P2PPaintingOptions): P2PPaintingResult {
   const convex = useConvex();
   const p2pManagerRef = useRef<P2PManager | null>(null);
@@ -45,9 +73,15 @@ export function useP2PPainting({
   const [metrics, setMetrics] = useState<P2PMetrics | null>(null);
   const metricsIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const connectedPeersRef = useRef<Set<string>>(new Set());
+  const allowedPeerIdsRef = useRef(allowedPeerIds);
+  allowedPeerIdsRef.current = allowedPeerIds;
 
   // Handle incoming packets
   const handlePacketReceived = useCallback((peerId: string, packet: P2PPacket) => {
+    if (!isPacketFromEditor(peerId, allowedPeerIdsRef.current)) {
+      // Not (or no longer) an editor of this session: ignore its packets.
+      return;
+    }
     if (packet.t === 'cu') {
       // Handle cursor packet
       setRemoteCursors(prev => {

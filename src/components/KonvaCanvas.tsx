@@ -1,9 +1,9 @@
-import React, { useRef, useEffect, useState, useCallback, forwardRef, useImperativeHandle, memo, useSyncExternalStore } from 'react'
+import React, { useRef, useEffect, useState, useCallback, forwardRef, useImperativeHandle, memo, useMemo, useSyncExternalStore } from 'react'
 import { Stage, Layer, Path, Image as KonvaImage, Circle, Text, Group, Arc, Transformer, Line } from 'react-konva'
 import Konva from 'konva'
 import { getStroke } from 'perfect-freehand'
 import { usePaintingSession, type PaintPoint, type Stroke, type UserPresence, type LiveStroke } from '../hooks/usePaintingSession'
-import { useP2PPainting } from '../hooks/useP2PPainting'
+import { editorPeerIdsFromPresence, useP2PPainting } from '../hooks/useP2PPainting'
 import { useSessionImages } from '../hooks/useSessionImages'
 import { Id } from '../../convex/_generated/dataModel'
 import { Layer as LayerType } from './ToolPanel'
@@ -354,6 +354,9 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   const commitImageUpload = useMutation(api.images.commitImageUpload)
 
   // P2P preview layer
+  // Only peers that are current editors (present in editor-only presence) may
+  // paint into our canvas over P2P; see useP2PPainting allowedPeerIds.
+  const editorPeerIds = useMemo(() => editorPeerIdsFromPresence(presence), [presence])
   const {
     isConnected: isP2PConnected,
     connectionMode,
@@ -368,6 +371,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     userId: currentUser.id ? currentUser.id.toString() : currentUser.name,
     enabled: !!currentUser.id && effectiveCanEdit,
     presence,
+    allowedPeerIds: editorPeerIds,
   })
 
   // Track current stroke ID for P2P
@@ -439,7 +443,9 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   }, [])
 
   // Auto-fit newly loaded uploaded images to current canvas dimensions once
+  // Editors only: viewers can't write transforms (and would get Unauthorized)
   useEffect(() => {
+    if (!effectiveCanEdit) return
     if (!images || dimensions.width === 0 || dimensions.height === 0) return
     images
       .filter((img: any) => !img.type || img.type === 'uploaded')
@@ -459,14 +465,16 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
             x: desiredX,
             y: desiredY,
             guestKey,
+            editKey,
           } as any)
           autoFittedRef.current.add(img._id)
         }
       })
-  }, [images, dimensions.width, dimensions.height, updateImageTransform, guestKey])
+  }, [effectiveCanEdit, images, dimensions.width, dimensions.height, updateImageTransform, guestKey, editKey])
 
   // Auto-fit newly loaded AI images once as well
   useEffect(() => {
+    if (!effectiveCanEdit) return
     if (!aiImages || dimensions.width === 0 || dimensions.height === 0) return
     aiImages.forEach((img: any) => {
       if (!img || autoFittedRef.current.has(img._id)) return
@@ -484,11 +492,12 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
           x: desiredX,
           y: desiredY,
           guestKey,
+          editKey,
         } as any)
         autoFittedRef.current.add(img._id)
       }
     })
-  }, [aiImages, dimensions.width, dimensions.height, updateAIImageTransform, guestKey])
+  }, [effectiveCanEdit, aiImages, dimensions.width, dimensions.height, updateAIImageTransform, guestKey, editKey])
 
   // Warn before tab close while a stroke is mid-draw or still syncing
   // (in-flight/queued strokes are counted in unsavedChanges/syncStatus)

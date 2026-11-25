@@ -18,7 +18,7 @@ import { ExportModal, buildExportFilename } from './ExportModal'
 import { TokenDisplay } from './TokenDisplay'
 import { usePaintingSession } from '../hooks/usePaintingSession'
 import { useConnectionStatus } from '../hooks/useConnectionStatus'
-import { useP2PPainting } from '../hooks/useP2PPainting'
+import { editorPeerIdsFromPresence, useP2PPainting } from '../hooks/useP2PPainting'
 import { useSessionImages } from '../hooks/useSessionImages'
 import { shouldShowAdminFeatures } from '../utils/environment'
 import { isIOS } from '../utils/device'
@@ -358,6 +358,9 @@ export function PaintingView() {
   }, [aiImages])
 
   // P2P connection status
+  // Ignore P2P packets from peers that aren't current editors (presence is
+  // editor-only and is cleared for collaborators when the edit link changes).
+  const editorPeerIds = useMemo(() => editorPeerIdsFromPresence(presence), [presence])
   const {
     isConnected: isP2PConnected,
     connectionMode,
@@ -367,6 +370,7 @@ export function PaintingView() {
     sessionId: validSessionId,
     userId: currentUser.id ? currentUser.id.toString() : currentUser.name, // Convert ID to string
     enabled: !!currentUser.id && sessionReady && canEdit, // Only enable for editors when session is accessible
+    allowedPeerIds: editorPeerIds,
   })
 
   // Initialize P2P logger in development
