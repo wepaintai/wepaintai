@@ -17,21 +17,36 @@ jobs:
       github.actor != 'dependabot[bot]'
     runs-on: [self-hosted, mini]
     steps:
+      - name: Reset workspace
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+
+      # Run the remover from a trusted default-branch checkout. Never execute
+      # ~/apps/wepaintai-previews/bin/*: earlier PR builds can write there.
+      # No PR code is checked out by this workflow.
+      - name: Check out trusted scripts (main)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: trusted
+          persist-credentials: false
+
       - name: Tear down preview and release pool slot
         id: remove
         env:
           PR: ${{ github.event.pull_request.number }}
         run: |
-          SCRIPT="$HOME/apps/wepaintai-previews/bin/remove-preview.sh"
-          if [ -x "$SCRIPT" ]; then
-            OUT="$("$SCRIPT" "$PR")"
-            echo "$OUT"
-            SLOT="$(printf '%s\n' "$OUT" | sed -n 's/.*POOL_REMOVED.*slot=\([^ ]*\).*/\1/p' | tail -1)"
-            echo "slot=${SLOT:-none}" >> "$GITHUB_OUTPUT"
-          else
-            echo "No remover installed on this machine; nothing to do."
+          case "$PR" in
+            ''|0|*[!0-9]*) echo "Invalid PR number: $PR" >&2; exit 1 ;;
+          esac
+          if [ ! -d "$HOME/apps/wepaintai-previews" ]; then
+            echo "No preview pool on this machine; nothing to do."
             echo "slot=none" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          OUT="$("$GITHUB_WORKSPACE/trusted/selfhost/preview/remove-preview.sh" "$PR")"
+          echo "$OUT"
+          SLOT="$(printf '%s\n' "$OUT" | sed -n 's/.*POOL_REMOVED.*slot=\([^ ]*\).*/\1/p' | tail -1)"
+          echo "slot=${SLOT:-none}" >> "$GITHUB_OUTPUT"
 
       - name: Start the oldest open queued preview
         if: steps.remove.outputs.slot != 'none'

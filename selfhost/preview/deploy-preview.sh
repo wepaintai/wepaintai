@@ -1,42 +1,82 @@
 #!/usr/bin/env bash
-# Allocate a bounded full-stack preview slot, deploy this PR's Convex backend,
+# Allocate a bounded full-stack preview slot, deploy a PR's Convex backend,
 # seed a small isolated dataset, then build and serve the matching frontend.
+#
+# Usage: deploy-preview.sh <pr-number> <pr-source-dir> [<expected-head-sha>]
+#
+# This script, pool-common.sh, slot-compose.yml and remove-preview.sh are
+# always executed from a trusted checkout of `main` (the directory this file
+# lives in). The PR checkout in <pr-source-dir> is treated as data: it is
+# installed with --ignore-scripts, deployed to its isolated slot and built.
+# Building it still executes PR code (Vite/Convex config) as the runner user;
+# see README.md "Security invariants" for the residual risk.
 set -euo pipefail
 export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DEFAULT="${PREVIEW_ROOT:-$HOME/apps/wepaintai-previews}"
-if [ -f "$ROOT_DEFAULT/bin/pool-common.sh" ]; then
-  # Prefer the trusted host-installed pool helpers (installed by setup-pool.sh)
-  # rather than mutating $ROOT/bin/* from untrusted PR branches.
-  # shellcheck disable=SC1090
-  source "$ROOT_DEFAULT/bin/pool-common.sh"
-else
-  # shellcheck source=pool-common.sh
-  source "$SCRIPT_DIR/pool-common.sh"
-fi
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+# Never source $PREVIEW_ROOT/bin/*: it is writable by earlier PR builds.
+# shellcheck source=pool-common.sh
+source "$SCRIPT_DIR/pool-common.sh"
 
-PR="${1:?usage: deploy-preview.sh <pr-number>}"
+PR="${1:?usage: deploy-preview.sh <pr-number> <pr-source-dir> [<expected-head-sha>]}"
+SOURCE_ARG="${2:?usage: deploy-preview.sh <pr-number> <pr-source-dir> [<expected-head-sha>]}"
+EXPECTED_SHA="${3:-}"
 preview_validate_pr "$PR"
 
 ROOT="$PREVIEW_ROOT"
 DEST="$ROOT/prs/pr-$PR"
 FRONTEND_HOST="preview-pr-$PR.wepaint.ai"
+TRUSTED_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
 
-# Never allow preview builds to overwrite the production checkout's .env.production
-if [ "$PWD" = "$HOME/apps/wepaintai" ]; then
-  echo "Refusing to run preview deploy inside production checkout ($PWD)" >&2
+if [ ! -d "$SOURCE_ARG" ]; then
+  echo "PR source directory does not exist: $SOURCE_ARG" >&2
   exit 1
+fi
+SOURCE_DIR="$(cd "$SOURCE_ARG" && pwd -P)"
+
+# The PR source must be a separate checkout: never the trusted checkout this
+# script runs from, the production checkout (its .env.production would be
+# overwritten), or anything under the preview pool root.
+PROD_DIR="$HOME/apps/wepaintai"
+[ -d "$PROD_DIR" ] && PROD_DIR="$(cd "$PROD_DIR" && pwd -P)"
+case "$SOURCE_DIR/" in
+  "$TRUSTED_ROOT/"*|"$PROD_DIR/"*|"$ROOT/"*)
+    echo "Refusing to build PR source in $SOURCE_DIR (trusted, production, or pool directory)" >&2
+    exit 1
+    ;;
+esac
+case "$TRUSTED_ROOT/" in
+  "$SOURCE_DIR/"*)
+    echo "Refusing to build PR source in $SOURCE_DIR: it contains the trusted checkout" >&2
+    exit 1
+    ;;
+esac
+
+if [ -n "$EXPECTED_SHA" ]; then
+  case "$EXPECTED_SHA" in
+    *[!0-9a-f]*|'') echo "Expected head SHA must be lowercase hex" >&2; exit 1 ;;
+  esac
+  if [ "${#EXPECTED_SHA}" -ne 40 ]; then
+    echo "Expected head SHA must be 40 hex characters" >&2
+    exit 1
+  fi
+  actual_sha="$(git -C "$SOURCE_DIR" rev-parse HEAD)"
+  if [ "$actual_sha" != "$EXPECTED_SHA" ]; then
+    echo "PR checkout is at $actual_sha, expected $EXPECTED_SHA" >&2
+    exit 1
+  fi
 fi
 
 mkdir -p "$ROOT/prs" "$ROOT/slots" "$ROOT/caddy" "$ROOT/logs" \
   "$ROOT/bin" "$ROOT/queue"
 
-SLOT_COMPOSE="$ROOT/bin/slot-compose.yml"
-REMOVE_SCRIPT="$ROOT/bin/remove-preview.sh"
-[ -f "$SLOT_COMPOSE" ] || SLOT_COMPOSE="$SCRIPT_DIR/slot-compose.yml"
-[ -x "$REMOVE_SCRIPT" ] || REMOVE_SCRIPT="$SCRIPT_DIR/remove-preview.sh"
+# Verify the host-installed helpers (used for manual operations) against this
+# trusted checkout; reinstall any that are stale or tampered with. Everything
+# below runs the trusted copies directly.
+preview_sync_host_bin "$SCRIPT_DIR"
+SLOT_COMPOSE="$SCRIPT_DIR/slot-compose.yml"
+REMOVE_SCRIPT="$SCRIPT_DIR/remove-preview.sh"
 
 if [ -n "${PREVIEW_POLAR_API_BASE_URL:-}" ] && [ "$PREVIEW_POLAR_API_BASE_URL" != "https://sandbox-api.polar.sh" ]; then
   echo "PREVIEW_POLAR_API_BASE_URL must point to Polar sandbox (https://sandbox-api.polar.sh)" >&2
@@ -57,8 +97,10 @@ fi
 slot=""
 new_slot="false"
 blocking_pr=""
-trap 'preview_release_lock' EXIT
+# Install the release trap only once the lock is ours; a waiter that times out
+# must never run release against another process's lock.
 preview_acquire_lock
+trap 'preview_release_lock' EXIT
 for candidate in $(seq 1 "$PREVIEW_POOL_SIZE"); do
   owner="$(preview_slot_owner "$candidate" || true)"
   if [ "$owner" = "$PR" ]; then
@@ -177,7 +219,10 @@ if [ ! -f "$compose_env" ] || [ ! -f "$backend_env" ]; then
   exit 1
 fi
 
-corepack pnpm install
+# PR code from here on: install without lifecycle scripts (esbuild, tailwind
+# oxide and parcel watcher ship prebuilt platform packages, so none are needed).
+cd "$SOURCE_DIR"
+corepack pnpm install --frozen-lockfile --ignore-scripts
 
 docker compose --env-file "$compose_env" \
   -f "$SLOT_COMPOSE" -p "$project" up -d backend
@@ -251,6 +296,24 @@ for _ in $(seq 1 20); do
   fi
   sleep 0.25
 done
+# Previews deployed before the slot-based port scheme (3300 + PR % 700) are
+# stopped by the bootout above (same launchd label); make sure nothing else is
+# still listening on this slot's port before binding it.
+port_free=""
+for _ in $(seq 1 10); do
+  if ! lsof -nP -iTCP:"$FRONTEND_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+    port_free=1
+    break
+  fi
+  sleep 1
+done
+if [ -z "$port_free" ]; then
+  echo "Frontend port $FRONTEND_PORT for slot $slot is still in use; a preview" \
+    "started under the old port scheme may need removing:" >&2
+  lsof -nP -iTCP:"$FRONTEND_PORT" -sTCP:LISTEN >&2 || true
+  exit 1
+fi
+
 mkdir -p "$DEST"
 rsync -a --delete .output/ "$DEST/output/"
 
