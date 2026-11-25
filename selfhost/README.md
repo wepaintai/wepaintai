@@ -110,6 +110,8 @@ Create `.env.production` in the repo root (gitignored):
 
 ```
 VITE_CONVEX_URL=https://convex.YOUR_DOMAIN
+# HTTP actions origin: auth proxy, presence beacon and image uploads
+VITE_CONVEX_SITE_URL=https://convex-site.YOUR_DOMAIN
 # plus auth keys — see auth migration notes
 ```
 
