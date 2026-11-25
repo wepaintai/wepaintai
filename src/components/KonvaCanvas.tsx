@@ -24,6 +24,7 @@ import {
   type CanvasCaptureResult,
 } from '../utils/canvasCapture'
 import { installUnloadGuard, registerUnsavedWorkCounter } from '../lib/unsavedChanges'
+import { reconcilePendingStrokes } from '../utils/pendingStrokes'
 
 const average = (a: number, b: number): number => (a + b) / 2
 
@@ -416,6 +417,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     guestKey,
     editKey,
     strokes,
+    rawStrokes,
     presence,
     currentUser,
     selfPresenceId,
@@ -559,28 +561,18 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     return registerUnsavedWorkCounter(() => (isDrawingRef.current ? 1 : 0))
   }, [])
 
-  // Remove confirmed strokes from pending when they appear in the strokes array
+  // Remove confirmed strokes from pending when they appear in the backend
+  // strokes. Uses rawStrokes (not filtered by optimistic undo): a stroke the
+  // user undoes while its save is still in flight is still *confirmed*, and
+  // must not leave its optimistic copy stuck on the canvas.
   useEffect(() => {
-    confirmedStrokeIdsRef.current = new Set(strokes.map(s => s._id))
-    if (strokes.length > 0) {
-      setPendingStrokes(prev => {
-        const newPending = new Map(prev)
-        const strokeIds = confirmedStrokeIdsRef.current
-
-        // Check each pending stroke to see if it's been confirmed
-        for (const [tempId, pendingStroke] of newPending) {
-          const backendId = pendingStrokeIdsRef.current.get(tempId)
-          if (backendId && strokeIds.has(backendId)) {
-            // This pending stroke has been confirmed, remove it
-            newPending.delete(tempId)
-            pendingStrokeIdsRef.current.delete(tempId)
-          }
-        }
-        
-        return newPending
-      })
+    confirmedStrokeIdsRef.current = new Set(rawStrokes.map(s => s._id))
+    if (rawStrokes.length > 0) {
+      setPendingStrokes(prev =>
+        reconcilePendingStrokes(prev, pendingStrokeIdsRef.current, confirmedStrokeIdsRef.current)
+      )
     }
-  }, [strokes])
+  }, [rawStrokes])
 
   // Clean up pending strokes that haven't been confirmed after 30 seconds
   useEffect(() => {
