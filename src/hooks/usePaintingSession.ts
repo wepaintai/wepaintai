@@ -9,6 +9,7 @@ import {
   enqueueStroke,
   hasPendingStrokes,
   retrySync,
+  dropEditLinkStrokes,
 } from "../lib/syncStatus";
 import { beginInFlightStroke, endInFlightStroke } from "../lib/unsavedChanges";
 import {
@@ -219,14 +220,17 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     }
   }, [authenticatedUser]);
 
-  // Drop a stale/revoked edit key once the backend confirms it no longer grants edit access
+  // Drop a stale/revoked edit key once the backend confirms it no longer grants
+  // edit access, along with any queued strokes that relied on it (they can
+  // never be saved; the sync banner tells the user they were dropped).
   useEffect(() => {
     if (!sessionId || !localEditKey || !sessionResult) return;
     if (
       sessionResult.status === "unauthorized" ||
-      (sessionResult.status === "ok" && !sessionResult.canEdit)
+      (sessionResult.status === "ok" && sessionResult.canEdit === false)
     ) {
       removeEditKey(sessionId);
+      dropEditLinkStrokes(sessionId);
     }
   }, [sessionId, localEditKey, sessionResult]);
 

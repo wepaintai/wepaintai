@@ -3,6 +3,7 @@ import type { FunctionArgs, FunctionReturnType } from "convex/server";
 import { api } from "../../convex/_generated/api";
 import { convexHigh } from "./convex";
 import { registerUnsavedWorkCounter } from "./unsavedChanges";
+import { getEditKey } from "../utils/guestKey";
 
 /**
  * Module-level sync failure store shared by every usePaintingSession instance
@@ -15,6 +16,15 @@ import { registerUnsavedWorkCounter } from "./unsavedChanges";
  *
  * The queue is written through to localStorage so it survives the full-page
  * OAuth redirect that "Sign in again" performs (and accidental reloads).
+ *
+ * Edit-link keys are never written to the queue (in memory or localStorage):
+ * a queued stroke only records that it relied on an edit link, and the
+ * current key is read from sessionStorage at replay time. When that key is
+ * gone — the backend confirmed the link was revoked or rotated and
+ * usePaintingSession removed it — the stroke is dropped with a visible notice
+ * instead of jamming the queue behind an error that can never succeed.
+ * Strokes saved with owner access are kept across auth outages as before
+ * (an expired JWT also surfaces as "Unauthorized").
  */
 
 export type SyncErrorKind = "auth" | "network" | "unknown";
@@ -25,13 +35,22 @@ export interface SyncStatus {
   /** Strokes that failed to save and are queued for replay. */
   pendingStrokeCount: number;
   retrying: boolean;
+  /**
+   * Strokes dropped because the edit link they relied on no longer grants
+   * access (revoked/rotated). Shown until dismissed.
+   */
+  droppedForAccessCount: number;
 }
 
 type AddStrokeArgs = FunctionArgs<typeof api.strokes.addStroke>;
 type StrokeId = FunctionReturnType<typeof api.strokes.addStroke>;
+/** Queued stroke arguments: never carry the edit-link secret. */
+type StoredStrokeArgs = Omit<AddStrokeArgs, "editKey">;
 
 interface PendingStroke {
-  args: AddStrokeArgs;
+  args: StoredStrokeArgs;
+  /** The stroke was made through an edit link (key re-read at replay). */
+  usesEditLink: boolean;
   /**
    * Resolves with the backend stroke id once the stroke is replayed (so the
    * canvas can reconcile its optimistic copy), or with undefined if the
@@ -57,6 +76,7 @@ let state: SyncStatus = {
   kind: "unknown",
   pendingStrokeCount: 0,
   retrying: false,
+  droppedForAccessCount: 0,
 };
 // Consecutive unexplained replay failures for the current queue head.
 let headFailureCount = 0;
@@ -84,13 +104,33 @@ function persistQueue() {
         JSON.stringify({
           savedAt: Date.now(),
           kind: state.kind,
-          strokes: pendingStrokes.map((p) => p.args),
+          strokes: pendingStrokes.map((p) => ({ args: p.args, usesEditLink: p.usesEditLink })),
         })
       );
     }
   } catch {
     // Quota exceeded / private mode — the in-memory queue still works.
   }
+}
+
+/**
+ * Split stroke args into the storable part and the edit-link marker. The key
+ * itself is discarded here, so it never reaches the queue or localStorage.
+ */
+function toPendingStroke(args: AddStrokeArgs): Omit<PendingStroke, "resolve"> {
+  const { editKey, ...rest } = args;
+  return { args: rest, usesEditLink: !!editKey };
+}
+
+/** Accept current entries ({args, usesEditLink}) and legacy bare args. */
+function rehydrateEntry(raw: unknown): PendingStroke | null {
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as { args?: unknown; usesEditLink?: unknown };
+  if (record.args && typeof record.args === "object") {
+    const pending = toPendingStroke(record.args as AddStrokeArgs);
+    return { ...pending, usesEditLink: pending.usesEditLink || record.usesEditLink === true };
+  }
+  return toPendingStroke(raw as AddStrokeArgs);
 }
 
 /** Restore a queue persisted before a sign-in redirect or reload. */
@@ -102,7 +142,7 @@ function rehydrateQueue() {
     const parsed = JSON.parse(raw) as {
       savedAt?: number;
       kind?: SyncErrorKind;
-      strokes?: AddStrokeArgs[];
+      strokes?: unknown[];
     };
     if (
       !Array.isArray(parsed.strokes) ||
@@ -113,7 +153,12 @@ function rehydrateQueue() {
       window.localStorage.removeItem(STORAGE_KEY);
       return;
     }
-    pendingStrokes = parsed.strokes.slice(-MAX_PENDING_STROKES).map((args) => ({ args }));
+    pendingStrokes = parsed.strokes
+      .slice(-MAX_PENDING_STROKES)
+      .map(rehydrateEntry)
+      .filter((entry): entry is PendingStroke => entry !== null);
+    // Rewrite immediately so a legacy entry's edit key doesn't stay on disk
+    persistQueue();
     // Surface the banner so the user sees the queue; replay kicks off once
     // auth comes back (SyncStatusBanner effect) or any mutation succeeds.
     // Applied async so the first hydration render still matches the server
@@ -180,7 +225,7 @@ export function hasPendingStrokes(): boolean {
  */
 export function enqueueStroke(args: AddStrokeArgs): Promise<StrokeId | undefined> {
   return new Promise((resolve) => {
-    pendingStrokes.push({ args, resolve });
+    pendingStrokes.push({ ...toPendingStroke(args), resolve });
     if (pendingStrokes.length > MAX_PENDING_STROKES) {
       const dropped = pendingStrokes.splice(0, pendingStrokes.length - MAX_PENDING_STROKES);
       headFailureCount = 0;
@@ -249,8 +294,22 @@ export async function retrySync(): Promise<boolean> {
         headFailureCount = 0;
         persistQueue();
       };
+      let replayArgs: AddStrokeArgs = entry.args;
+      if (entry.usesEditLink) {
+        const editKey = getEditKey(entry.args.sessionId);
+        if (!editKey) {
+          // The edit link this stroke relied on was revoked or rotated (or
+          // this tab never had it): it can never be saved. Drop it visibly.
+          removeEntry();
+          entry.resolve?.(undefined);
+          state = { ...state, droppedForAccessCount: state.droppedForAccessCount + 1 };
+          setState({});
+          continue;
+        }
+        replayArgs = { ...entry.args, editKey };
+      }
       try {
-        const strokeId = await convexHigh.mutation(api.strokes.addStroke, entry.args);
+        const strokeId = await convexHigh.mutation(api.strokes.addStroke, replayArgs);
         removeEntry();
         replayedAny = true;
         entry.resolve?.(strokeId);
@@ -300,6 +359,47 @@ export async function retrySync(): Promise<boolean> {
 }
 
 /**
+ * Drop queued strokes that relied on an edit link for `sessionId`, after the
+ * backend confirmed the link no longer grants edit access (revoked/rotated).
+ * Counted in `droppedForAccessCount` so the banner can say what happened.
+ * Returns how many were dropped.
+ */
+export function dropEditLinkStrokes(sessionId: string): number {
+  const kept: PendingStroke[] = [];
+  let dropped = 0;
+  for (const entry of pendingStrokes) {
+    if (entry.usesEditLink && entry.args.sessionId === sessionId) {
+      entry.resolve?.(undefined);
+      dropped += 1;
+    } else {
+      kept.push(entry);
+    }
+  }
+  if (dropped === 0) return 0;
+  pendingStrokes = kept;
+  headFailureCount = 0;
+  persistQueue();
+  state = { ...state, droppedForAccessCount: state.droppedForAccessCount + dropped };
+  setState(pendingStrokes.length === 0 ? { status: "ok" } : {});
+  return dropped;
+}
+
+/** Hide the "strokes couldn't be saved" notice. */
+export function dismissDroppedNotice() {
+  if (state.droppedForAccessCount === 0) return;
+  setState({ droppedForAccessCount: 0 });
+}
+
+/**
+ * User-initiated "Discard pending changes": drop every queued stroke and
+ * clear the error banner.
+ */
+export function discardAllPendingChanges() {
+  discardPendingStrokes();
+  setState({ status: "ok", kind: "unknown" });
+}
+
+/**
  * Drop queued strokes (e.g. when the user clears the canvas, so a later
  * replay doesn't resurrect strokes onto the freshly cleared session). With a
  * sessionId, only that session's strokes are dropped.
@@ -328,6 +428,11 @@ function getSnapshot(): SyncStatus {
   return state;
 }
 
+/** Current sync status outside React (tests, diagnostics). */
+export function getSyncStatus(): SyncStatus {
+  return state;
+}
+
 // The server never has a queue. Hydration must render this same snapshot even
 // if the rehydrated queue has already flipped `state` on the client; React
 // re-renders with the client snapshot right after hydrating.
@@ -336,6 +441,7 @@ const SERVER_SNAPSHOT: SyncStatus = {
   kind: "unknown",
   pendingStrokeCount: 0,
   retrying: false,
+  droppedForAccessCount: 0,
 };
 
 function getServerSnapshot(): SyncStatus {
