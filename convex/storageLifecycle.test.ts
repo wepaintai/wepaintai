@@ -1519,3 +1519,60 @@ describe('AUD-010 orphaned storage sweep (sweepOrphanedStorage)', { timeout: 120
     }
   })
 })
+
+describe('AUD-010 + AUD-005: placing AI outputs through an edit link', { timeout: 120_000 }, () => {
+  test('an edit-link collaborator can place an output; others cannot; deletion stays owner-only', async () => {
+    const t = createTestBackend()
+    const editKey = 'edit-link-secret'
+    const { sessionId, storageId } = await t.run(async (ctx) => {
+      const ownerId = await ctx.db.insert('users', { authId: 'link-owner', email: 'o@example.com' })
+      await ctx.db.insert('users', { authId: 'link-collab', email: 'c@example.com' })
+      const sessionId = await ctx.db.insert('paintingSessions', {
+        createdBy: ownerId,
+        editKey,
+        isPublic: false,
+        canvasWidth: 800,
+        canvasHeight: 600,
+        strokeCounter: 0,
+      })
+      const storageId = await ctx.storage.store(new Blob(['collab-output']))
+      await ctx.db.insert('aiGenerations', {
+        sessionId,
+        userId: 'link-collab',
+        status: 'completed',
+        provider: 'gemini',
+        generatedImageId: storageId,
+        createdAt: Date.now(),
+        completedAt: Date.now(),
+        outputExpiresAt: Date.now() + 60_000,
+      })
+      return { sessionId, storageId }
+    })
+    const collab = t.withIdentity({ subject: 'link-collab' })
+    const place = (caller: typeof collab, key?: string) =>
+      caller.mutation(api.images.addAIGeneratedImage, {
+        sessionId,
+        storageId,
+        editKey: key,
+        width: 64,
+        height: 64,
+      })
+
+    await expect(place(collab)).rejects.toThrow('Unauthorized')
+    await expect(place(collab, 'wrong-key')).rejects.toThrow('Unauthorized')
+    expect((await t.run((ctx) => ctx.db.query('aiGenerations').first()))?.generatedImageId).toBe(storageId)
+
+    const layerId = await place(collab, editKey)
+    const row = await t.run((ctx) => ctx.db.query('aiGenerations').first())
+    expect(row?.generatedImageId).toBeUndefined()
+    expect(row?.placedImageId).toBe(layerId)
+
+    // Deleting layers is owner-only (AUD-005); the blob survives the attempt
+    await expect(
+      collab.mutation(api.images.deleteAIImage, { imageId: layerId }),
+    ).rejects.toThrow('Unauthorized')
+    expect(await blobExists(t, storageId)).toBe(true)
+    await t.withIdentity({ subject: 'link-owner' }).mutation(api.images.deleteAIImage, { imageId: layerId })
+    expect(await blobExists(t, storageId)).toBe(false)
+  })
+})
