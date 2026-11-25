@@ -63,7 +63,9 @@ async function counts(t: ReturnType<typeof convexTest>) {
   }))
 }
 
-describe('POST /presence/leave (sendBeacon) authentication', () => {
+// t.fetch loads the HTTP router (including the Better Auth component) on first
+// use, which can exceed vitest's 5 s default on a loaded machine.
+describe('POST /presence/leave (sendBeacon) authentication', { timeout: 30_000 }, () => {
   test('requires the leave token issued to that presence row', async () => {
     const { t, sessionId, ownerId, asOwner, asOther } = await seed()
 

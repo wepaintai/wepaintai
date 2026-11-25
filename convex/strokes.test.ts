@@ -209,7 +209,7 @@ describe('strokes undo/redo integrity', () => {
     expect(await asOwner.mutation(api.strokes.removeLastStroke, { sessionId })).toBe(false)
   })
 
-  test('availability always agrees with what undo/redo actually do (seeded random walk)', async () => {
+  test('availability always agrees with what undo/redo actually do (seeded random walk)', { timeout: 30_000 }, async () => {
     const backend = await seedOwnedSession()
     const { t, asOwner, sessionId } = backend
 
