@@ -9,6 +9,7 @@ import {
   tokenPackageKeyValidator,
 } from './polarPackages'
 import { assertPositiveTokenAmount, assertValidTokenBalance } from './tokenPolicy'
+import { settleCheckout } from './polarReconcile'
 
 const unauthorizedResponse = () => new Response('Unauthorized', { status: 401 })
 const malformedResponse = () => new Response('Bad Request', { status: 400 })
@@ -21,7 +22,15 @@ function verificationHeaders(headers: Headers): Record<string, string> {
   }
 }
 
-// Polar webhook handler
+const ok = () => new Response('OK', { status: 200 })
+
+// Polar webhook handler.
+//
+// Response policy: signature/verification failures are 4xx, events that fail
+// Polar's schema are 400, and transient processing errors are 5xx so Polar
+// retries. A validly signed event is never answered with a 4xx for business
+// reasons (unknown checkout, mismatched product, ...): those return 200 and log
+// a `[POLAR-ALERT]` line, because retrying an unchanged event cannot help.
 export const handlePolarWebhook = httpAction(async (ctx, request) => {
   const webhookSecret = process.env.POLAR_WEBHOOK_SECRET
   if (!webhookSecret?.trim()) {
@@ -43,39 +52,51 @@ export const handlePolarWebhook = httpAction(async (ctx, request) => {
   }
 
   try {
-    if (event.type === 'checkout.created') {
-      return new Response('OK', { status: 200 })
-    }
-
-    if (event.type === 'checkout.updated') {
+    if (event.type === 'checkout.updated' || event.type === 'checkout.expired') {
       const checkoutData = event.data
+      // `checkout.expired` is its own event type; treat it as `expired` unless
+      // Polar reports that the checkout actually settled.
+      const status =
+        event.type === 'checkout.expired' && checkoutData.status !== 'succeeded'
+          ? 'expired'
+          : checkoutData.status
 
-      if (checkoutData.status !== 'succeeded' && checkoutData.status !== 'confirmed') {
-        return new Response('OK', { status: 200 })
-      }
-
-      if (!checkoutData.productId) {
-        return malformedResponse()
-      }
-
-      const result = await ctx.runMutation(internal.polarWebhook.validateAndCompletePurchase, {
-        checkoutId: checkoutData.id,
-        status: checkoutData.status,
-        productId: checkoutData.productId,
-        amount: checkoutData.amount,
-        currency: checkoutData.currency,
-        externalCustomerId: checkoutData.externalCustomerId,
-      })
-
-      if (result.outcome === 'rejected') {
-        const status = result.reason === 'checkout' ? 404 : 400
-        return new Response('Checkout validation failed', { status })
-      }
-
-      return new Response('OK', { status: 200 })
+      await settleCheckout(
+        ctx,
+        {
+          id: checkoutData.id,
+          status,
+          productId: checkoutData.productId ?? null,
+          amount: checkoutData.amount,
+          currency: checkoutData.currency,
+          externalCustomerId: checkoutData.externalCustomerId ?? null,
+        },
+        event.type
+      )
+      return ok()
     }
 
-    return new Response('OK', { status: 200 })
+    if (event.type === 'order.paid') {
+      const order = event.data
+      // Only one-time purchases created by our checkout flow are fulfilled.
+      // The order itself is only a trigger: tokens are granted after the
+      // authoritative checkout is re-fetched from Polar and validated through
+      // the same idempotent completion, keyed on the checkout id.
+      if (!order.paid || order.billingReason !== 'purchase' || !order.checkoutId) {
+        return ok()
+      }
+
+      const outcome = await ctx.runAction(internal.polarReconcile.reconcileCheckout, {
+        checkoutId: order.checkoutId,
+        source: 'order.paid',
+      })
+      if (outcome === 'retry') {
+        return new Response('Service Unavailable', { status: 503 })
+      }
+      return ok()
+    }
+
+    return ok()
   } catch {
     console.error('[Polar Webhook] Webhook processing failed')
     return new Response('Internal Server Error', { status: 500 })
@@ -115,6 +136,43 @@ export const createPendingPurchase = internalMutation({
   },
 })
 
+export const purchaseFailureReasonValidator = v.union(
+  v.literal('checkout_failed'),
+  v.literal('checkout_expired'),
+  v.literal('validation_rejected'),
+  v.literal('reconcile_timeout')
+)
+
+// Only `pending` purchases can move to `failed`. A `completed` purchase is
+// never reverted, so late or out-of-order failure events are no-ops.
+export const markPurchaseFailed = internalMutation({
+  args: {
+    checkoutId: v.string(),
+    reason: purchaseFailureReasonValidator,
+  },
+  handler: async (ctx, args) => {
+    const purchase = await ctx.db
+      .query('polarPurchases')
+      .withIndex('by_checkout', (q) => q.eq('checkoutId', args.checkoutId))
+      .first()
+
+    if (!purchase) {
+      return { updated: false as const, status: null }
+    }
+
+    if (purchase.status !== 'pending') {
+      return { updated: false as const, status: purchase.status }
+    }
+
+    await ctx.db.patch(purchase._id, {
+      status: 'failed',
+      failureReason: args.reason,
+      failedAt: Date.now(),
+    })
+    return { updated: true as const, status: 'failed' as const }
+  },
+})
+
 export const validateAndCompletePurchase = internalMutation({
   args: {
     checkoutId: v.string(),
@@ -134,7 +192,7 @@ export const validateAndCompletePurchase = internalMutation({
       return { outcome: 'rejected' as const, reason: 'checkout' as const }
     }
 
-    if (args.status !== 'succeeded' && args.status !== 'confirmed') {
+    if (args.status !== 'succeeded') {
       return { outcome: 'rejected' as const, reason: 'status' as const }
     }
 
@@ -168,28 +226,41 @@ export const validateAndCompletePurchase = internalMutation({
       return { outcome: 'rejected' as const, reason: 'user' as const }
     }
 
-    if (purchase.status === 'failed') {
-      return { outcome: 'rejected' as const, reason: 'status' as const }
+    // A validated `succeeded` checkout completes from `pending` or `failed`:
+    // Polar may deliver `failed` before a retried payment succeeds, or deliver
+    // events out of order. Only `completed` is terminal.
+    if (purchase.status === 'completed') {
+      return { outcome: 'duplicate' as const }
     }
 
-    const existingTransaction = await ctx.db
+    const operationKey = `polar-purchase:${args.checkoutId}`
+    const existingByKey = await ctx.db
       .query('tokenTransactions')
-      .withIndex('by_user', (q) => q.eq('userId', purchase.userId))
-      .filter((q) =>
-        q.and(
-          q.eq(q.field('type'), 'purchase'),
-          q.eq(q.field('metadata.polarCheckoutId'), args.checkoutId)
-        )
+      .withIndex('by_user_operation', (q) =>
+        q.eq('userId', purchase.userId).eq('operationKey', operationKey)
       )
       .first()
 
+    const existingTransaction =
+      existingByKey ??
+      (await ctx.db
+        .query('tokenTransactions')
+        .withIndex('by_user', (q) => q.eq('userId', purchase.userId))
+        .filter((q) =>
+          q.and(
+            q.eq(q.field('type'), 'purchase'),
+            q.eq(q.field('metadata.polarCheckoutId'), args.checkoutId)
+          )
+        )
+        .first())
+
     if (existingTransaction) {
-      if (purchase.status !== 'completed') {
-        await ctx.db.patch(purchase._id, {
-          status: 'completed',
-          completedAt: Date.now(),
-        })
-      }
+      await ctx.db.patch(purchase._id, {
+        status: 'completed',
+        completedAt: Date.now(),
+        failureReason: undefined,
+        failedAt: undefined,
+      })
       return { outcome: 'duplicate' as const }
     }
 
@@ -208,6 +279,7 @@ export const validateAndCompletePurchase = internalMutation({
     })
     await ctx.db.insert('tokenTransactions', {
       userId: purchase.userId,
+      operationKey,
       type: 'purchase',
       amount: tokens,
       balance: newBalance,
@@ -221,6 +293,8 @@ export const validateAndCompletePurchase = internalMutation({
     await ctx.db.patch(purchase._id, {
       status: 'completed',
       completedAt: Date.now(),
+      failureReason: undefined,
+      failedAt: undefined,
     })
 
     return { outcome: 'credited' as const, newBalance }

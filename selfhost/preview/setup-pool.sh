@@ -5,14 +5,15 @@
 set -euo pipefail
 export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT="${PREVIEW_ROOT:-$HOME/apps/wepaintai-previews}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+# shellcheck source=pool-common.sh
+source "$SCRIPT_DIR/pool-common.sh"
+ROOT="$PREVIEW_ROOT"
 
 mkdir -p "$ROOT/bin" "$ROOT/caddy" "$ROOT/logs" "$ROOT/prs" \
   "$ROOT/queue" "$ROOT/slots" "$ROOT/locks"
-cp "$SCRIPT_DIR/pool-common.sh" "$SCRIPT_DIR/slot-compose.yml" \
-  "$SCRIPT_DIR/remove-preview.sh" "$ROOT/bin/"
-chmod +x "$ROOT/bin/pool-common.sh" "$ROOT/bin/remove-preview.sh"
+# Install (or repair) the manual-operation helpers from this trusted checkout.
+preview_sync_host_bin "$SCRIPT_DIR"
 
 if [ ! -f "$ROOT/config.env" ]; then
   cp "$SCRIPT_DIR/config.example.env" "$ROOT/config.env"

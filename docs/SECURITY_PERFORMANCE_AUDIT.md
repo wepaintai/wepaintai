@@ -1,6 +1,6 @@
 # Security, Performance, and Quality Improvement Backlog
 
-Last reviewed: 2026-07-09
+Last reviewed: 2026-11-22
 
 This document tracks the repository audit findings so work can continue across separate Codex sessions. Update the status, notes, and verification fields as each item progresses.
 
@@ -78,6 +78,8 @@ This document tracks the repository audit findings so work can continue across s
 
   Deployment/configuration: deploy the Convex schema and functions, then set `POLAR_PRODUCT_ID_50`, `POLAR_PRODUCT_ID_125`, `POLAR_API_KEY`, `POLAR_WEBHOOK_SECRET`, `POLAR_API_BASE_URL`, and `SITE_URL` in every applicable Convex deployment. The Polar products must be one-time `usd` products priced at 499 and 999 cents respectively. No client `VITE_POLAR_*` or `VITE_APP_URL` values are used. The optional `packageKey` schema field preserves deploy compatibility with existing records; legacy pending purchases without a package key intentionally fail closed and require a new checkout or manual reconciliation. No deployment was performed as part of this change.
 
+  Follow-up (2026-11-22): Tightened `convex/polarWebhook.ts` so tokens are credited only on settled `status === 'succeeded'` (unsettled `confirmed` events no longer grant tokens), pending purchases transition to `failed` on `failed`/`expired` webhooks, purchase deduplication writes/reads `operationKey` via `by_user_operation` (with legacy fallback), and `convex/polar.ts` validates HTTPS checkout URLs and string currency. Verified with 18/18 tests in `convex/polar.test.ts`.
+
 ### AUD-003: Fail closed and sanitize Polar webhook handling
 
 - Status: DONE
@@ -104,19 +106,26 @@ This document tracks the repository audit findings so work can continue across s
 
 ### AUD-004: Enforce authorization on every Convex function
 
-- Status: TODO
+- Status: DONE
 - Area: Authorization / Data integrity
 - Primary files:
+  - `convex/sessionAuth.ts`
   - `convex/images.ts`
   - `convex/paintLayers.ts`
   - `convex/paintLayer.ts`
   - `convex/layers.ts`
   - `convex/paintingSessions.ts`
+  - `convex/strokes.ts`
+  - `convex/liveStrokes.ts`
   - `convex/aiGeneration.ts`
+  - `convex/geminiGeneration.ts`
+  - `convex/backgroundRemoval.ts`
   - `convex/imageMerger.ts`
   - `convex/presence.ts`
   - `convex/viewerAcks.ts`
   - `convex/webrtc.ts`
+  - `src/hooks/usePaintingSession.ts`
+  - `src/lib/convex.tsx`
 - Problem: Many public queries and mutations can read, create, modify, reorder, or delete records without checking session access. Client-supplied `userId` values also allow impersonation.
 - Required changes:
   - Add a shared authorization module for session read, collaborate, owner, and admin policies.
@@ -130,8 +139,8 @@ This document tracks the repository audit findings so work can continue across s
   - Private-session resources cannot be accessed using only a record ID.
   - A caller cannot attribute activity to another user.
   - Every public Convex export has an explicit documented access policy and test.
-- Verification: Not run
-- Notes:
+- Verification: `pnpm run typecheck` PASS; `pnpm run test:run` PASS (9 files, 64 tests including `convex/sessionAuth.test.ts`, `convex/images.test.ts`, `convex/layersAuth.test.ts`, `convex/paintingSessions.test.ts`); `pnpm exec eslint . --quiet` PASS (0 errors); `pnpm run build` PASS.
+- Notes: Completed 2026-11-22 (building on PRs #64/#66/#67/#71/#80). Centralized `resolveAuthenticatedUser`, `canReadSession`, `assertCanModifySession` (returning `{ user }` with constant-time `guestOwnerKey` matching and soft-delete rejection), and `internal.sessionAuth.verifySessionAccess` in `convex/sessionAuth.ts`. Converted `imageMerger.getLayerImageUrl` to `internalQuery` with session read auth, gated `aiGeneration.generateImage`, `geminiGeneration.generateImage`, `backgroundRemoval.removeBackground`, `imageMerger.mergeImages`, `imageMerger.getSessionMerges`, `presence.{updatePresence,leaveSession,getSessionPresence}`, and `viewerAcks.{getViewerState,getAllViewerStatesForSession}`. Removed client-trusted `userId` spoofing in `strokes`, `liveStrokes`, and `presence`, added cross-session `layerId` validation in `strokes.addStroke`, blocked private orphan hijacking in `claimSessionOwnership`, and removed the unauthenticated `convexLow` WebSocket client from the frontend. Public-read vs edit capability separation and bounded input validation/rate limits remain tracked in `AUD-005` and `AUD-011`.
 
 ---
 
@@ -159,7 +168,7 @@ This document tracks the repository audit findings so work can continue across s
 
 ### AUD-006: Reserve AI tokens atomically before provider spending
 
-- Status: TODO
+- Status: DONE
 - Area: AI billing / Concurrency
 - Files:
   - `convex/aiGeneration.ts`
@@ -167,6 +176,7 @@ This document tracks the repository audit findings so work can continue across s
   - `convex/backgroundRemoval.ts`
   - `convex/imageMerger.ts`
   - `convex/tokens.ts`
+  - `convex/tokens.test.ts`
 - Problem: Actions check balance, incur provider cost, and deduct afterward. Concurrent requests can all pass the initial balance check.
 - Required changes:
   - Atomically reserve/debit tokens before starting external work.
@@ -177,15 +187,17 @@ This document tracks the repository audit findings so work can continue across s
   - A one-token balance cannot launch multiple paid operations concurrently.
   - Retries do not create duplicate provider work or charges.
   - Success, failure, timeout, and cancellation paths reconcile correctly.
-- Verification: Not run
-- Notes:
+- Verification: `pnpm run test:run` PASS (7/7 tests in `convex/tokens.test.ts` covering concurrent 1-token launches, duplicate charges, duplicate refunds, uncharged refund rejection, and provider failure/cancellation refunds across Replicate, Gemini, background removal, and image merge); `pnpm run typecheck` PASS; `pnpm exec eslint . --quiet` PASS.
+- Notes: Completed 2026-11-22. Added idempotent `internal.tokens.refundTokensForOperation` keyed on `refund:${operationKey}` (verifying an existing `usage` debit before crediting back). Updated all four AI actions to atomically reserve 1 token via `consumeTokensForOperation` before any external provider calls, using immutable operation IDs (`generationId`, `mergeId`, and a single per-invocation ID in `backgroundRemoval.ts`), and refunding once + marking DB rows `failed` on any provider error, timeout, cancellation, empty/invalid URL, or exception. Also moved `GEMINI_API_KEY` from the URL query string to the `x-goog-api-key` header and clamped `getTokenHistory` limits.
 
 ### AUD-007: Fix background-removal ownership comparison
 
-- Status: TODO
+- Status: DONE
 - Area: Correctness / Authorization
 - Files:
   - `convex/backgroundRemoval.ts`
+  - `convex/sessionAuth.ts`
+  - `convex/sessionAuth.test.ts`
 - Problem: `session.createdBy` is a Convex user ID while `identity.subject` is an authentication subject string, so legitimate owners can be rejected.
 - Required changes:
   - Use the centralized authorization helper from AUD-004.
@@ -194,16 +206,17 @@ This document tracks the repository audit findings so work can continue across s
   - Session owners can use the operation.
   - Non-editors cannot use it against the session.
   - Tests cover owner, guest editor, public viewer, and unrelated user.
-- Verification: Not run
-- Notes:
+- Verification: `pnpm run test:run convex/sessionAuth.test.ts` PASS (owner, guest-key editor, wrong guest key, unauthenticated, and private-session outsider cases verified).
+- Notes: Completed 2026-11-22. Replaced the incompatible `session.createdBy !== identity.subject` comparison with `internal.sessionAuth.verifySessionAccess` and threaded `guestKey` from `BackgroundRemovalModal.tsx`.
 
 ### AUD-008: Replace the client-side password gate
 
 - Status: DONE
 - Area: Authentication
 - Files:
-  - `src/components/PasswordProtection.tsx`
+  - `src/components/PasswordProtection.tsx` (removed)
   - `src/routes/__root.tsx`
+  - `selfhost/preview/deploy-preview.sh`
 - Problem: The password is hardcoded in client JavaScript and authentication state is a client-controlled `sessionStorage` value. It provides no security boundary.
 - Required changes:
   - Remove the component if it is only a visual preview gate, or replace it with server-side authentication/middleware.
@@ -429,8 +442,10 @@ This document tracks the repository audit findings so work can continue across s
 - Area: Deployment security
 - Files:
   - `selfhost/docker-compose.yml`
+  - `selfhost/bin/start-app.sh`
+  - `selfhost/bin/backup.sh`
   - `selfhost/launchd/`
-  - `server/middleware/`
+  - `server/middleware/canonical-host.ts`
 - Problem: Containers use unpinned `latest` tags, backend/dashboard ports bind to every interface, and repository code defines no browser security headers.
 - Required changes:
   - Pin container versions or immutable digests.
@@ -441,16 +456,18 @@ This document tracks the repository audit findings so work can continue across s
   - Internal services are not unintentionally reachable from LAN/WAN.
   - Deployment versions are reproducible.
   - Security headers are verified against production responses.
+- Verification: `zsh -n selfhost/bin/start-app.sh selfhost/bin/backup.sh` PASS; `bash -n selfhost/preview/*.sh` PASS; `pnpm run typecheck` PASS; `pnpm run build` PASS.
 - Verification (headers): `src/lib/securityHeaders.test.ts`; built server (`node .output/server/index.mjs`) responses to `/`, `/?session=…`, `/login` and a 404 carry the CSP, HSTS and X-Frame-Options headers, and the apex 308, `/sign-up` 307 and proxied auth 302/401/413 responses carry HSTS and X-Frame-Options; browser console on `/` and `/?session=…` shows no CSP violations, with PostHog's lazy scripts loading. Not yet verified against production responses.
-- Notes: Browser security headers done 2026-11-24 (PR #101). `server/middleware/canonical-host.ts` sets HSTS (`max-age=31536000; includeSubDomains`), `X-Frame-Options: DENY`, `X-Content-Type-Options`, `Referrer-Policy` and `Permissions-Policy` on every response, including non-2xx responses (404, redirects, 413, proxied auth errors), which h3 would otherwise send without event headers. The root route's `headers` sends an enforced CSP on all SSR HTML (including the 404 page) with a per-request nonce from `src/router.tsx` that TanStack Start puts on every inline script: `script-src 'self' 'nonce-…'` plus the PostHog hosts (no `unsafe-inline` or `unsafe-eval`), `frame-ancestors 'none'`, `base-uri 'self'`, `object-src 'none'` and `form-action 'self'` (Google sign-in is a fetch plus a top-level navigation, not a form post). The CSP is skipped under `vite dev`. HSTS `includeSubDomains` also applies to every `*.wepaint.ai` host once a browser sees it on the apex redirect, so all subdomains must stay HTTPS-only. Container pinning, port binding and the firewall documentation remain open.
+- Notes: Updated 2026-11-22. Bound production Docker ports (`3210`, `3211`, `6791`) and Nitro (`HOST=127.0.0.1`) to loopback by default, fixed `start-app.sh` / `backup.sh` default paths (`$HOME/apps/wepaintai`) and zsh `NOMATCH` bugs, added `unzip -tq` integrity verification to `backup.sh`, and added baseline security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`) + 308 apex/www canonicalization in `server/middleware/canonical-host.ts`. Updated 2026-11-24 (PR #102 review fixes): Convex images moved to `ghcr.io/convex/convex-backend` / `ghcr.io/convex/convex-dashboard` (the `ghcr.io/get-convex/*` paths return 403) and `docker-compose.yml` now defaults to pinned digests; the Cloudflare tunnel example targets `127.0.0.1` to match the loopback binds; `selfhost/launchd/*.plist` point at `~/apps/wepaintai`; `backup.sh` fails loudly when the checkout, `.env.convex`, or the Convex CLI is missing; the README documents Docker Desktop start-at-login and routine backup checks. Preview deploys run trusted scripts from a `main` checkout under `pull_request_target` with the PR checked out as data, verify `~/apps/wepaintai-previews/bin/*` checksums, and install with `--ignore-scripts`; the residual same-user runner risk and the org-admin/sudo follow-ups (runner group restricted to `main` workflows, dedicated runner user or ephemeral VM) are documented in `selfhost/preview/README.md`. Remaining: offsite backup sync and the runner-isolation follow-ups. Browser security headers done 2026-11-24 (PR #101). `server/middleware/canonical-host.ts` sets HSTS (`max-age=31536000; includeSubDomains`), `X-Frame-Options: DENY`, `X-Content-Type-Options`, `Referrer-Policy` and `Permissions-Policy` on every response, including non-2xx responses (404, redirects, 413, proxied auth errors), which h3 would otherwise send without event headers. The root route's `headers` sends an enforced CSP on all SSR HTML (including the 404 page) with a per-request nonce from `src/router.tsx` that TanStack Start puts on every inline script: `script-src 'self' 'nonce-…'` plus the PostHog hosts (no `unsafe-inline` or `unsafe-eval`), `frame-ancestors 'none'`, `base-uri 'self'`, `object-src 'none'` and `form-action 'self'` (Google sign-in is a fetch plus a top-level navigation, not a form post). The CSP is skipped under `vite dev`. HSTS `includeSubDomains` also applies to every `*.wepaint.ai` host once a browser sees it on the apex redirect, so all subdomains must stay HTTPS-only.
 
 ### AUD-020: Add automated tests and CI gates
 
-- Status: TODO
+- Status: IN PROGRESS
 - Area: Quality engineering
 - Files:
   - `package.json`
-  - New test files and `.github/workflows/`
+  - `.github/workflows/ci.yml`
+  - `convex/*.test.ts`
 - Problem: There is no configured test runner or CI workflow.
 - Required changes:
   - Add Vitest for server/unit tests and React Testing Library for UI behavior.
@@ -460,20 +477,21 @@ This document tracks the repository audit findings so work can continue across s
 - Acceptance criteria:
   - Pull requests cannot merge with failing typecheck, tests, or build.
   - Critical authorization, token, payment, and concurrency paths have regression coverage.
-- Verification: Not run
-- Notes:
+- Verification: `pnpm run test:run` PASS (9 files, 64 tests); `pnpm run typecheck` PASS; `pnpm exec eslint . --quiet` PASS; `pnpm run build` PASS.
+- Notes: Updated 2026-11-22. Added GitHub-hosted `.github/workflows/ci.yml` running pinned `corepack pnpm` install, typecheck, tests, lint, and production build on PRs and pushes to `main`. Added regression tests in `convex/sessionAuth.test.ts`, `convex/strokes.test.ts`, `convex/tokens.test.ts`, and `convex/polar.test.ts` (64 tests total). React Testing Library UI tests, Playwright E2E tests, and branch-protection required-check configuration remain to complete AUD-020.
 
 ### AUD-021: Pay down lint and React correctness warnings
 
-- Status: TODO
+- Status: IN PROGRESS
 - Area: Maintainability
 - Files:
   - `eslint.config.js`
+  - `.prettierignore`
   - Warnings across `src/` and `convex/`
 - Baseline:
-  - Project-only scan: 198 warnings.
-  - Top groups: 85 explicit `any`, 50 unused variables, 16 hook dependency issues, and 15 state-in-effect warnings.
-  - Default `eslint .` also scans nested `.claude` worktrees and reported 1,191 warnings.
+  - Project-only scan: 198 warnings (2026-07-09); reduced to 181 warnings and 0 errors (2026-11-22).
+  - Top groups: explicit `any`, unused variables, hook dependency issues, and state-in-effect warnings.
+  - Default `eslint .` previously scanned nested `.claude` worktrees and reported 1,191 warnings.
 - Required changes:
   - Ignore nested worktrees and agent/runtime directories.
   - Resolve React hook dependency, purity, refs, and state-in-effect warnings first.
@@ -482,8 +500,8 @@ This document tracks the repository audit findings so work can continue across s
   - Lint scans only the intended repository source.
   - No React correctness warnings remain.
   - CI enforces an agreed warning budget trending toward zero.
-- Verification: Baseline recorded 2026-07-09
-- Notes:
+- Verification: `pnpm exec eslint . --quiet` PASS (0 errors); full `pnpm lint` now scans only repository source (181 warnings).
+- Notes: Updated 2026-11-22. Added `.claude` and `.agents` ignores to `eslint.config.js` and `.prettierignore`. Remaining work: resolve React hook correctness warnings and tighten rules to errors.
 
 ### AUD-022: Split oversized editor modules
 
