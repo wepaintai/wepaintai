@@ -965,14 +965,42 @@ describe('PaintingEditorContext deduplication & single-lifecycle invariants', ()
     expect(mutationArgs(api.viewerAcks.removeViewerState)).toHaveLength(0)
     expect(presenceState.self.get(sessionId)).toBeTruthy()
 
-    // A real session change does leave the previous session
     unmount()
+  })
+
+  test('switching to another session leaves the previous one even while the new one is still loading', () => {
+    seedAccessibleSession({ authenticated: true })
+    presenceState.self.set(sessionId, { presenceId: 'pres_self', leaveToken: 'leave-token' })
+    const sessionResult = queryResponseMap.get(fnKey(api.paintingSessions.getSession))
+    const otherSessionId = 'session_other' as Id<'paintingSessions'>
+    // getSession for the new session hasn't resolved yet
+    queryResponseMap.set(fnKey(api.paintingSessions.getSession), (args: { sessionId: string }) =>
+      args.sessionId === sessionId ? sessionResult : undefined
+    )
+
+    let editor: PaintingEditorContextValue | null = null
+    function Harness({ id }: { id: Id<'paintingSessions'> }) {
+      editor = usePaintingEditorController({ sessionId: id })
+      return null
+    }
+    const { rerender, unmount } = mountTree(React.createElement(Harness, { id: sessionId }))
+    expect(editor!.canEdit).toBe(true)
+
+    rerender(React.createElement(Harness, { id: otherSessionId }))
+    expect(editor!.sessionStatus).toBe('loading')
+    expect(editor!.canEdit).toBe(false)
     act(() => {
       vi.advanceTimersByTime(0)
     })
+
     expect(mutationArgs(api.presence.leaveSession)).toEqual([
       expect.objectContaining({ sessionId }),
     ])
+    expect(mutationArgs(api.viewerAcks.removeViewerState)).toEqual([
+      expect.objectContaining({ sessionId, viewerId: userId }),
+    ])
+
+    unmount()
   })
 
   test('edit-link collaborator: every editor query/mutation carries editKey as its own argument', async () => {

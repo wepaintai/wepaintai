@@ -741,6 +741,14 @@ export function usePaintingSession(
   // leave itself is deferred one tick and cancelled if the same session/viewer
   // re-subscribes immediately, which is what React StrictMode's simulated
   // unmount/remount does in development.
+  // Sessions this hook has had edit access to. The leave cleanup checks this
+  // instead of the live canEdit: by the time a session switch's cleanup runs,
+  // canEdit already describes the *new* (still loading) session.
+  const editorSessionsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (sessionId && canEdit) editorSessionsRef.current.add(sessionId);
+  }, [sessionId, canEdit]);
+
   const pendingLeaveRef = useRef<{
     key: string;
     timer: ReturnType<typeof setTimeout>;
@@ -789,7 +797,7 @@ export function usePaintingSession(
         clearTimeout(liveStrokeUpdateRef.current);
         liveStrokeUpdateRef.current = null;
       }
-      if (!currentSessionId || !canEditRef.current) return;
+      if (!currentSessionId || !editorSessionsRef.current.has(currentSessionId)) return;
       const runLeave = () => {
         pendingLeaveRef.current = null;
         const currentGuestKey = getGuestKey(currentSessionId) || undefined;
