@@ -40,8 +40,8 @@
 1. Go to Settings → Environment Variables
 2. Add the following variables:
    - `POLAR_API_KEY`: Your Polar API key (from Polar dashboard → Settings → API).
-     It needs `checkouts:write` (create checkouts) and `checkouts:read`
-     (reconciliation and `order.paid` look up checkouts).
+     The key must be allowed to create checkouts and to read checkouts
+     (reconciliation and `order.paid` call `GET /v1/checkouts/{id}`).
    - `POLAR_WEBHOOK_SECRET`: The webhook secret from Step 2
    - `POLAR_PRODUCT_ID_50`: Product ID for the $4.99 / 50-token product
    - `POLAR_PRODUCT_ID_125`: Product ID for the $9.99 / 125-token product
