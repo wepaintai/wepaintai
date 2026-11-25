@@ -29,7 +29,8 @@
 1. In Polar dashboard, go to Settings → Webhooks
 2. Create a new webhook:
    - URL: `https://actions.wepaint.ai/webhooks/polar`
-   - Events: Select `checkout.created` and `checkout.updated`
+   - Events: Select `checkout.created`, `checkout.updated`, `checkout.expired`,
+     and `order.paid`
 3. Copy the webhook secret that Polar provides
 
 ## Step 3: Configure Environment Variables
@@ -38,7 +39,9 @@
 
 1. Go to Settings → Environment Variables
 2. Add the following variables:
-   - `POLAR_API_KEY`: Your Polar API key (from Polar dashboard → Settings → API)
+   - `POLAR_API_KEY`: Your Polar API key (from Polar dashboard → Settings → API).
+     It needs `checkouts:write` (create checkouts) and `checkouts:read`
+     (reconciliation and `order.paid` look up checkouts).
    - `POLAR_WEBHOOK_SECRET`: The webhook secret from Step 2
    - `POLAR_PRODUCT_ID_50`: Product ID for the $4.99 / 50-token product
    - `POLAR_PRODUCT_ID_125`: Product ID for the $9.99 / 125-token product
@@ -91,9 +94,37 @@ purchase logic:
   five-minute timestamp tolerance. Expired, future-dated, missing-header, and
   invalid-signature deliveries return a generic 401 before business logic.
 - Signed events that do not match Polar's event schema return a generic 400.
-  Transient processing failures return 500 so Polar can retry the delivery.
+  Transient processing failures return 5xx so Polar can retry the delivery.
+- A validly signed event is never answered with a 4xx for business reasons
+  (unknown checkout, product/amount/currency/customer mismatch). It returns 200
+  and logs a `[POLAR-ALERT]` line with only the checkout id and reason, because
+  redelivering the same event cannot succeed. Search Convex logs for
+  `[POLAR-ALERT]` to find purchases that need manual attention.
 - Do not log webhook secrets, signatures, authorization/request headers, or
   event payloads while troubleshooting.
+
+## Settlement and Reconciliation
+
+- Tokens are credited only for a `succeeded` checkout whose product, amount,
+  currency, and `external_customer_id` match the stored purchase. Crediting is
+  idempotent per checkout id, so duplicate or concurrent deliveries credit once.
+- `failed` is not terminal: a validated `succeeded` checkout still completes a
+  `failed` purchase (for example after a retried payment, or out-of-order
+  delivery). `completed` is terminal: a later `failed` or `expired` is ignored.
+- `checkout.expired` (and `checkout.updated` with status `expired`) moves a
+  `pending` purchase to `failed` with `failureReason: checkout_expired`.
+- `order.paid` is an extra fulfilment trigger. The handler re-fetches the
+  checkout from `GET /v1/checkouts/{id}` and runs the same validated completion;
+  order amounts are never trusted directly. If Polar cannot be reached the
+  webhook answers 503 so Polar redelivers.
+- A cron (`reconcile pending polar purchases`, every 15 minutes) re-checks up to
+  25 purchases that have been `pending` for more than 30 minutes, oldest first:
+  `succeeded` completes, `failed`/`expired` mark the purchase failed, and other
+  states stay pending. A succeeded checkout that fails validation is marked
+  failed (`validation_rejected`) with an alert. Purchases that still cannot be
+  settled after 24 hours are marked failed (`reconcile_timeout`) with an alert
+  so they stop blocking the queue. A 401/403 from Polar stops the batch. If
+  `POLAR_API_KEY` is unset the job logs a warning and does nothing.
 
 ## Troubleshooting
 
