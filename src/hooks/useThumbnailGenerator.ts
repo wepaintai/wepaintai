@@ -3,7 +3,7 @@ import { useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import { Id } from '../../convex/_generated/dataModel'
 import type { CanvasRef } from '../components/KonvaCanvas'
-import { getGuestKey } from '../utils/guestKey'
+import { getEditKey, getGuestKey } from '../utils/guestKey'
 
 interface UseThumbnailGeneratorOptions {
   sessionId?: Id<'paintingSessions'>
@@ -84,6 +84,7 @@ export function useThumbnailGenerator({
                     sessionId: targetSessionId,
                     thumbnailUrl: capture.dataUrl,
                     guestKey: getGuestKey(targetSessionId) || undefined,
+                    editKey: getEditKey(targetSessionId) || undefined,
                   })
 
                   if (activeSessionRef.current === targetSessionId) {

@@ -15,6 +15,7 @@ function createTestBackend() {
 async function seedSession(options: {
   ownerAuthId?: string
   guestOwnerKey?: string
+  editKey?: string
   isPublic?: boolean
 }) {
   const t = createTestBackend()
@@ -31,6 +32,7 @@ async function seedSession(options: {
     return await ctx.db.insert('paintingSessions', {
       createdBy: ownerId,
       guestOwnerKey: options.guestOwnerKey,
+      editKey: options.editKey,
       isPublic: options.isPublic ?? false,
       canvasWidth: 800,
       canvasHeight: 600,
@@ -95,16 +97,25 @@ describe('painting session thumbnails', () => {
     expect(session?.thumbnailUrl).toBe('data:image/jpeg;base64,guest')
   })
 
-  test('allows thumbnail updates for publicly editable sessions', async () => {
-    const { t, sessionId } = await seedSession({ isPublic: true })
+  test('rejects anonymous thumbnail updates on public read-only sessions and allows valid editKey', async () => {
+    const editKey = 'collab-thumbnail-key'
+    const { t, sessionId } = await seedSession({ isPublic: true, editKey })
+
+    await expect(
+      t.mutation(api.paintingSessions.updateSessionThumbnail, {
+        sessionId,
+        thumbnailUrl: 'data:image/jpeg;base64,public-vandal',
+      }),
+    ).rejects.toThrow('Unauthorized')
 
     await t.mutation(api.paintingSessions.updateSessionThumbnail, {
       sessionId,
-      thumbnailUrl: 'data:image/jpeg;base64,public',
+      thumbnailUrl: 'data:image/jpeg;base64,collaborator',
+      editKey,
     })
 
     const session = await t.run(async (ctx) => await ctx.db.get(sessionId))
-    expect(session?.thumbnailUrl).toBe('data:image/jpeg;base64,public')
+    expect(session?.thumbnailUrl).toBe('data:image/jpeg;base64,collaborator')
   })
 })
 
@@ -257,9 +268,10 @@ describe('getUserSessions', () => {
 
 describe('session document size guards', () => {
   test('thumbnails are limited to bounded image data URLs or HTTPS URLs', async () => {
-    const { t, sessionId } = await seedSession({ isPublic: true })
+    const editKey = 'thumb-edit-key'
+    const { t, sessionId } = await seedSession({ isPublic: true, editKey })
     const update = (thumbnailUrl: string) =>
-      t.mutation(api.paintingSessions.updateSessionThumbnail, { sessionId, thumbnailUrl })
+      t.mutation(api.paintingSessions.updateSessionThumbnail, { sessionId, thumbnailUrl, editKey })
 
     const oversized = 'data:image/jpeg;base64,' + 'A'.repeat(MAX_THUMBNAIL_URL_LENGTH)
     await expect(update(oversized)).rejects.toThrow('too large')
@@ -277,10 +289,11 @@ describe('session document size guards', () => {
   })
 
   test('aiPrompts keeps only the most recent prompts and rejects oversized prompts', async () => {
-    const { t, sessionId } = await seedSession({ isPublic: true })
+    const editKey = 'prompt-edit-key'
+    const { t, sessionId } = await seedSession({ isPublic: true, editKey })
 
     for (let i = 0; i < MAX_SESSION_PROMPTS + 5; i++) {
-      await t.mutation(api.paintingSessions.addAIPrompt, { sessionId, prompt: `prompt ${i}` })
+      await t.mutation(api.paintingSessions.addAIPrompt, { sessionId, prompt: `prompt ${i}`, editKey })
     }
     const prompts = await t.query(api.paintingSessions.getAIPrompts, { sessionId })
     expect(prompts).toHaveLength(MAX_SESSION_PROMPTS)
@@ -291,6 +304,7 @@ describe('session document size guards', () => {
       t.mutation(api.paintingSessions.addAIPrompt, {
         sessionId,
         prompt: 'p'.repeat(MAX_PROMPT_LENGTH + 1),
+        editKey,
       }),
     ).rejects.toThrow('too long')
 
@@ -298,7 +312,7 @@ describe('session document size guards', () => {
     await t.run(async (ctx) =>
       ctx.db.patch(sessionId, { aiPrompts: Array.from({ length: 80 }, (_, i) => `old ${i}`) }),
     )
-    await t.mutation(api.paintingSessions.addAIPrompt, { sessionId, prompt: 'fresh' })
+    await t.mutation(api.paintingSessions.addAIPrompt, { sessionId, prompt: 'fresh', editKey })
     const trimmed = await t.query(api.paintingSessions.getAIPrompts, { sessionId })
     expect(trimmed).toHaveLength(MAX_SESSION_PROMPTS)
     expect(trimmed[trimmed.length - 1]).toBe('fresh')

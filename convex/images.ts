@@ -48,9 +48,9 @@ type UploadCheckFailure = { ok: false; status: number; error: string };
 
 /**
  * Rate-limit bucket for upload intents. Signed-in users are limited across all
- * sessions; a guest owner is identified by the session's owner key; everyone
- * else editing a public session shares one bucket per session (a random,
- * non-matching guestKey grants nothing, so it can't be rotated to evade).
+ * sessions; a guest owner is identified by the session's owner key; anonymous
+ * edit-link holders share one bucket per session (a random, non-matching
+ * guestKey grants nothing, so it can't be rotated to evade).
  */
 function uploadRateKey(
   session: Doc<"paintingSessions">,
@@ -120,6 +120,7 @@ export const createUploadIntent = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   returns: v.object({
     intentId: v.id("imageUploadIntents"),
@@ -130,7 +131,9 @@ export const createUploadIntent = mutation({
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
     if (!session) throw new ConvexError("Session not found");
-    const { user } = await assertCanModifySession(ctx, session, args.guestKey);
+    const { user } = await assertCanModifySession(ctx, session, args.guestKey, {
+      editKey: args.editKey,
+    });
 
     const now = Date.now();
     const rateKey = uploadRateKey(session, user, args.guestKey);
@@ -229,12 +232,15 @@ export const commitImageUpload = mutation({
     canvasWidth: v.optional(v.number()),
     canvasHeight: v.optional(v.number()),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   returns: v.id("uploadedImages"),
   handler: async (ctx, args): Promise<Id<"uploadedImages">> => {
     const uploadSession = await ctx.db.get(args.sessionId);
     if (!uploadSession) throw new ConvexError("Session not found");
-    const { user } = await assertCanModifySession(ctx, uploadSession, args.guestKey);
+    const { user } = await assertCanModifySession(ctx, uploadSession, args.guestKey, {
+      editKey: args.editKey,
+    });
 
     const intent = await ctx.db.get(args.intentId);
     if (
@@ -358,6 +364,7 @@ export const uploadImage = mutation({
     canvasWidth: v.optional(v.number()),
     canvasHeight: v.optional(v.number()),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   handler: async () => {
     throw new ConvexError(RELOAD_TO_UPLOAD_MESSAGE);
@@ -377,11 +384,12 @@ export const addAIGeneratedImage = mutation({
     canvasWidth: v.optional(v.number()),
     canvasHeight: v.optional(v.number()),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
     if (!session) throw new Error("Session not found");
-    await assertCanModifySession(ctx, session, args.guestKey);
+    await assertCanModifySession(ctx, session, args.guestKey, { editKey: args.editKey });
 
     const safeImageUrl = assertAllowedAiImageUrl(args.imageUrl, [
       process.env.CONVEX_CLOUD_URL,
@@ -458,11 +466,15 @@ export const addAIGeneratedImage = mutation({
 
 // Get all images for a session (both uploaded and AI-generated)
 export const getSessionImages = query({
-  args: { sessionId: v.id("paintingSessions"), guestKey: v.optional(v.string()) },
+  args: {
+    sessionId: v.id("paintingSessions"),
+    guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
-    // Authorization: allow if public or owner
+    // Authorization: allow if public, owner, guest owner, or valid editKey
     const session = await ctx.db.get(args.sessionId);
-    if (!(await canReadSession(ctx, session, args.guestKey))) {
+    if (!(await canReadSession(ctx, session, args.guestKey, args.editKey))) {
       return [] as any[];
     }
     // Get uploaded images
@@ -522,14 +534,15 @@ export const updateImageTransform = mutation({
     rotation: v.optional(v.number()),
     opacity: v.optional(v.number()),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const { imageId, guestKey, ...updates } = args;
+    const { imageId, guestKey, editKey, ...updates } = args;
     const image = await ctx.db.get(imageId);
     if (!image) throw new Error("Image not found");
     const session = await ctx.db.get(image.sessionId);
     if (!session) throw new Error("Session not found");
-    await assertCanModifySession(ctx, session, guestKey);
+    await assertCanModifySession(ctx, session, guestKey, { editKey });
     
     // Only update provided fields
     const updateFields: any = {};
@@ -563,14 +576,15 @@ export const updateAIImageTransform = mutation({
     rotation: v.optional(v.number()),
     opacity: v.optional(v.number()),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const { imageId, guestKey, ...updates } = args;
+    const { imageId, guestKey, editKey, ...updates } = args;
     const image = await ctx.db.get(imageId);
     if (!image) throw new Error("AI image not found");
     const session = await ctx.db.get(image.sessionId);
     if (!session) throw new Error("Session not found");
-    await assertCanModifySession(ctx, session, guestKey);
+    await assertCanModifySession(ctx, session, guestKey, { editKey });
     
     // Only update provided fields
     const updateFields: any = {};
@@ -596,13 +610,14 @@ export const updateImageLayerOrder = mutation({
     imageId: v.id("uploadedImages"),
     newLayerOrder: v.number(),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const image = await ctx.db.get(args.imageId);
     if (!image) throw new Error("Image not found");
     const session = await ctx.db.get(image.sessionId);
     if (!session) throw new Error("Session not found");
-    await assertCanModifySession(ctx, session, args.guestKey);
+    await assertCanModifySession(ctx, session, args.guestKey, { editKey: args.editKey });
 
     // Get all images (uploaded and AI) for the session to maintain unique ordering
     const uploadedImages = await ctx.db
@@ -666,13 +681,16 @@ export const deleteImage = mutation({
   args: {
     imageId: v.id("uploadedImages"),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const image = await ctx.db.get(args.imageId);
     if (!image) throw new Error("Image not found");
     const session = await ctx.db.get(image.sessionId);
     if (!session) throw new Error("Session not found");
-    await assertCanModifySession(ctx, session, args.guestKey);
+    // Hard delete (layer, attached strokes and the stored file): owner only,
+    // even for edit-link collaborators.
+    await assertCanModifySession(ctx, session, args.guestKey, { ownerOnly: true });
 
     // Delete any strokes attached to this image layer
     const attachedStrokes = await ctx.db
@@ -802,10 +820,14 @@ export const cleanupExpiredUploadIntents = internalMutation({
 
 // Get AI-generated images for a session
 export const getAIGeneratedImages = query({
-  args: { sessionId: v.id("paintingSessions"), guestKey: v.optional(v.string()) },
+  args: {
+    sessionId: v.id("paintingSessions"),
+    guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!(await canReadSession(ctx, session, args.guestKey))) {
+    if (!(await canReadSession(ctx, session, args.guestKey, args.editKey))) {
       return [];
     }
     const aiImages = await ctx.db
@@ -823,13 +845,14 @@ export const updateAIImageLayerOrder = mutation({
     imageId: v.id("aiGeneratedImages"),
     newLayerOrder: v.number(),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const image = await ctx.db.get(args.imageId);
     if (!image) throw new Error("AI image not found");
     const session = await ctx.db.get(image.sessionId);
     if (!session) throw new Error("Session not found");
-    await assertCanModifySession(ctx, session, args.guestKey);
+    await assertCanModifySession(ctx, session, args.guestKey, { editKey: args.editKey });
 
     // Get all images (uploaded and AI) for the session to maintain unique ordering
     const uploadedImages = await ctx.db
@@ -893,6 +916,7 @@ export const deleteAIImage = mutation({
   args: {
     imageId: v.id("aiGeneratedImages"),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     console.log('[deleteAIImage] Attempting to delete AI image:', args.imageId);
@@ -905,7 +929,9 @@ export const deleteAIImage = mutation({
 
     const session = await ctx.db.get(image.sessionId);
     if (!session) throw new Error("Session not found");
-    await assertCanModifySession(ctx, session, args.guestKey);
+    // Hard delete (layer, attached strokes and the stored file): owner only,
+    // even for edit-link collaborators.
+    await assertCanModifySession(ctx, session, args.guestKey, { ownerOnly: true });
     
     console.log('[deleteAIImage] Found image to delete:', image);
 

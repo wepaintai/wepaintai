@@ -1,9 +1,65 @@
-import { internalMutation, mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query, type MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { createUserWithWelcomeTokens } from "./users";
-import { assertCanModifySession, canReadSession, keysMatch } from "./sessionAuth";
+import {
+  assertCanModifySession,
+  canReadSession,
+  getSessionAccess,
+  isSessionOwner,
+  keysMatch,
+} from "./sessionAuth";
 import { isPromptTooLong, MAX_PROMPT_LENGTH } from "./tokenPolicy";
+
+function generateEditKey(excludeKeys: Array<string | undefined> = []): string {
+  const excluded = excludeKeys.filter((k): k is string => Boolean(k));
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const bytes = new Uint8Array(24);
+    crypto.getRandomValues(bytes);
+    const candidate = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    if (!excluded.some((k) => keysMatch(k, candidate))) {
+      return candidate;
+    }
+  }
+  throw new Error("Failed to generate unique edit key");
+}
+
+const EVICT_BATCH = 500;
+
+/**
+ * Rotating or revoking the edit link invalidates every collaborator at once.
+ * Drop their presence rows, live strokes and pending WebRTC signals so the
+ * editor set other clients derive from presence (used to ignore P2P packets
+ * from peers who are no longer editors) updates immediately instead of after
+ * the presence staleness window. The signed-in owner's own rows are kept; a
+ * guest owner's row is recreated by its next presence heartbeat. Revoked
+ * clients can't write new rows: presence and live strokes require edit access.
+ */
+async function evictCollaborators(ctx: MutationCtx, session: Doc<"paintingSessions">) {
+  const isOwnerRow = (row: { userId?: Id<"users"> }) =>
+    session.createdBy !== undefined && row.userId === session.createdBy;
+  const presence = await ctx.db
+    .query("userPresence")
+    .withIndex("by_session", (q) => q.eq("sessionId", session._id))
+    .take(EVICT_BATCH);
+  for (const row of presence) {
+    if (!isOwnerRow(row)) await ctx.db.delete(row._id);
+  }
+  const live = await ctx.db
+    .query("liveStrokes")
+    .withIndex("by_session", (q) => q.eq("sessionId", session._id))
+    .take(EVICT_BATCH);
+  for (const row of live) {
+    if (!isOwnerRow(row)) await ctx.db.delete(row._id);
+  }
+  const signals = await ctx.db
+    .query("webrtcSignals")
+    .withIndex("by_session_to", (q) => q.eq("sessionId", session._id))
+    .take(EVICT_BATCH);
+  for (const row of signals) {
+    await ctx.db.delete(row._id);
+  }
+}
 
 /**
  * Create a new painting session
@@ -90,6 +146,7 @@ const sessionObjectValidator = v.object({
   name: v.optional(v.string()),
   createdBy: v.optional(v.id("users")),
   hasGuestOwner: v.boolean(),
+  hasEditLink: v.boolean(),
   isPublic: v.boolean(),
   canvasWidth: v.number(),
   canvasHeight: v.number(),
@@ -110,14 +167,24 @@ const sessionObjectValidator = v.object({
 });
 
 /**
- * Strip guestOwnerKey before returning session docs to clients — exposing the
- * key would let any viewer impersonate the guest owner. Clients only need to
- * know whether a guest owner exists.
+ * Strip guestOwnerKey and editKey before returning session docs to clients —
+ * exposing either secret would let any viewer impersonate the owner or gain
+ * unauthorized edit access. Clients only receive capability booleans.
  */
 function sanitizeSession(session: Doc<"paintingSessions">) {
   // Undo/redo bookkeeping is server-internal and not part of the client shape.
-  const { guestOwnerKey, clearHistory: _clearHistory, redoStack: _redoStack, ...rest } = session;
-  return { ...rest, hasGuestOwner: !!guestOwnerKey };
+  const {
+    guestOwnerKey,
+    editKey,
+    clearHistory: _clearHistory,
+    redoStack: _redoStack,
+    ...rest
+  } = session;
+  return {
+    ...rest,
+    hasGuestOwner: !!guestOwnerKey,
+    hasEditLink: !!editKey,
+  };
 }
 
 /**
@@ -132,9 +199,15 @@ export const getSession = query({
   args: {
     sessionId: v.string(),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   returns: v.union(
-    v.object({ status: v.literal("ok"), session: sessionObjectValidator }),
+    v.object({
+      status: v.literal("ok"),
+      session: sessionObjectValidator,
+      canEdit: v.boolean(),
+      isOwner: v.boolean(),
+    }),
     v.object({ status: v.literal("not_found") }),
     v.object({ status: v.literal("unauthorized") }),
   ),
@@ -147,23 +220,17 @@ export const getSession = query({
     // links show the not-found state rather than leaking that it existed.
     if (!session || session.deletedAt !== undefined) return { status: "not_found" as const };
 
-    if (session.isPublic) return { status: "ok" as const, session: sanitizeSession(session) };
-
-    // Private: only owner can view
-    const identity = await ctx.auth.getUserIdentity();
-    if (identity) {
-      const user = await ctx.db
-        .query("users")
-        .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
-        .first();
-      if (user && session.createdBy === user._id) return { status: "ok" as const, session: sanitizeSession(session) };
+    const access = await getSessionAccess(ctx, session, args.guestKey, args.editKey);
+    if (!access.canRead) {
+      return { status: "unauthorized" as const };
     }
 
-    // Guest ownership
-    if (session.guestOwnerKey && args.guestKey && keysMatch(session.guestOwnerKey, args.guestKey)) {
-      return { status: "ok" as const, session: sanitizeSession(session) };
-    }
-    return { status: "unauthorized" as const };
+    return {
+      status: "ok" as const,
+      session: sanitizeSession(session),
+      canEdit: access.canEdit,
+      isOwner: access.isOwner,
+    };
   },
 });
 
@@ -249,7 +316,7 @@ export const updateSessionName = mutation({
     }
 
     const session = await ctx.db.get(args.sessionId);
-    if (!session) {
+    if (!session || session.deletedAt !== undefined) {
       throw new Error("Session not found");
     }
 
@@ -336,7 +403,9 @@ export const restoreSession = mutation({
     }
 
     if (session.deletedAt === undefined) return "restored"; // already live
-    await ctx.db.patch(args.sessionId, { deletedAt: undefined });
+    // Restoring never revives the old collaboration link: any edit link that
+    // was shared before the delete stays dead until the owner enables a new one.
+    await ctx.db.patch(args.sessionId, { deletedAt: undefined, editKey: undefined });
     return "restored";
   },
 });
@@ -449,14 +518,15 @@ export const updateSessionThumbnail = mutation({
     sessionId: v.id("paintingSessions"),
     thumbnailUrl: v.string(),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!session) {
+    if (!session || session.deletedAt !== undefined) {
       throw new Error("Session not found");
     }
 
-    await assertCanModifySession(ctx, session, args.guestKey);
+    await assertCanModifySession(ctx, session, args.guestKey, { editKey: args.editKey });
     assertValidThumbnailUrl(args.thumbnailUrl);
 
     await ctx.db.patch(args.sessionId, {
@@ -474,14 +544,15 @@ export const addAIPrompt = mutation({
     sessionId: v.id("paintingSessions"),
     prompt: v.string(),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!session) {
+    if (!session || session.deletedAt !== undefined) {
       throw new Error("Session not found");
     }
 
-    await assertCanModifySession(ctx, session, args.guestKey);
+    await assertCanModifySession(ctx, session, args.guestKey, { editKey: args.editKey });
 
     if (isPromptTooLong(args.prompt)) {
       throw new Error(`Prompt is too long (max ${MAX_PROMPT_LENGTH} characters)`);
@@ -507,11 +578,12 @@ export const getAIPrompts = query({
   args: {
     sessionId: v.id("paintingSessions"),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   returns: v.array(v.string()),
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!session || !(await canReadSession(ctx, session, args.guestKey))) {
+    if (!session || !(await canReadSession(ctx, session, args.guestKey, args.editKey))) {
       return [];
     }
     return session.aiPrompts || [];
@@ -519,12 +591,16 @@ export const getAIPrompts = query({
 });
 
 /**
- * Claim ownership of an orphaned public session (createdBy is undefined).
- * Assigns to the current authenticated user if no owner or guest key is set.
+ * Claim ownership of a guest-owned session for the authenticated user.
+ *
+ * Historically this claimed orphaned public sessions without proof, which
+ * allowed any signed-in viewer to hijack a public canvas. Ownership claims now
+ * require a constant-time matching guestOwnerKey (never an editKey or public flag).
  */
 export const claimSessionOwnership = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
+    guestKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -532,12 +608,12 @@ export const claimSessionOwnership = mutation({
 
     const session = await ctx.db.get(args.sessionId);
     if (!session || session.deletedAt !== undefined) return;
-    if (!session.isPublic) return;
 
-    // Only claim if no owner is set
+    // Only claim if no owner is set and the caller proves guest ownership
     if (session.createdBy !== undefined) return;
-    // Don't override guest-owned sessions
-    if (session.guestOwnerKey) return;
+    if (!session.guestOwnerKey || !args.guestKey || !keysMatch(session.guestOwnerKey, args.guestKey)) {
+      return;
+    }
 
     const user = await ctx.db
       .query("users")
@@ -545,7 +621,11 @@ export const claimSessionOwnership = mutation({
       .first();
     if (!user) return;
 
-    await ctx.db.patch(args.sessionId, { createdBy: user._id });
+    await ctx.db.patch(args.sessionId, {
+      createdBy: user._id,
+      guestOwnerKey: undefined,
+      lastModified: Date.now(),
+    });
   },
 });
 
@@ -571,7 +651,7 @@ export const claimGuestSession = mutation({
     if (!identity) return "invalid";
 
     const session = await ctx.db.get(args.sessionId);
-    if (!session) return "invalid";
+    if (!session || session.deletedAt !== undefined) return "invalid";
 
     const user = await ctx.db
       .query("users")
@@ -606,7 +686,7 @@ export const claimGuestSession = mutation({
 });
 
 /**
- * Set session public accessibility (owner only)
+ * Set session public read-only accessibility (owner only)
  */
 export const setSessionVisibility = mutation({
   args: {
@@ -625,5 +705,138 @@ export const setSessionVisibility = mutation({
     }
 
     await ctx.db.patch(args.sessionId, { isPublic: args.isPublic, lastModified: Date.now() });
+  },
+});
+
+/**
+ * Get the current secret edit key for a session (owner only).
+ * Returns null for non-owners or when no edit link is active.
+ */
+export const getSessionEditKey = query({
+  args: {
+    sessionId: v.id("paintingSessions"),
+    guestKey: v.optional(v.string()),
+  },
+  returns: v.union(v.string(), v.null()),
+  handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session || session.deletedAt !== undefined) return null;
+    if (!(await isSessionOwner(ctx, session, args.guestKey))) {
+      return null;
+    }
+    return session.editKey ?? null;
+  },
+});
+
+/**
+ * Enable (or return the existing) secret collaboration edit link (owner only).
+ */
+export const enableEditLink = mutation({
+  args: {
+    sessionId: v.id("paintingSessions"),
+    guestKey: v.optional(v.string()),
+  },
+  returns: v.string(),
+  handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session || session.deletedAt !== undefined) throw new Error("Session not found");
+
+    await assertCanModifySession(ctx, session, args.guestKey, { ownerOnly: true });
+
+    if (session.editKey) {
+      return session.editKey;
+    }
+
+    const editKey = generateEditKey([session.guestOwnerKey]);
+    await ctx.db.patch(args.sessionId, { editKey, lastModified: Date.now() });
+    return editKey;
+  },
+});
+
+/**
+ * Rotate the secret collaboration edit link, immediately invalidating any
+ * previously issued edit link (owner only).
+ */
+export const rotateEditLink = mutation({
+  args: {
+    sessionId: v.id("paintingSessions"),
+    guestKey: v.optional(v.string()),
+  },
+  returns: v.string(),
+  handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session || session.deletedAt !== undefined) throw new Error("Session not found");
+
+    await assertCanModifySession(ctx, session, args.guestKey, { ownerOnly: true });
+
+    const editKey = generateEditKey([session.guestOwnerKey, session.editKey]);
+    await ctx.db.patch(args.sessionId, { editKey, lastModified: Date.now() });
+    await evictCollaborators(ctx, session);
+    return editKey;
+  },
+});
+
+/**
+ * Revoke and disable the collaboration edit link (owner only).
+ */
+export const revokeEditLink = mutation({
+  args: {
+    sessionId: v.id("paintingSessions"),
+    guestKey: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session || session.deletedAt !== undefined) throw new Error("Session not found");
+
+    await assertCanModifySession(ctx, session, args.guestKey, { ownerOnly: true });
+
+    await ctx.db.patch(args.sessionId, { editKey: undefined, lastModified: Date.now() });
+    await evictCollaborators(ctx, session);
+    return null;
+  },
+});
+
+/**
+ * Admin path for legacy ownerless sessions (no `createdBy` and no guest owner
+ * key). Before AUD-005 such public sessions were editable by anyone; now
+ * nobody can edit, claim or delete them. Run from the Convex dashboard or
+ * `npx convex run paintingSessions:resolveOwnerlessSession` to either assign
+ * an owner or soft-delete the session (the purge cron hard-deletes it after
+ * the grace window). Sessions that already have an owner are left untouched.
+ */
+export const resolveOwnerlessSession = internalMutation({
+  args: {
+    sessionId: v.id("paintingSessions"),
+    action: v.union(v.literal("assign"), v.literal("delete")),
+    ownerUserId: v.optional(v.id("users")),
+  },
+  returns: v.union(
+    v.literal("assigned"),
+    v.literal("deleted"),
+    v.literal("not_found"),
+    v.literal("has_owner"),
+  ),
+  handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) return "not_found" as const;
+    if (session.createdBy !== undefined || session.guestOwnerKey) {
+      return "has_owner" as const;
+    }
+    if (args.action === "assign") {
+      if (!args.ownerUserId || !(await ctx.db.get(args.ownerUserId))) {
+        throw new Error("ownerUserId must reference an existing user");
+      }
+      await ctx.db.patch(args.sessionId, {
+        createdBy: args.ownerUserId,
+        lastModified: Date.now(),
+      });
+      return "assigned" as const;
+    }
+    await ctx.db.patch(args.sessionId, {
+      deletedAt: session.deletedAt ?? Date.now(),
+      editKey: undefined,
+    });
+    return "deleted" as const;
   },
 });

@@ -10,7 +10,7 @@ const COLLABORATOR = 'collab-auth'
 const IMAGE = `data:image/png;base64,${btoa('P'.repeat(300))}`
 const PNG_BYTES = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
 
-async function seed(options: { ownerTokens?: number; isPublic?: boolean } = {}) {
+async function seed(options: { ownerTokens?: number; isPublic?: boolean; editKey?: string } = {}) {
   const t = convexTest(schema, modules)
   const ids = await t.run(async (ctx) => {
     const ownerId = await ctx.db.insert('users', {
@@ -28,6 +28,7 @@ async function seed(options: { ownerTokens?: number; isPublic?: boolean } = {}) 
     const sessionId = await ctx.db.insert('paintingSessions', {
       createdBy: ownerId,
       isPublic: options.isPublic ?? false,
+      editKey: options.editKey,
       canvasWidth: 800,
       canvasHeight: 600,
       strokeCounter: 0,
@@ -437,11 +438,12 @@ describe('result writes re-check session access', () => {
     expect(await asOwner.query(api.aiGeneration.getSessionGenerations, { sessionId })).toEqual([])
   })
 
-  test('a collaborator who loses access (session made private) does not land a merge result', async () => {
-    const { t, sessionId, layerId, asCollaborator, asOwner } = await seed({ isPublic: true })
+  test('a collaborator who loses access (edit link revoked) does not land a merge result', async () => {
+    const editKey = 'merge-collab-edit-key'
+    const { t, sessionId, layerId, asCollaborator, asOwner } = await seed({ isPublic: true, editKey })
     mockReplicate({
       poll: async () => {
-        await t.run(async (ctx) => ctx.db.patch(sessionId, { isPublic: false }))
+        await asOwner.mutation(api.paintingSessions.revokeEditLink, { sessionId })
         return json({ status: 'succeeded', output: 'https://replicate.delivery/merge.png' })
       },
     })
@@ -451,6 +453,7 @@ describe('result writes re-check session access', () => {
       firstLayerId: layerId,
       secondLayerId: layerId,
       mergeMode: 'full',
+      editKey,
     })
     expect(result.success).toBe(false)
     const merge = (await allRows(t)).merges[0]

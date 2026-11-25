@@ -3,7 +3,7 @@ import { X, Sparkles, Loader2, Palette, Camera, Smile, Grid3X3, Coins, History, 
 import { useAction, useQuery, useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import type { Id } from '../../convex/_generated/dataModel'
-import { getGuestKey } from '../utils/guestKey'
+import { getEditKey, getGuestKey } from '../utils/guestKey'
 import { getErrorMessage } from '../utils/errorMessage'
 import { MAX_PROMPT_LENGTH } from '../../convex/tokenPolicy'
 
@@ -33,12 +33,14 @@ export function AIGenerationModal({
   const [withFlames, setWithFlames] = useState(false)
   const [provider, setProvider] = useState<'replicate' | 'gemini'>('gemini')
   
+  const guestKey = getGuestKey(sessionId) || undefined
+  const editKey = getEditKey(sessionId) || undefined
   const generateImage = useAction(api.aiGeneration.generateImage)
   const generateImageGemini = useAction(api.geminiGeneration.generateImage)
   const tokenBalance = useQuery(api.tokens.getTokenBalance)
-  const recentGenerations = useQuery(api.aiGeneration.getSessionGenerations, { sessionId, guestKey: getGuestKey(sessionId) || undefined })
+  const recentGenerations = useQuery(api.aiGeneration.getSessionGenerations, { sessionId, guestKey, editKey })
   const hasNoTokens = tokenBalance != null && tokenBalance.tokens < 1
-  const previousPrompts = useQuery(api.paintingSessions.getAIPrompts, { sessionId, guestKey: getGuestKey(sessionId) || undefined })
+  const previousPrompts = useQuery(api.paintingSessions.getAIPrompts, { sessionId, guestKey, editKey })
   const userPrompts = useQuery(api.userPrompts.getUserPrompts, { limit: 20 })
   const addAIPrompt = useMutation(api.paintingSessions.addAIPrompt)
   const addUserPrompt = useMutation(api.userPrompts.addUserPrompt)
@@ -66,7 +68,8 @@ export function AIGenerationModal({
         imageDataLength: canvasDataUrl.length
       })
       
-      const guestKey = getGuestKey(sessionId) || undefined
+      const currentGuestKey = getGuestKey(sessionId) || undefined
+      const currentEditKey = getEditKey(sessionId) || undefined
       const result = provider === 'replicate'
         ? await generateImage({
             sessionId,
@@ -75,7 +78,8 @@ export function AIGenerationModal({
             weight: weight,
             canvasWidth: canvasWidth,
             canvasHeight: canvasHeight,
-            guestKey,
+            guestKey: currentGuestKey,
+            editKey: currentEditKey,
           })
         : await generateImageGemini({
             sessionId,
@@ -83,7 +87,8 @@ export function AIGenerationModal({
             imageData: canvasDataUrl,
             canvasWidth: canvasWidth,
             canvasHeight: canvasHeight,
-            guestKey,
+            guestKey: currentGuestKey,
+            editKey: currentEditKey,
           })
 
       console.log('AI Generation result:', result)
@@ -95,7 +100,7 @@ export function AIGenerationModal({
         // Save the prompt to both session and user history (best-effort: a
         // history write failure must not hide a successful generation)
         try {
-          await addAIPrompt({ sessionId, prompt: prompt.trim(), guestKey: getGuestKey(sessionId) || undefined })
+          await addAIPrompt({ sessionId, prompt: prompt.trim(), guestKey: currentGuestKey, editKey: currentEditKey })
           await addUserPrompt({ prompt: prompt.trim() })
         } catch (historyError) {
           console.warn('Failed to save prompt history:', historyError)

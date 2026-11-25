@@ -42,6 +42,164 @@ export function removeGuestKey(sessionId: string) {
   } catch {}
 }
 
+// Secret collaboration edit capability tokens, stored per-tab in sessionStorage
+// (keyed by sessionId) after being extracted and scrubbed from the URL fragment.
+export const EDIT_KEYS_STORAGE = 'wepaint_edit_keys_v1'
+const inMemoryEditKeys = new Map<string, string>()
+const editKeyListeners = new Set<() => void>()
+
+function notifyEditKeyChange() {
+  editKeyListeners.forEach((listener) => listener())
+}
+
+export function subscribeEditKeys(listener: () => void): () => void {
+  editKeyListeners.add(listener)
+  return () => {
+    editKeyListeners.delete(listener)
+  }
+}
+
+export function setEditKey(sessionId: string, key: string) {
+  const trimmed = key.trim()
+  if (!sessionId || !trimmed) return
+  inMemoryEditKeys.set(sessionId, trimmed)
+  if (typeof window !== 'undefined') {
+    try {
+      const raw = window.sessionStorage.getItem(EDIT_KEYS_STORAGE)
+      const map = raw ? JSON.parse(raw) : {}
+      map[sessionId] = trimmed
+      window.sessionStorage.setItem(EDIT_KEYS_STORAGE, JSON.stringify(map))
+    } catch {
+      // sessionStorage unavailable (e.g. private browsing); in-memory map still works
+    }
+  }
+  notifyEditKeyChange()
+}
+
+export function getEditKey(sessionId: string | null | undefined): string | null {
+  if (!sessionId) return null
+  const cached = inMemoryEditKeys.get(sessionId)
+  if (cached) return cached
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.sessionStorage.getItem(EDIT_KEYS_STORAGE)
+    const map = raw ? JSON.parse(raw) : {}
+    const stored = typeof map[sessionId] === 'string' && map[sessionId].length > 0 ? map[sessionId] : null
+    if (stored) inMemoryEditKeys.set(sessionId, stored)
+    return stored
+  } catch {
+    return null
+  }
+}
+
+export function removeEditKey(sessionId: string) {
+  if (!sessionId) return
+  const hadInMemory = inMemoryEditKeys.delete(sessionId)
+  let hadInStorage = false
+  if (typeof window !== 'undefined') {
+    try {
+      const raw = window.sessionStorage.getItem(EDIT_KEYS_STORAGE)
+      const map = raw ? JSON.parse(raw) : {}
+      if (map[sessionId]) {
+        hadInStorage = true
+        delete map[sessionId]
+        window.sessionStorage.setItem(EDIT_KEYS_STORAGE, JSON.stringify(map))
+      }
+    } catch {
+      // sessionStorage unavailable
+    }
+  }
+  if (hadInMemory || hadInStorage) {
+    notifyEditKeyChange()
+  }
+}
+
+/**
+ * Pure parser for collaboration edit links.
+ * The token is accepted ONLY from the URL fragment `#edit=<token>`, which is
+ * never sent over HTTP (no server/proxy logs, no Referer). A stray `?edit=`
+ * query parameter is never used as a key, but it is still stripped so the
+ * caller can scrub it from the address bar (and analytics).
+ */
+export function parseEditKeyFromUrl(
+  search: string,
+  hash: string,
+): {
+  editKey: string | null
+  cleanedSearch: string
+  cleanedHash: string
+  hadEditParam: boolean
+} {
+  let editKey: string | null = null
+  let hadEditParam = false
+
+  // 1. Hash fragment (#edit=<token> or #foo=1&edit=<token>)
+  let cleanedHash = hash
+  if (hash && hash.length > 1) {
+    const rawHash = hash.startsWith('#') ? hash.slice(1) : hash
+    if (/(^|&)edit(=|$)/.test(rawHash)) {
+      const hashParams = new URLSearchParams(rawHash)
+      if (hashParams.has('edit')) {
+        hadEditParam = true
+        const val = hashParams.get('edit')?.trim()
+        if (val) editKey = val
+        hashParams.delete('edit')
+        const remainingHash = hashParams.toString()
+        cleanedHash = remainingHash ? `#${remainingHash}` : ''
+      }
+    }
+  }
+
+  // 2. Query string: never a source of keys, but always scrubbed
+  let cleanedSearch = search
+  if (search) {
+    const searchParams = new URLSearchParams(search)
+    if (searchParams.has('edit')) {
+      hadEditParam = true
+      searchParams.delete('edit')
+      const remainingSearch = searchParams.toString()
+      cleanedSearch = remainingSearch ? `?${remainingSearch}` : ''
+    }
+  }
+
+  return { editKey, cleanedSearch, cleanedHash, hadEditParam }
+}
+
+/**
+ * Extract `#edit=<token>` from the current browser URL, persist it in
+ * `sessionStorage` for the session named by `?session=` (or
+ * `fallbackSessionId` when the URL has none), and scrub the secret from the
+ * address bar via `history.replaceState`. The scrub happens even when no
+ * session can be determined, so the token never lingers in the URL.
+ *
+ * Called from client.tsx before analytics initialize (so PostHog never reads
+ * the token from `window.location`) and again from PaintingView on hash
+ * changes.
+ */
+export function consumeEditKeyFromWindowUrl(
+  fallbackSessionId?: string | null,
+): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const { editKey, cleanedSearch, cleanedHash, hadEditParam } = parseEditKeyFromUrl(
+      window.location.search,
+      window.location.hash,
+    )
+    const sessionId =
+      new URLSearchParams(window.location.search).get('session') || fallbackSessionId || null
+    if (editKey && sessionId) {
+      setEditKey(sessionId, editKey)
+    }
+    if (hadEditParam) {
+      const cleanUrl = `${window.location.pathname}${cleanedSearch}${cleanedHash}`
+      window.history.replaceState(window.history.state, '', cleanUrl)
+    }
+    return sessionId ? editKey : null
+  } catch {
+    return null
+  }
+}
+
 // Track current guest session ID locally so we can mask it from the URL
 export const CURRENT_GUEST_SESSION_KEY = 'wepaint_current_session_v1'
 

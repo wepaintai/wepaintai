@@ -21,10 +21,11 @@ export const getLayerImageUrl = internalQuery({
     sessionId: v.id("paintingSessions"),
     layerId: v.string(),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!(await canReadSession(ctx, session, args.guestKey))) {
+    if (!(await canReadSession(ctx, session, args.guestKey, args.editKey))) {
       return null;
     }
     // First check if it's an AI-generated image
@@ -65,6 +66,7 @@ export const mergeImages = action({
     controlLayerId: v.optional(v.string()),
     mergeMode: v.union(v.literal("full"), v.literal("left_right"), v.literal("top_bottom")),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<{ success: boolean; imageUrl?: string; error?: string }> => {
     console.log('[IMAGE-MERGE] mergeImages action called with:', {
@@ -76,6 +78,7 @@ export const mergeImages = action({
     const access = await ctx.runQuery(internal.sessionAuth.verifySessionAccess, {
       sessionId: args.sessionId,
       guestKey: args.guestKey,
+      editKey: args.editKey,
       requireAuth: true,
     });
     if (access.status === "not_found") {
@@ -101,6 +104,7 @@ export const mergeImages = action({
     const begin = await ctx.runMutation(internal.aiOperations.beginOperation, {
       sessionId: args.sessionId,
       guestKey: args.guestKey,
+      editKey: args.editKey,
       operation: {
         type: "image-merge",
         firstLayerId: args.firstLayerId,
@@ -137,12 +141,14 @@ export const mergeImages = action({
           sessionId: args.sessionId,
           layerId: args.firstLayerId,
           guestKey: args.guestKey,
+          editKey: args.editKey,
         });
 
         const secondLayerResult = await ctx.runQuery(internal.imageMerger.getLayerImageUrl, {
           sessionId: args.sessionId,
           layerId: args.secondLayerId,
           guestKey: args.guestKey,
+          editKey: args.editKey,
         });
 
         if (!firstLayerResult || !firstLayerResult.url) {
@@ -162,6 +168,7 @@ export const mergeImages = action({
             sessionId: args.sessionId,
             layerId: args.controlLayerId,
             guestKey: args.guestKey,
+            editKey: args.editKey,
           });
 
           if (controlLayerResult && controlLayerResult.url) {
@@ -243,6 +250,7 @@ export const mergeImages = action({
         operationId: mergeId,
         resultImageUrl: finalUrl,
         guestKey: args.guestKey,
+        editKey: args.editKey,
       });
       if (completion !== "completed") {
         if (storedId) await ctx.storage.delete(storedId).catch(() => {});
@@ -269,10 +277,11 @@ export const getSessionMerges = query({
   args: {
     sessionId: v.id("paintingSessions"),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!(await canReadSession(ctx, session, args.guestKey))) {
+    if (!(await canReadSession(ctx, session, args.guestKey, args.editKey))) {
       return [];
     }
     return await ctx.db

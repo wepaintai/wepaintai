@@ -8,6 +8,8 @@ export const ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/gi
 export interface ImageUploadOptions {
   sessionId: Id<"paintingSessions">
   guestKey?: string
+  /** Collaboration edit-link key (kept separate from the guest owner key) */
+  editKey?: string
   canvasWidth?: number
   canvasHeight?: number
   onImageUploaded?: (imageId: Id<"uploadedImages">) => void
@@ -34,6 +36,7 @@ interface CommitImageUploadArgs {
   canvasWidth?: number
   canvasHeight?: number
   guestKey?: string
+  editKey?: string
 }
 
 /**
@@ -210,11 +213,12 @@ export async function uploadImageFile(
   createUploadIntent: (args: {
     sessionId: Id<"paintingSessions">
     guestKey?: string
+    editKey?: string
   }) => Promise<UploadIntent>,
   commitImageUpload: (args: CommitImageUploadArgs) => Promise<Id<"uploadedImages">>,
   uploadEndpoint: string | null = getImageUploadEndpoint()
 ): Promise<ImageUploadResult> {
-  const { sessionId, guestKey, canvasWidth = 800, canvasHeight = 600, onImageUploaded } = options
+  const { sessionId, guestKey, editKey, canvasWidth = 800, canvasHeight = 600, onImageUploaded } = options
 
   try {
     // Validate file
@@ -243,7 +247,7 @@ export async function uploadImageFile(
     }
 
     // 1. Single-use, session-bound intent with a secret upload token
-    const { intentId, uploadToken } = await createUploadIntent({ sessionId, guestKey })
+    const { intentId, uploadToken } = await createUploadIntent({ sessionId, guestKey, editKey })
 
     // 2. Upload the bytes; the server validates them and binds the stored
     //    blob to this intent (the client never sees or supplies a storageId)
@@ -272,6 +276,7 @@ export async function uploadImageFile(
       canvasWidth,
       canvasHeight,
       guestKey,
+      editKey,
     })
 
     onImageUploaded?.(imageId)

@@ -1,8 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { useConvexAuth } from 'convex/react'
-import { AlertTriangle, Loader2, RefreshCw } from 'lucide-react'
+import { AlertTriangle, Loader2, RefreshCw, Trash2, X } from 'lucide-react'
 import { useAuthState, authClient } from '../lib/auth-client'
-import { useSyncStatus, retrySync } from '../lib/syncStatus'
+import {
+  useSyncStatus,
+  retrySync,
+  discardAllPendingChanges,
+  dismissDroppedNotice,
+} from '../lib/syncStatus'
 import { suppressUnloadGuard, resumeUnloadGuard } from '../lib/unsavedChanges'
 
 /**
@@ -51,8 +56,31 @@ export function SyncStatusBanner() {
 
   if (import.meta.env.VITE_AUTH_DISABLED === 'true') return null
 
+  const droppedNotice = sync.droppedForAccessCount > 0 && (
+    <div
+      role="status"
+      className="absolute top-14 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-lg border border-red-300 bg-red-50/95 px-3 py-2 text-red-900 shadow-lg backdrop-blur-sm max-w-[calc(100%-1rem)]"
+    >
+      <AlertTriangle className="h-4 w-4 shrink-0 text-red-600" />
+      <div className="text-xs leading-snug">
+        <span className="font-semibold">
+          {sync.droppedForAccessCount} stroke{sync.droppedForAccessCount === 1 ? '' : 's'} couldn&apos;t be saved.
+        </span>{' '}
+        Your edit link was revoked or replaced — ask the owner for a new collaborate link.
+      </div>
+      <button
+        type="button"
+        onClick={dismissDroppedNotice}
+        className="shrink-0 rounded p-1 hover:bg-red-100"
+        aria-label="Dismiss"
+      >
+        <X className="h-3 w-3" />
+      </button>
+    </div>
+  )
+
   const visible = sync.status === 'error' || desynced
-  if (!visible) return null
+  if (!visible) return droppedNotice || null
 
   const isAuthIssue = desynced || sync.kind === 'auth'
   const detail = isAuthIssue
@@ -86,6 +114,8 @@ export function SyncStatusBanner() {
   }
 
   return (
+    <>
+    {droppedNotice}
     <div
       role="alert"
       className="absolute top-2 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-lg border border-amber-300 bg-amber-50/95 px-3 py-2 text-amber-900 shadow-lg backdrop-blur-sm max-w-[calc(100%-1rem)]"
@@ -124,7 +154,27 @@ export function SyncStatusBanner() {
           {sync.retrying ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
           Retry
         </button>
+        {sync.pendingStrokeCount > 0 && (
+          <button
+            type="button"
+            onClick={() => {
+              if (
+                window.confirm(
+                  `Discard ${sync.pendingStrokeCount} unsaved stroke${sync.pendingStrokeCount === 1 ? '' : 's'}? This can't be undone.`,
+                )
+              ) {
+                discardAllPendingChanges()
+              }
+            }}
+            disabled={sync.retrying}
+            className="flex items-center gap-1 rounded border border-amber-400 px-2 py-1 text-xs font-medium hover:bg-amber-100 disabled:opacity-60"
+          >
+            <Trash2 className="h-3 w-3" />
+            Discard pending changes
+          </button>
+        )}
       </div>
     </div>
+    </>
   )
 }

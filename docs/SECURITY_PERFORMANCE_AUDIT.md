@@ -148,7 +148,7 @@ This document tracks the repository audit findings so work can continue across s
 
 ### AUD-005: Separate public discovery, viewing, and editing
 
-- Status: TODO
+- Status: DONE
 - Area: Sharing model
 - Files:
   - `convex/strokes.ts` (`assertCanModifySession`)
@@ -163,8 +163,8 @@ This document tracks the repository audit findings so work can continue across s
   - Public viewers cannot mutate without an edit capability.
   - Owners can revoke edit access.
   - Existing sessions receive a safe migration default.
-- Verification: Not run
-- Notes:
+- Verification: `convex/publicSharing.test.ts` (viewer denial over every write, edit-link lifecycle, rotation/revocation and eviction, owner-only destructive operations, empty keys, restore, admin path, collaborator billing), plus `src/lib/syncStatus.test.ts`, `src/lib/analyticsPrivacy.test.ts`, `src/utils/guestKey.test.ts`, `src/utils/sessionCapabilities.test.ts`.
+- Notes: Completed 2026-11-24 (PR #105). `isPublic` is now read-only. Edits need the owner (signed in, or holding the constant-time-checked `guestOwnerKey`) or a secret, owner-managed `editKey` sent as `#edit=<token>`. The key is taken from the URL fragment only, kept in per-tab sessionStorage, scrubbed from the URL before PostHog starts, and stripped from analytics. Owners can enable, rotate or revoke the link; rotate and revoke evict collaborator presence, live strokes and signals at once. Hard-destructive operations (layer/image deletion, layer merge, clear) are owner-only. New sessions are private by default. Existing public sessions are view-only until the owner creates an edit link. Ownerless legacy sessions can be assigned or soft-deleted with `internal.paintingSessions.resolveOwnerlessSession`.
 
 ### AUD-006: Reserve AI tokens atomically before provider spending
 

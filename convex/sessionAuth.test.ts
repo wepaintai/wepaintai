@@ -15,6 +15,7 @@ async function seedAuthFixture(options: {
   outsiderTokens?: number
   isPublic?: boolean
   guestOwnerKey?: string
+  editKey?: string
   deletedAt?: number
 } = {}) {
   const t = createTestBackend()
@@ -35,6 +36,7 @@ async function seedAuthFixture(options: {
     const sessionId = await ctx.db.insert('paintingSessions', {
       createdBy: options.guestOwnerKey ? undefined : ownerId,
       guestOwnerKey: options.guestOwnerKey,
+      editKey: options.editKey,
       isPublic: options.isPublic ?? false,
       canvasWidth: 800,
       canvasHeight: 600,
@@ -296,11 +298,12 @@ describe('AUD-004 & AUD-007 centralized session authorization', () => {
     expect(ownerPresence?.presenceId).toBeTruthy()
     expect(ownerPresence?.leaveToken).toMatch(/^[0-9a-f]{48}$/)
 
-    // Make session public: outsider still cannot spoof or evict owner's userId.
-    // The claimed userId is ignored (no throw, so stale clients stay quiet)
-    // and the write lands on the outsider's own row.
+    // Even with a valid editKey, an authorized collaborator cannot spoof or
+    // evict the owner's userId. The claimed userId is ignored (no throw, so
+    // stale clients stay quiet) and the write lands on the collaborator's own row.
+    const editKey = 'presence-collab-key'
     await t.run(async (ctx) => {
-      await ctx.db.patch(sessionId, { isPublic: true })
+      await ctx.db.patch(sessionId, { isPublic: true, editKey })
     })
 
     const spoof = await asOutsider.mutation(api.presence.updatePresence, {
@@ -312,7 +315,9 @@ describe('AUD-004 & AUD-007 centralized session authorization', () => {
       cursorY: 99,
       isDrawing: true,
       currentTool: 'brush',
+      editKey,
     })
+    expect(spoof?.presenceId).toBeTruthy()
     expect(spoof?.presenceId).not.toBe(ownerPresence?.presenceId)
 
     // An unauthenticated caller claiming the owner's userId (an old tab) is a no-op
@@ -326,12 +331,14 @@ describe('AUD-004 & AUD-007 centralized session authorization', () => {
         cursorY: 5,
         isDrawing: false,
         currentTool: 'brush',
+        editKey,
       })
     ).toBeNull()
 
     await asOutsider.mutation(api.presence.leaveSession, {
       sessionId,
       userId: ownerId,
+      editKey,
     })
 
     const active = await asOwner.query(api.presence.getSessionPresence, { sessionId })
@@ -340,11 +347,13 @@ describe('AUD-004 & AUD-007 centralized session authorization', () => {
   })
 
   test('strokes and liveStrokes prevent userId spoofing and cross-session layer injection', async () => {
+    const editKey = 'stroke-spoof-collab-key'
     const { t, ownerId, sessionId, otherLayerId, asOwner, asOutsider } = await seedAuthFixture({
       isPublic: true,
+      editKey,
     })
 
-    // Spoofing another user's userId on addStroke fails
+    // Spoofing another user's userId on addStroke fails even with a valid editKey
     await expect(
       asOutsider.mutation(api.strokes.addStroke, {
         sessionId,
@@ -354,6 +363,7 @@ describe('AUD-004 & AUD-007 centralized session authorization', () => {
         brushColor: '#000',
         brushSize: 5,
         opacity: 1,
+        editKey,
       })
     ).rejects.toThrow('Unauthorized')
 
@@ -370,7 +380,7 @@ describe('AUD-004 & AUD-007 centralized session authorization', () => {
       })
     ).rejects.toThrow('Layer does not belong to this session')
 
-    // Spoofing another user's userId on updateLiveStroke fails
+    // Spoofing another user's userId on updateLiveStroke fails even with a valid editKey
     await expect(
       asOutsider.mutation(api.liveStrokes.updateLiveStroke, {
         sessionId,
@@ -381,6 +391,7 @@ describe('AUD-004 & AUD-007 centralized session authorization', () => {
         brushColor: '#000',
         brushSize: 5,
         opacity: 1,
+        editKey,
       })
     ).rejects.toThrow('Unauthorized')
 

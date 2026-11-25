@@ -4,18 +4,20 @@ import { Id } from "./_generated/dataModel";
 import { assertCanModifySession } from "./sessionAuth";
 
 /**
- * Authorization: allow if public or owner or guest owner, rejecting soft-deleted sessions.
+ * Authorization: allow owner, guest owner, or valid editKey collaborator,
+ * rejecting soft-deleted sessions and read-only public viewers.
  */
 async function assertSessionAccess(
   ctx: MutationCtx | QueryCtx,
   sessionId: Id<"paintingSessions">,
-  guestKey: string | undefined
+  guestKey: string | undefined,
+  editKey?: string
 ) {
   const session = await ctx.db.get(sessionId);
   if (!session) {
     throw new Error("Session not found");
   }
-  await assertCanModifySession(ctx, session, guestKey);
+  await assertCanModifySession(ctx, session, guestKey, { editKey });
   return session;
 }
 
@@ -28,13 +30,14 @@ export const joinP2PSession = mutation({
     peerId: v.string(), // Client-generated peer ID
     roomKey: v.optional(v.string()), // Deprecated: kept so older clients don't fail arg validation
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   returns: v.object({
     peers: v.array(v.string()),
     mode: v.union(v.literal("mesh"), v.literal("sfu")),
   }),
   handler: async (ctx, args) => {
-    await assertSessionAccess(ctx, args.sessionId, args.guestKey);
+    await assertSessionAccess(ctx, args.sessionId, args.guestKey, args.editKey);
 
     // Get active peers from presence data
     const thirtySecondsAgo = Date.now() - 30 * 1000;
@@ -89,10 +92,11 @@ export const sendSignal = mutation({
     type: v.union(v.literal("offer"), v.literal("answer"), v.literal("ice-candidate")),
     data: v.any(), // SDP or ICE candidate data
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await assertSessionAccess(ctx, args.sessionId, args.guestKey);
+    await assertSessionAccess(ctx, args.sessionId, args.guestKey, args.editKey);
 
     // Store signal in database
     await ctx.db.insert("webrtcSignals", {
@@ -116,6 +120,7 @@ export const getSignals = query({
     sessionId: v.id("paintingSessions"),
     peerId: v.string(),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   returns: v.array(v.object({
     id: v.id("webrtcSignals"),
@@ -124,7 +129,7 @@ export const getSignals = query({
     data: v.any(),
   })),
   handler: async (ctx, args) => {
-    await assertSessionAccess(ctx, args.sessionId, args.guestKey);
+    await assertSessionAccess(ctx, args.sessionId, args.guestKey, args.editKey);
 
     // Get signals for this peer
     const signals = await ctx.db
@@ -156,10 +161,11 @@ export const deleteSignals = mutation({
     sessionId: v.id("paintingSessions"),
     peerId: v.string(),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await assertSessionAccess(ctx, args.sessionId, args.guestKey);
+    await assertSessionAccess(ctx, args.sessionId, args.guestKey, args.editKey);
 
     for (const id of args.signalIds) {
       const doc = await ctx.db.get(id);
@@ -180,10 +186,11 @@ export const leaveP2PSession = mutation({
     sessionId: v.id("paintingSessions"),
     peerId: v.string(),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await assertSessionAccess(ctx, args.sessionId, args.guestKey);
+    await assertSessionAccess(ctx, args.sessionId, args.guestKey, args.editKey);
 
     // Clean up any pending signals for this peer
     const signalsTo = await ctx.db

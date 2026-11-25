@@ -11,6 +11,7 @@ export const upsertViewerState = mutation({
     viewerId: v.string(), // Client-generated viewer ID
     lastAckedStrokeOrder: v.number(),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -18,7 +19,7 @@ export const upsertViewerState = mutation({
     if (!session) {
       throw new Error("Session not found");
     }
-    await assertCanModifySession(ctx, session, args.guestKey);
+    await assertCanModifySession(ctx, session, args.guestKey, { editKey: args.editKey });
 
     const existingState = await ctx.db
       .query("viewerStates")
@@ -52,6 +53,7 @@ export const getViewerState = query({
     sessionId: v.id("paintingSessions"),
     viewerId: v.string(), // Client-generated viewer ID
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   returns: v.union(
     v.object({
@@ -65,7 +67,7 @@ export const getViewerState = query({
   ),
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!(await canReadSession(ctx, session, args.guestKey))) {
+    if (!(await canReadSession(ctx, session, args.guestKey, args.editKey))) {
       return null;
     }
     const state = await ctx.db
@@ -85,6 +87,7 @@ export const getAllViewerStatesForSession = query({
   args: {
     sessionId: v.id("paintingSessions"),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   returns: v.array(
     v.object({
@@ -97,7 +100,7 @@ export const getAllViewerStatesForSession = query({
   ),
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!(await canReadSession(ctx, session, args.guestKey))) {
+    if (!(await canReadSession(ctx, session, args.guestKey, args.editKey))) {
       return [];
     }
     return await ctx.db
@@ -116,6 +119,7 @@ export const removeViewerState = mutation({
     sessionId: v.id("paintingSessions"),
     viewerId: v.string(),
     guestKey: v.optional(v.string()),
+    editKey: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -123,7 +127,7 @@ export const removeViewerState = mutation({
     if (!session) {
       throw new Error("Session not found");
     }
-    await assertCanModifySession(ctx, session, args.guestKey);
+    await assertCanModifySession(ctx, session, args.guestKey, { editKey: args.editKey });
 
     const existingState = await ctx.db
       .query("viewerStates")
