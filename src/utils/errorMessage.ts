@@ -5,6 +5,10 @@
  * so strip that framing down to the original message when present.
  */
 export function getErrorMessage(err: unknown, fallback: string): string {
+  // ConvexError carries its user-facing message as `data`, which survives
+  // production error redaction.
+  const data = (err as { data?: unknown } | null)?.data
+  if (typeof data === 'string' && data.trim()) return data.trim()
   if (!(err instanceof Error) || !err.message) return fallback
 
   let message = err.message
