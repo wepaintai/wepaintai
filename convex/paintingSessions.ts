@@ -434,6 +434,10 @@ export const PURGE_ENQUEUE_PER_RUN = 50;
 export const PURGE_SESSIONS_PER_RUN = 10;
 export const PURGE_DOCS_PER_RUN = 400;
 export const PURGE_DOCS_PER_SESSION_TURN = 200;
+// Rows of storage-bearing tables per run. Freeing each referenced blob costs
+// a reference check (~9 index reads), so these get a tighter cap to keep a run
+// well inside Convex's per-transaction read/call limits.
+export const PURGE_STORAGE_DOCS_PER_RUN = 100;
 
 type PurgeCtx = MutationCtx;
 
@@ -447,14 +451,16 @@ async function purgeSessionChildren(
   ctx: PurgeCtx,
   sessionId: Id<"paintingSessions">,
   limit: number,
-): Promise<{ deleted: number; drained: boolean }> {
+  storageLimit: number,
+): Promise<{ deleted: number; storageDeleted: number; drained: boolean }> {
   const candidateBlobs = new Set<Id<"_storage">>();
   const track = (id: Id<"_storage"> | undefined) => {
     if (id) candidateBlobs.add(id);
   };
 
   // Each step takes at most `n` rows of one table, deletes them, and returns
-  // how many it deleted.
+  // how many it deleted. The first STORAGE_STEPS steps reference blobs.
+  const STORAGE_STEPS = 6;
   const steps: Array<(n: number) => Promise<number>> = [
     async (n) => {
       const docs = await ctx.db.query("uploadedImages").withIndex("by_session", (q) => q.eq("sessionId", sessionId)).take(n);
@@ -516,23 +522,27 @@ async function purgeSessionChildren(
   ];
 
   let remaining = limit;
+  let storageRemaining = storageLimit;
   let drained = true;
-  for (const step of steps) {
-    if (remaining <= 0) {
+  for (const [index, step] of steps.entries()) {
+    const isStorageStep = index < STORAGE_STEPS;
+    const n = isStorageStep ? Math.min(remaining, storageRemaining) : remaining;
+    if (n <= 0) {
       drained = false;
       break;
     }
-    const deleted = await step(remaining);
+    const deleted = await step(n);
     // A full batch may have left more rows behind
-    if (deleted === remaining) drained = false;
+    if (deleted === n) drained = false;
     remaining -= deleted;
+    if (isStorageStep) storageRemaining -= deleted;
   }
 
   // The rows are gone, so reference counting only sees other live references
   for (const storageId of candidateBlobs) {
     await deleteStorageIfUnreferenced(ctx, storageId);
   }
-  return { deleted: limit - remaining, drained };
+  return { deleted: limit - remaining, storageDeleted: storageLimit - storageRemaining, drained };
 }
 
 async function deleteAll(ctx: PurgeCtx, docs: Array<{ _id: Id<TableNames> }>): Promise<number> {
@@ -588,6 +598,7 @@ export const purgeDeletedSessions = internalMutation({
       .take(PURGE_SESSIONS_PER_RUN);
 
     let budget = PURGE_DOCS_PER_RUN;
+    let storageBudget = PURGE_STORAGE_DOCS_PER_RUN;
     let workRemains =
       newlyExpired.length === PURGE_ENQUEUE_PER_RUN || queue.length === PURGE_SESSIONS_PER_RUN;
     let purged = 0;
@@ -596,12 +607,14 @@ export const purgeDeletedSessions = internalMutation({
         workRemains = true;
         break;
       }
-      const { deleted, drained } = await purgeSessionChildren(
+      const { deleted, storageDeleted, drained } = await purgeSessionChildren(
         ctx,
         session._id,
         Math.min(budget, PURGE_DOCS_PER_SESSION_TURN),
+        storageBudget,
       );
       budget -= deleted;
+      storageBudget -= storageDeleted;
       if (drained) {
         await ctx.db.delete(session._id);
         purged += 1;

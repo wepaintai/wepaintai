@@ -6,6 +6,7 @@ import {
   DELETED_SESSION_GRACE_MS,
   PURGE_DOCS_PER_RUN,
   PURGE_DOCS_PER_SESSION_TURN,
+  PURGE_STORAGE_DOCS_PER_RUN,
 } from './paintingSessions'
 import schema from './schema'
 import {
@@ -412,7 +413,7 @@ describe('AUD-010 cascading session purge (purgeDeletedSessions)', { timeout: 12
     try {
       const t = createTestBackend()
       const expiredDeletedAt = Date.now() - DELETED_SESSION_GRACE_MS - 60_000
-      const aiImageCount = PURGE_DOCS_PER_SESSION_TURN + 12
+      const aiImageCount = PURGE_STORAGE_DOCS_PER_RUN / 2
       const strokeCount = PURGE_DOCS_PER_RUN * 3 + 15
 
       const seeded = await t.run(async (ctx) => {
@@ -573,6 +574,46 @@ describe('AUD-010 cascading session purge (purgeDeletedSessions)', { timeout: 12
     await t.mutation(internal.paintingSessions.purgeDeletedSessions, {})
     expect(await t.run((ctx) => ctx.db.get(ids.small))).toBeNull()
     expect(await t.run((ctx) => ctx.db.get(ids.hugeA))).not.toBeNull()
+  })
+})
+
+describe('purge storage-row cap', { timeout: 120_000 }, () => {
+  test('a run frees at most PURGE_STORAGE_DOCS_PER_RUN storage-bearing rows', async () => {
+    const t = createTestBackend()
+    const deletedAt = Date.now() - DELETED_SESSION_GRACE_MS - 60_000
+    const count = PURGE_STORAGE_DOCS_PER_RUN + 30
+    const sessionId = await t.run(async (ctx) => {
+      const sessionId = await ctx.db.insert('paintingSessions', {
+        isPublic: false,
+        canvasWidth: 800,
+        canvasHeight: 600,
+        strokeCounter: 0,
+        deletedAt,
+      })
+      for (let i = 0; i < count; i++) {
+        await ctx.db.insert('aiGeneratedImages', {
+          sessionId,
+          imageUrl: `https://example.com/${i}.png`,
+          storageId: await ctx.storage.store(new Blob([`cap-${i}`])),
+          width: 1,
+          height: 1,
+          x: 0,
+          y: 0,
+          scale: 1,
+          rotation: 0,
+          opacity: 1,
+          layerOrder: i,
+          createdAt: deletedAt,
+        })
+      }
+      return sessionId
+    })
+    const first = await t.mutation(internal.paintingSessions.purgeDeletedSessions, {})
+    expect(first).toMatchObject({ deletedDocs: PURGE_STORAGE_DOCS_PER_RUN, rescheduled: true })
+    expect(await blobCount(t)).toBe(count - PURGE_STORAGE_DOCS_PER_RUN)
+    await t.mutation(internal.paintingSessions.purgeDeletedSessions, {})
+    expect(await t.run((ctx) => ctx.db.get(sessionId))).toBeNull()
+    expect(await blobCount(t)).toBe(0)
   })
 })
 
