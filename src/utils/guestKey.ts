@@ -115,15 +115,6 @@ export function removeEditKey(sessionId: string) {
 }
 
 /**
- * Returns the strongest local capability key for a session:
- * - Guest owner key (localStorage) if this browser created the guest session
- * - Otherwise the collaborator edit key (sessionStorage) if opened via edit link
- */
-export function getSessionAccessKey(sessionId: string | null | undefined): string | null {
-  return getGuestKey(sessionId) || getEditKey(sessionId) || null
-}
-
-/**
  * Pure parser for collaboration edit links.
  * Prefers URL hash fragment `#edit=<token>` (never sent over HTTP or Referer),
  * and gracefully accepts `?edit=<token>` if pasted as a query parameter.

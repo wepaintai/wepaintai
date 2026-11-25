@@ -19,7 +19,7 @@ import {
   type CanvasCapturePreset,
   type CanvasCaptureResult,
 } from '../utils/canvasCapture'
-import { getEditKey, getGuestKey, getSessionAccessKey, subscribeEditKeys } from '../utils/guestKey'
+import { getEditKey, getGuestKey, subscribeEditKeys } from '../utils/guestKey'
 import { installUnloadGuard, registerUnsavedWorkCounter } from '../lib/unsavedChanges'
 
 const average = (a: number, b: number): number => (a + b) / 2
@@ -249,7 +249,6 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       () => getEditKey(sessionId),
       () => null,
     ) || undefined
-  const accessKey = getSessionAccessKey(sessionId) || undefined
   
   const stageRef = useRef<Konva.Stage>(null)
   const strokeLayerRef = useRef<Konva.Layer>(null)
@@ -1059,7 +1058,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
         imageFile,
         {
           sessionId,
-          guestKey: accessKey,
+          guestKey,
+          editKey,
           canvasWidth: dimensions.width || 800,
           canvasHeight: dimensions.height || 600,
           onImageUploaded,
@@ -1076,7 +1076,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     } finally {
       setIsUploading(false)
     }
-  }, [sessionId, effectiveCanEdit, isUploading, dimensions, onImageUploaded, createUploadIntent, commitImageUpload, accessKey])
+  }, [sessionId, effectiveCanEdit, isUploading, dimensions, onImageUploaded, createUploadIntent, commitImageUpload, guestKey, editKey])
 
   // Clipboard paste handler: allow when over canvas or toolbox and when AI modal not open
   useEffect(() => {
@@ -1131,7 +1131,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
           fileWithName,
           {
             sessionId,
-            guestKey: accessKey,
+            guestKey,
+            editKey,
             canvasWidth: dimensions.width || 800,
             canvasHeight: dimensions.height || 600,
             onImageUploaded,
@@ -1158,7 +1159,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     isMouseOverCanvas,
     isMouseOverToolbox,
     isAIModalOpen,
-    accessKey,
+    guestKey,
+    editKey,
     dimensions.width,
     dimensions.height,
     onImageUploaded,

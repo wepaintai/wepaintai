@@ -18,6 +18,7 @@ export interface P2PManagerOptions {
   sessionId: Id<"paintingSessions">;
   peerId: string;
   guestKey?: string; // Session guest-owner key for authorization on private sessions
+  editKey?: string; // Collaboration edit-link key (separate secret from the guest owner key)
   convexClient: ConvexReactClient;
   onPacketReceived?: (peerId: string, packet: P2PPacket) => void;
   onPeerConnected?: (peerId: string) => void;
@@ -33,6 +34,7 @@ export class P2PManager {
   private sessionId: Id<"paintingSessions">;
   private peerId: string;
   private guestKey?: string;
+  private editKey?: string;
   private pollingInterval: NodeJS.Timeout | null = null;
   private metrics: P2PMetrics = {
     latency: 0,
@@ -54,6 +56,7 @@ export class P2PManager {
     this.sessionId = options.sessionId;
     this.peerId = options.peerId;
     this.guestKey = options.guestKey;
+    this.editKey = options.editKey;
     this.onPacketReceived = options.onPacketReceived;
     this.onPeerConnected = options.onPeerConnected;
     this.onPeerDisconnected = options.onPeerDisconnected;
@@ -76,6 +79,7 @@ export class P2PManager {
           sessionId: this.sessionId,
           peerId: this.peerId,
           guestKey: this.guestKey,
+          editKey: this.editKey,
         }
       );
 
@@ -221,6 +225,7 @@ export class P2PManager {
       type,
       data,
       guestKey: this.guestKey,
+      editKey: this.editKey,
     });
   }
 
@@ -234,6 +239,7 @@ export class P2PManager {
           sessionId: this.sessionId,
           peerId: this.peerId,
           guestKey: this.guestKey,
+          editKey: this.editKey,
         });
 
         if (signals.length > 0) {
@@ -250,6 +256,7 @@ export class P2PManager {
             sessionId: this.sessionId,
             peerId: this.peerId,
             guestKey: this.guestKey,
+            editKey: this.editKey,
           });
         }
       } catch (error) {
@@ -397,6 +404,7 @@ export class P2PManager {
         sessionId: this.sessionId,
         peerId: this.peerId,
         guestKey: this.guestKey,
+        editKey: this.editKey,
       });
     } catch (error) {
       console.error('Error leaving P2P session:', error);

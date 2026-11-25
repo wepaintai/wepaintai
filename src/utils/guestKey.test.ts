@@ -2,7 +2,6 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   consumeEditKeyFromWindowUrl,
   getEditKey,
-  getSessionAccessKey,
   parseEditKeyFromUrl,
   removeEditKey,
   setEditKey,
@@ -79,7 +78,6 @@ describe('editKey storage and URL consumption', () => {
     expect(getEditKey('sess-1')).toBeNull()
     setEditKey('sess-1', 'tok-abc')
     expect(getEditKey('sess-1')).toBe('tok-abc')
-    expect(getSessionAccessKey('sess-1')).toBe('tok-abc')
     expect(listener).toHaveBeenCalledTimes(1)
 
     removeEditKey('sess-1')
