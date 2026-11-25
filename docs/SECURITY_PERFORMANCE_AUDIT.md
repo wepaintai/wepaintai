@@ -249,7 +249,7 @@ This document tracks the repository audit findings so work can continue across s
 
 ### AUD-010: Implement storage lifecycle and cascading deletion
 
-- Status: TODO
+- Status: DONE
 - Area: Data lifecycle / Cost
 - Files:
   - `convex/paintingSessions.ts`
@@ -259,6 +259,8 @@ This document tracks the repository audit findings so work can continue across s
   - `convex/backgroundRemoval.ts`
   - `convex/imageMerger.ts`
   - `convex/schema.ts`
+  - `convex/storageLifecycle.ts`
+  - `convex/aiOperations.ts`
 - Problem: Session deletion removes only the parent record. AI input/output files often lack stored storage IDs and cannot be deleted, leaving orphaned documents and blobs.
 - Required changes:
   - Record storage IDs for every persisted input and output.
@@ -269,8 +271,8 @@ This document tracks the repository audit findings so work can continue across s
   - Deleting a session eventually removes all owned documents and blobs.
   - Failed AI operations do not leak input/output storage.
   - Cleanup is resumable and safe to retry.
-- Verification: Not run
-- Notes:
+- Verification: `pnpm typecheck` PASS; `pnpm test:run` PASS (`convex/storageLifecycle.test.ts` covers the cascading purge, round-robin and self-rescheduling drain, restore refusal mid-purge, stale-operation refunds and terminal guards, output ownership transfer and TTL, and the orphan sweep); `pnpm exec eslint . --quiet` PASS; `pnpm build` PASS.
+- Notes: Completed 2026-11-24 (PR #106). Every blob is tracked on its owner: upload intents and `uploadedImages`, Replicate canvas snapshots (`aiGenerations.canvasSnapshotId`, freed when the row turns terminal), AI outputs on their operation row until placed and then on the `aiGeneratedImages` layer. Deletes are reference-counted (`isStorageReferenced`). Session deletion is soft; `purgeDeletedSessions` hard-deletes after 30 days, round-robin in bounded batches that reschedule themselves. Crons: stale AI operations (15 min; `pending` rows refunded, `processing` rows `failed_billed`), unplaced AI outputs (24 h TTL), and a daily sweep of unreferenced `_storage` blobs older than 24 h.
 
 ### AUD-011: Bound and validate all untrusted inputs
 
