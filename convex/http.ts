@@ -26,12 +26,23 @@ http.route({
   method: "POST",
   handler: httpAction(async (ctx, request) => {
     try {
-      const body = JSON.parse(await request.text());
-      if (typeof body?.sessionId === "string") {
+      const raw = await request.text();
+      if (raw.length > 2048) return new Response(null, { status: 200 });
+      const body = JSON.parse(raw);
+      const isShortString = (value: unknown): value is string =>
+        typeof value === "string" && value.length > 0 && value.length <= 256;
+      // The leave token proves the beacon comes from the presence owner (it
+      // is returned only to that client by updatePresence). Payloads without
+      // one, including old clients' {userId, guestId}, are ignored.
+      if (
+        isShortString(body?.sessionId) &&
+        isShortString(body?.presenceId) &&
+        isShortString(body?.leaveToken)
+      ) {
         await ctx.runMutation(internal.presence.beaconLeave, {
           sessionId: body.sessionId,
-          userId: typeof body.userId === "string" ? body.userId : undefined,
-          guestId: typeof body.guestId === "string" ? body.guestId : undefined,
+          presenceId: body.presenceId,
+          leaveToken: body.leaveToken,
         });
       }
     } catch {

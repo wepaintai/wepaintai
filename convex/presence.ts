@@ -1,13 +1,87 @@
-import { mutation, query, internalMutation } from "./_generated/server";
+import { mutation, query, internalMutation, type MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
-import { assertCanModifySession, canReadSession, resolveAuthenticatedUser } from "./sessionAuth";
+import type { Doc, Id } from "./_generated/dataModel";
+import {
+  assertCanModifySession,
+  canReadSession,
+  keysMatch,
+  resolveAuthenticatedUser,
+} from "./sessionAuth";
+
+function generateLeaveToken(): string {
+  const bytes = new Uint8Array(24);
+  try {
+    crypto.getRandomValues(bytes);
+  } catch {
+    // Presence must never hard-fail on the runtime's crypto support. Convex
+    // seeds Math.random in mutations with a strong per-execution seed; the
+    // token only authorizes removing the holder's own presence row.
+    for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+type PresenceIdentity =
+  | { userId: Id<"users">; guestId?: undefined }
+  | { userId?: undefined; guestId: string };
 
 /**
- * Update user presence in a session
+ * Resolve whose presence a caller may touch: the authenticated user, or (for
+ * guests) their own per-browser guestId. A caller-supplied userId is never
+ * trusted; it is ignored rather than rejected so stale clients degrade
+ * quietly. Returns null when the caller may not touch presence at all.
+ */
+async function resolvePresenceIdentity(
+  ctx: MutationCtx,
+  session: Doc<"paintingSessions"> | null,
+  args: { guestKey?: string; guestId?: string },
+): Promise<PresenceIdentity | null> {
+  if (!session || session.deletedAt !== undefined) return null;
+  let user: Doc<"users"> | null;
+  try {
+    ({ user } = await assertCanModifySession(ctx, session, args.guestKey));
+  } catch {
+    return null;
+  }
+  if (user) return { userId: user._id };
+  if (args.guestId) return { guestId: args.guestId };
+  // No stable identity (e.g. an old unauthenticated client that only sent a
+  // userId): skip instead of writing a shared anonymous row.
+  return null;
+}
+
+async function findPresence(
+  ctx: MutationCtx,
+  sessionId: Id<"paintingSessions">,
+  identity: PresenceIdentity,
+) {
+  return identity.userId
+    ? await ctx.db
+        .query("userPresence")
+        .withIndex("by_user_session", (q) =>
+          q.eq("userId", identity.userId).eq("sessionId", sessionId)
+        )
+        .first()
+    : await ctx.db
+        .query("userPresence")
+        .withIndex("by_guest_session", (q) =>
+          q.eq("guestId", identity.guestId).eq("sessionId", sessionId)
+        )
+        .first();
+}
+
+/**
+ * Update user presence in a session.
+ *
+ * Presence is best-effort: unauthorized callers and a userId that doesn't
+ * match ctx.auth are ignored (returns null) instead of throwing, so old
+ * clients don't surface sync errors. Returns the caller's presence id and a
+ * leave token that authorizes the sendBeacon leave route.
  */
 export const updatePresence = mutation({
   args: {
     sessionId: v.id("paintingSessions"),
+    // Accepted for old clients; identity always comes from ctx.auth.
     userId: v.optional(v.id("users")),
     guestId: v.optional(v.string()),
     userColor: v.string(),
@@ -18,94 +92,75 @@ export const updatePresence = mutation({
     currentTool: v.string(),
     guestKey: v.optional(v.string()),
   },
-  returns: v.null(),
+  returns: v.union(
+    v.null(),
+    v.object({ presenceId: v.id("userPresence"), leaveToken: v.string() }),
+  ),
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!session) {
-      throw new Error("Session not found");
-    }
-    const { user } = await assertCanModifySession(ctx, session, args.guestKey);
-
-    if (args.userId && (!user || user._id !== args.userId)) {
-      throw new Error("Unauthorized");
-    }
-    const effectiveUserId = user?._id;
-    const effectiveGuestId = effectiveUserId ? undefined : args.guestId;
+    const identity = await resolvePresenceIdentity(ctx, session, args);
+    if (!identity) return null;
 
     const now = Date.now();
-
-    // Find existing presence record. Guests all have userId undefined, so they
-    // are keyed by their stable per-browser guestId instead.
-    const existingPresence = effectiveUserId
-      ? await ctx.db
-          .query("userPresence")
-          .withIndex("by_user_session", (q) =>
-            q.eq("userId", effectiveUserId).eq("sessionId", args.sessionId)
-          )
-          .first()
-      : effectiveGuestId
-        ? await ctx.db
-            .query("userPresence")
-            .withIndex("by_guest_session", (q) =>
-              q.eq("guestId", effectiveGuestId).eq("sessionId", args.sessionId)
-            )
-            .first()
-        : await ctx.db
-            .query("userPresence")
-            .withIndex("by_user_session", (q) =>
-              q.eq("userId", undefined).eq("sessionId", args.sessionId)
-            )
-            .filter((q) => q.eq(q.field("guestId"), undefined))
-            .first();
+    const userName = args.userName.slice(0, 100);
+    const userColor = args.userColor.slice(0, 64);
+    const currentTool = args.currentTool.slice(0, 32);
+    const existingPresence = await findPresence(ctx, args.sessionId, identity);
 
     if (existingPresence) {
+      const leaveToken = existingPresence.leaveToken ?? generateLeaveToken();
       // If an identical update arrived within a short window, skip writing to reduce conflicts
       const recentlyUpdated = now - (existingPresence.lastSeen || 0) < 200;
       const noChange =
         existingPresence.cursorX === args.cursorX &&
         existingPresence.cursorY === args.cursorY &&
         existingPresence.isDrawing === args.isDrawing &&
-        existingPresence.currentTool === args.currentTool &&
-        existingPresence.userColor === args.userColor &&
-        existingPresence.userName === args.userName;
-      if (recentlyUpdated && noChange) {
-        return null;
+        existingPresence.currentTool === currentTool &&
+        existingPresence.userColor === userColor &&
+        existingPresence.userName === userName;
+      if (recentlyUpdated && noChange && existingPresence.leaveToken) {
+        return { presenceId: existingPresence._id, leaveToken };
       }
-      // Replace the entire document to avoid conflicts
+      // Replace the entire document to avoid conflicts (carrying the token over)
       await ctx.db.replace(existingPresence._id, {
         sessionId: args.sessionId,
-        userId: effectiveUserId,
-        guestId: effectiveGuestId,
-        userColor: args.userColor,
-        userName: args.userName,
+        userId: identity.userId,
+        guestId: identity.guestId,
+        userColor,
+        userName,
         cursorX: args.cursorX,
         cursorY: args.cursorY,
         isDrawing: args.isDrawing,
-        currentTool: args.currentTool,
+        currentTool,
         lastSeen: now,
+        leaveToken,
       });
-    } else {
-      // Create new presence record
-      await ctx.db.insert("userPresence", {
-        sessionId: args.sessionId,
-        userId: effectiveUserId,
-        guestId: effectiveGuestId,
-        userColor: args.userColor,
-        userName: args.userName,
-        cursorX: args.cursorX,
-        cursorY: args.cursorY,
-        isDrawing: args.isDrawing,
-        currentTool: args.currentTool,
-        lastSeen: now,
-      });
+      return { presenceId: existingPresence._id, leaveToken };
     }
 
-    return null;
+    const leaveToken = generateLeaveToken();
+    const presenceId = await ctx.db.insert("userPresence", {
+      sessionId: args.sessionId,
+      userId: identity.userId,
+      guestId: identity.guestId,
+      userColor,
+      userName,
+      cursorX: args.cursorX,
+      cursorY: args.cursorY,
+      isDrawing: args.isDrawing,
+      currentTool,
+      lastSeen: now,
+      leaveToken,
+    });
+    return { presenceId, leaveToken };
   },
 });
 
 /**
- * Get all active users in a session
+ * Get all active users in a session.
+ *
+ * Rows are mapped to an explicit public shape so the leave token is never
+ * returned.
  */
 export const getSessionPresence = query({
   args: {
@@ -132,17 +187,33 @@ export const getSessionPresence = query({
       return [];
     }
     const fiveMinutesAgo = Date.now() - 5 * 60 * 1000; // 5 minutes
-    
-    return await ctx.db
+
+    const rows = await ctx.db
       .query("userPresence")
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
       .filter((q) => q.gt(q.field("lastSeen"), fiveMinutesAgo))
       .collect();
+    return rows.map((p) => ({
+      _id: p._id,
+      _creationTime: p._creationTime,
+      sessionId: p.sessionId,
+      userId: p.userId,
+      guestId: p.guestId,
+      userColor: p.userColor,
+      userName: p.userName,
+      cursorX: p.cursorX,
+      cursorY: p.cursorY,
+      isDrawing: p.isDrawing,
+      currentTool: p.currentTool,
+      lastSeen: p.lastSeen,
+    }));
   },
 });
 
 /**
- * Remove user from session (when they leave)
+ * Remove the caller's own presence from a session (when they leave).
+ * Identity comes from ctx.auth or the caller's guestId; anything else is a
+ * silent no-op, so nobody can evict another user.
  */
 export const leaveSession = mutation({
   args: {
@@ -155,40 +226,18 @@ export const leaveSession = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    let user: Awaited<ReturnType<typeof resolveAuthenticatedUser>>;
+    let identity: PresenceIdentity | null;
     if (session && session.deletedAt === undefined) {
-      ({ user } = await assertCanModifySession(ctx, session, args.guestKey));
+      identity = await resolvePresenceIdentity(ctx, session, args);
     } else {
-      user = await resolveAuthenticatedUser(ctx);
-      // If session is gone/deleted, only allow authenticated callers to clean
-      // up their own presence row rather than arbitrary records.
-      if (!user && !args.guestKey) {
-        return null;
-      }
+      // Session is gone/deleted: authenticated callers may still clean up
+      // their own row.
+      const user = await resolveAuthenticatedUser(ctx);
+      identity = user ? { userId: user._id } : null;
     }
+    if (!identity) return null;
 
-    if (args.userId && (!user || user._id !== args.userId)) {
-      throw new Error("Unauthorized");
-    }
-    const effectiveUserId = user?._id;
-    const effectiveGuestId = effectiveUserId ? undefined : args.guestId;
-
-    const presence = effectiveUserId
-      ? await ctx.db
-          .query("userPresence")
-          .withIndex("by_user_session", (q) =>
-            q.eq("userId", effectiveUserId).eq("sessionId", args.sessionId)
-          )
-          .first()
-      : effectiveGuestId
-        ? await ctx.db
-            .query("userPresence")
-            .withIndex("by_guest_session", (q) =>
-              q.eq("guestId", effectiveGuestId).eq("sessionId", args.sessionId)
-            )
-            .first()
-        : null;
-
+    const presence = await findPresence(ctx, args.sessionId, identity);
     if (presence) {
       await ctx.db.delete(presence._id);
     }
@@ -199,57 +248,46 @@ export const leaveSession = mutation({
 
 /**
  * Best-effort leave fired via navigator.sendBeacon on pagehide (tab close /
- * navigation away), routed through an HTTP action. Takes raw strings because
- * beacon payloads are untyped; invalid ids are ignored. Removes the caller's
- * presence row and any in-progress live stroke so collaborators don't see a
- * ghost user or a frozen partial stroke.
+ * navigation away), routed through an HTTP action. A beacon can't carry auth,
+ * so it must present the leave token issued to that presence row by
+ * updatePresence. Removes that presence row and the same identity's live
+ * stroke (identity taken from the row, never from the request body).
  */
 export const beaconLeave = internalMutation({
   args: {
     sessionId: v.string(),
-    userId: v.optional(v.string()),
-    guestId: v.optional(v.string()),
+    presenceId: v.string(),
+    leaveToken: v.string(),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
     const sessionId = ctx.db.normalizeId("paintingSessions", args.sessionId);
-    if (!sessionId) return null;
-    const userId = args.userId
-      ? ctx.db.normalizeId("users", args.userId)
-      : null;
-    if (args.userId && !userId) return null;
+    const presenceId = ctx.db.normalizeId("userPresence", args.presenceId);
+    if (!sessionId || !presenceId) return null;
 
-    const presence = userId
-      ? await ctx.db
-          .query("userPresence")
-          .withIndex("by_user_session", (q) =>
-            q.eq("userId", userId).eq("sessionId", sessionId)
-          )
-          .first()
-      : args.guestId
-        ? await ctx.db
-            .query("userPresence")
-            .withIndex("by_guest_session", (q) =>
-              q.eq("guestId", args.guestId).eq("sessionId", sessionId)
-            )
-            .first()
-        : null;
-    if (presence) {
-      await ctx.db.delete(presence._id);
+    const presence = await ctx.db.get(presenceId);
+    if (
+      !presence ||
+      presence.sessionId !== sessionId ||
+      !presence.leaveToken ||
+      !keysMatch(presence.leaveToken, args.leaveToken)
+    ) {
+      return null;
     }
+    await ctx.db.delete(presence._id);
 
-    const liveStroke = userId
+    const liveStroke = presence.userId
       ? await ctx.db
           .query("liveStrokes")
           .withIndex("by_user_session", (q) =>
-            q.eq("userId", userId).eq("sessionId", sessionId)
+            q.eq("userId", presence.userId).eq("sessionId", sessionId)
           )
           .first()
-      : args.guestId
+      : presence.guestId
         ? await ctx.db
             .query("liveStrokes")
             .withIndex("by_guest_session", (q) =>
-              q.eq("guestId", args.guestId).eq("sessionId", sessionId)
+              q.eq("guestId", presence.guestId).eq("sessionId", sessionId)
             )
             .first()
         : null;

@@ -2,7 +2,12 @@ import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { internalQuery, type QueryCtx } from "./_generated/server";
 
-function keysMatch(expected: string, provided: string): boolean {
+/**
+ * Compare a stored secret (guest owner key, presence leave token) with a
+ * caller-supplied value without short-circuiting on the first differing
+ * character. Length is not secret (keys are fixed-size random hex).
+ */
+export function keysMatch(expected: string, provided: string): boolean {
   if (expected.length !== provided.length) return false;
   let diff = 0;
   for (let i = 0; i < expected.length; i++) {

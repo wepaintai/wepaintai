@@ -88,6 +88,9 @@ const schema = defineSchema({
     isDrawing: v.boolean(),
     currentTool: v.string(),
     lastSeen: v.number(),
+    // Secret issued to the presence owner at join; authorizes the
+    // unauthenticated sendBeacon leave. Never returned to other clients.
+    leaveToken: v.optional(v.string()),
   }).index("by_session", ["sessionId"])
     .index("by_user_session", ["userId", "sessionId"])
     .index("by_guest_session", ["guestId", "sessionId"]),

@@ -266,12 +266,12 @@ describe('AUD-004 & AUD-007 centralized session authorization', () => {
     expect(generations).toHaveLength(0)
   })
 
-  test('presence enforces session authorization and rejects userId spoofing/eviction', async () => {
+  test('presence enforces session authorization and ignores userId spoofing/eviction', async () => {
     const { t, ownerId, outsiderId, sessionId, asOwner, asOutsider } = await seedAuthFixture()
 
-    // Outsider cannot write presence to private session
-    await expect(
-      asOutsider.mutation(api.presence.updatePresence, {
+    // Outsider cannot write presence to private session (silently ignored)
+    expect(
+      await asOutsider.mutation(api.presence.updatePresence, {
         sessionId,
         userId: outsiderId,
         userColor: '#f00',
@@ -281,10 +281,10 @@ describe('AUD-004 & AUD-007 centralized session authorization', () => {
         isDrawing: false,
         currentTool: 'brush',
       })
-    ).rejects.toThrow('Unauthorized')
+    ).toBeNull()
 
-    // Owner writes presence cleanly
-    await asOwner.mutation(api.presence.updatePresence, {
+    // Owner writes presence cleanly and receives its own presence id + leave token
+    const ownerPresence = await asOwner.mutation(api.presence.updatePresence, {
       sessionId,
       userColor: '#0f0',
       userName: 'Owner',
@@ -293,35 +293,50 @@ describe('AUD-004 & AUD-007 centralized session authorization', () => {
       isDrawing: false,
       currentTool: 'brush',
     })
+    expect(ownerPresence?.presenceId).toBeTruthy()
+    expect(ownerPresence?.leaveToken).toMatch(/^[0-9a-f]{48}$/)
 
-    // Make session public: outsider still cannot spoof or evict owner's userId
+    // Make session public: outsider still cannot spoof or evict owner's userId.
+    // The claimed userId is ignored (no throw, so stale clients stay quiet)
+    // and the write lands on the outsider's own row.
     await t.run(async (ctx) => {
       await ctx.db.patch(sessionId, { isPublic: true })
     })
 
-    await expect(
-      asOutsider.mutation(api.presence.updatePresence, {
+    const spoof = await asOutsider.mutation(api.presence.updatePresence, {
+      sessionId,
+      userId: ownerId,
+      userColor: '#000',
+      userName: 'Spoofed Owner',
+      cursorX: 99,
+      cursorY: 99,
+      isDrawing: true,
+      currentTool: 'brush',
+    })
+    expect(spoof?.presenceId).not.toBe(ownerPresence?.presenceId)
+
+    // An unauthenticated caller claiming the owner's userId (an old tab) is a no-op
+    expect(
+      await t.mutation(api.presence.updatePresence, {
         sessionId,
         userId: ownerId,
         userColor: '#000',
-        userName: 'Spoofed Owner',
-        cursorX: 99,
-        cursorY: 99,
-        isDrawing: true,
+        userName: 'Old tab',
+        cursorX: 5,
+        cursorY: 5,
+        isDrawing: false,
         currentTool: 'brush',
       })
-    ).rejects.toThrow('Unauthorized')
+    ).toBeNull()
 
-    await expect(
-      asOutsider.mutation(api.presence.leaveSession, {
-        sessionId,
-        userId: ownerId,
-      })
-    ).rejects.toThrow('Unauthorized')
+    await asOutsider.mutation(api.presence.leaveSession, {
+      sessionId,
+      userId: ownerId,
+    })
 
     const active = await asOwner.query(api.presence.getSessionPresence, { sessionId })
     expect(active).toHaveLength(1)
-    expect(active[0]?.userId).toBe(ownerId)
+    expect(active[0]).toMatchObject({ userId: ownerId, userName: 'Owner', cursorX: 10 })
   })
 
   test('strokes and liveStrokes prevent userId spoofing and cross-session layer injection', async () => {
