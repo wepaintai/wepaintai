@@ -146,4 +146,26 @@ describe('stroke replay queue and edit links', () => {
     expect(rewritten).not.toContain(EDIT_KEY)
     expect(JSON.parse(rewritten).strokes[0]).toMatchObject({ usesEditLink: true })
   })
+
+  test('an anonymous revoked collaborator is not left with a stuck sign-in banner', async () => {
+    const { sync, keys } = await load()
+    keys.setEditKey(SESSION, EDIT_KEY)
+    // Anonymous: the auth probe would return null
+    query.mockResolvedValue(null)
+
+    // Revocation lands mid-stroke: a live-stroke write fails (nothing queued)
+    sync.reportSyncFailure(new Error('Unauthorized'))
+    expect(sync.getSyncStatus()).toMatchObject({ status: 'error', kind: 'auth' })
+    // getSession confirms canEdit === false -> key removed, edit-link strokes dropped
+    keys.removeEditKey(SESSION)
+    expect(sync.dropEditLinkStrokes(SESSION)).toBe(0)
+    expect(sync.getSyncStatus()).toMatchObject({ status: 'ok', droppedForAccessCount: 0 })
+
+    // Same, but with a queued stroke dropped during replay
+    const queued = sync.reportSyncFailure(new Error('Unauthorized'), strokeArgs({ editKey: EDIT_KEY }))
+    expect(await sync.retrySync()).toBe(true)
+    expect(await queued).toBeUndefined()
+    expect(query).not.toHaveBeenCalled()
+    expect(sync.getSyncStatus()).toMatchObject({ status: 'ok', droppedForAccessCount: 1 })
+  })
 })

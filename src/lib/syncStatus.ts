@@ -282,6 +282,7 @@ export async function retrySync(): Promise<boolean> {
   if (state.retrying) return false;
   setState({ retrying: true });
   let replayedAny = false;
+  let droppedForAccess = false;
   try {
     while (pendingStrokes.length > 0) {
       const entry = pendingStrokes[0];
@@ -302,6 +303,7 @@ export async function retrySync(): Promise<boolean> {
           // this tab never had it): it can never be saved. Drop it visibly.
           removeEntry();
           entry.resolve?.(undefined);
+          droppedForAccess = true;
           state = { ...state, droppedForAccessCount: state.droppedForAccessCount + 1 };
           setState({});
           continue;
@@ -339,7 +341,10 @@ export async function retrySync(): Promise<boolean> {
         return false;
       }
     }
-    if (state.status === "error" && !replayedAny) {
+    // A queue emptied only by dropping revoked edit-link strokes needs no
+    // auth probe: the failure was lost edit access, not an expired session
+    // (an anonymous collaborator's probe would return null forever).
+    if (state.status === "error" && !replayedAny && !droppedForAccess) {
       // Nothing queued to prove the connection works — probe with a query.
       // getCurrentUser returns null (rather than throwing) when the JWT is
       // invalid, so for auth errors a null result means still broken.
@@ -375,12 +380,16 @@ export function dropEditLinkStrokes(sessionId: string): number {
       kept.push(entry);
     }
   }
-  if (dropped === 0) return 0;
   pendingStrokes = kept;
   headFailureCount = 0;
-  persistQueue();
-  state = { ...state, droppedForAccessCount: state.droppedForAccessCount + dropped };
-  setState(pendingStrokes.length === 0 ? { status: "ok" } : {});
+  if (dropped > 0) {
+    persistQueue();
+    state = { ...state, droppedForAccessCount: state.droppedForAccessCount + dropped };
+  }
+  // Edit access is confirmed gone, so an error banner from this session's
+  // failed writes (e.g. a stroke or live stroke rejected mid-revocation) can
+  // never be fixed by signing in or retrying: clear it once nothing is queued.
+  setState(pendingStrokes.length === 0 ? { status: "ok", kind: "unknown" } : {});
   return dropped;
 }
 
