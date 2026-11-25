@@ -1,60 +1,18 @@
 import { v } from "convex/values";
-import { action, query, internalMutation, internalQuery } from "./_generated/server";
+import { action, query, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import { canReadSession } from "./sessionAuth";
-
-// Mutation to store image merge requests and results.
-// Internal-only: invoked from the mergeImages action via ctx.runMutation.
-export const createMergeRequest = internalMutation({
-  args: {
-    sessionId: v.id("paintingSessions"),
-    firstLayerId: v.string(),
-    secondLayerId: v.string(),
-    controlLayerId: v.optional(v.string()),
-    mergeMode: v.union(v.literal("full"), v.literal("left_right"), v.literal("top_bottom")),
-    status: v.union(v.literal("pending"), v.literal("processing"), v.literal("completed"), v.literal("failed")),
-    error: v.optional(v.string()),
-    resultImageUrl: v.optional(v.string()),
-    replicateId: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    
-    return await ctx.db.insert("imageMerges", {
-      sessionId: args.sessionId,
-      userId: identity?.subject,
-      firstLayerId: args.firstLayerId,
-      secondLayerId: args.secondLayerId,
-      controlLayerId: args.controlLayerId,
-      mergeMode: args.mergeMode,
-      status: args.status,
-      error: args.error,
-      resultImageUrl: args.resultImageUrl,
-      replicateId: args.replicateId,
-      createdAt: Date.now(),
-    });
-  },
-});
-
-// Update merge status. Internal-only: patches any imageMerges doc by id with no
-// auth, so it must never be client-callable.
-export const updateMergeStatus = internalMutation({
-  args: {
-    mergeId: v.id("imageMerges"),
-    status: v.union(v.literal("pending"), v.literal("processing"), v.literal("completed"), v.literal("failed")),
-    error: v.optional(v.string()),
-    resultImageUrl: v.optional(v.string()),
-    replicateId: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    await ctx.db.patch(args.mergeId, {
-      status: args.status,
-      error: args.error,
-      resultImageUrl: args.resultImageUrl,
-      replicateId: args.replicateId,
-    });
-  },
-});
+import { beginErrorMessage } from "./aiOperations";
+import {
+  BILLED_FAILURE_NOTE,
+  REFUNDED_FAILURE_NOTE,
+  cancelPrediction,
+  createPrediction,
+  extractOutputUrl,
+  isModerationError,
+  pollPrediction,
+} from "./replicate";
 
 // Internal-only query to resolve layer storage URLs for the mergeImages action.
 // Never exposed publicly because it returns signed Convex _storage URLs.
@@ -108,7 +66,7 @@ export const mergeImages = action({
     mergeMode: v.union(v.literal("full"), v.literal("left_right"), v.literal("top_bottom")),
     guestKey: v.optional(v.string()),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{ success: boolean; imageUrl?: string; error?: string }> => {
     console.log('[IMAGE-MERGE] mergeImages action called with:', {
       firstLayerId: args.firstLayerId,
       secondLayerId: args.secondLayerId,
@@ -138,84 +96,66 @@ export const mergeImages = action({
       return { success: false, error: "Image merging not configured" };
     }
 
-    // Create a merge request record as the immutable operation ID
-    const mergeId = await ctx.runMutation(internal.imageMerger.createMergeRequest, {
+    // Insert the operation row and reserve 1 token atomically BEFORE any
+    // provider spending. Users without tokens never get a row.
+    const begin = await ctx.runMutation(internal.aiOperations.beginOperation, {
       sessionId: args.sessionId,
-      firstLayerId: args.firstLayerId,
-      secondLayerId: args.secondLayerId,
-      controlLayerId: args.controlLayerId,
-      mergeMode: args.mergeMode,
-      status: "pending",
+      guestKey: args.guestKey,
+      operation: {
+        type: "image-merge",
+        firstLayerId: args.firstLayerId,
+        secondLayerId: args.secondLayerId,
+        controlLayerId: args.controlLayerId,
+        mergeMode: args.mergeMode,
+      },
     });
-
-    // Atomically reserve 1 token BEFORE external provider spending
-    let tokenReserved = false;
-    try {
-      const reservation = await ctx.runMutation(internal.tokens.consumeTokensForOperation, {
-        operationId: mergeId,
-        operationType: "image-merge",
-      });
-      tokenReserved = reservation.charged;
-    } catch (error) {
-      const message =
-        error instanceof Error && error.message.includes("Insufficient tokens")
-          ? "Insufficient tokens. Please purchase more tokens to continue."
-          : "Unable to reserve token for image merging.";
-      await ctx.runMutation(internal.imageMerger.updateMergeStatus, {
-        mergeId,
-        status: "failed",
-        error: message,
-      });
-      return { success: false, error: message };
+    if (begin.status !== "ok") {
+      return { success: false, error: beginErrorMessage(begin.status) };
     }
+    const mergeId = begin.operationId;
 
-    const failAndRefund = async (errorMessage: string) => {
-      await ctx.runMutation(internal.imageMerger.updateMergeStatus, {
-        mergeId,
-        status: "failed",
-        error: errorMessage,
+    const fail = async (error: string, outcome: "refund" | "billed") => {
+      await ctx.runMutation(internal.aiOperations.failOperation, {
+        operationType: "image-merge",
+        operationId: mergeId,
+        outcome,
+        error,
       });
-      if (tokenReserved) {
-        tokenReserved = false;
-        await ctx.runMutation(internal.tokens.refundTokensForOperation, {
-          operationId: mergeId,
-          operationType: "image-merge",
-          reason: errorMessage,
-        });
-      }
-      return { success: false as const, error: errorMessage };
+      const note = outcome === "billed" ? BILLED_FAILURE_NOTE : REFUNDED_FAILURE_NOTE;
+      return { success: false as const, error: `${error} ${note}` };
     };
 
+    let predictionId: string | null = null;
     try {
       // Get the image URLs for both layers and optional control layer
       let firstImageUrl: string;
       let secondImageUrl: string;
       let controlImageUrl: string | undefined;
-      
+
       try {
         const firstLayerResult = await ctx.runQuery(internal.imageMerger.getLayerImageUrl, {
           sessionId: args.sessionId,
           layerId: args.firstLayerId,
           guestKey: args.guestKey,
         });
-        
+
         const secondLayerResult = await ctx.runQuery(internal.imageMerger.getLayerImageUrl, {
           sessionId: args.sessionId,
           layerId: args.secondLayerId,
           guestKey: args.guestKey,
         });
-        
+
         if (!firstLayerResult || !firstLayerResult.url) {
           throw new Error(`First layer ${args.firstLayerId} not found or has no URL`);
         }
-        
+
         if (!secondLayerResult || !secondLayerResult.url) {
           throw new Error(`Second layer ${args.secondLayerId} not found or has no URL`);
         }
-        
+
         firstImageUrl = firstLayerResult.url;
         secondImageUrl = secondLayerResult.url;
-        
+
         // Get control image URL if provided
         if (args.controlLayerId) {
           const controlLayerResult = await ctx.runQuery(internal.imageMerger.getLayerImageUrl, {
@@ -223,137 +163,103 @@ export const mergeImages = action({
             layerId: args.controlLayerId,
             guestKey: args.guestKey,
           });
-          
+
           if (controlLayerResult && controlLayerResult.url) {
             controlImageUrl = controlLayerResult.url;
           }
         }
       } catch (error) {
         console.error('[IMAGE-MERGE] Failed to get layer image URLs:', error);
-        return await failAndRefund("Failed to get layer images");
+        return await fail("Failed to get layer images.", "refund");
       }
 
-      // Create prediction using Replicate API
-      const input: any = {
+      const input: Record<string, unknown> = {
         image_1: firstImageUrl,
         image_2: secondImageUrl,
         merge_option: args.mergeMode,
         output_format: "png",
       };
-      
-      // Add control image if provided
       if (controlImageUrl) {
         input.control_image = controlImageUrl;
       }
-      
-      const requestBody = {
+
+      const created = await createPrediction(replicateToken, {
         version: "db2c826b6a7215fd31695acb73b5b2c91a077f88a2a264c003745e62901e2867", // fofr/image-merger latest version
         input,
-      };
+      });
+      if (created.kind === "rejected") {
+        console.error("[IMAGE-MERGE] Replicate rejected the request:", created.httpStatus, created.message);
+        return await fail("Failed to start image merge.", "refund");
+      }
+      predictionId = created.id;
 
-      const response = await fetch("https://api.replicate.com/v1/predictions", {
-        method: "POST",
-        headers: {
-          "Authorization": `Token ${replicateToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(requestBody),
+      // From here on the provider has accepted (and bills) the request.
+      await ctx.runMutation(internal.aiOperations.markOperationProcessing, {
+        operationType: "image-merge",
+        operationId: mergeId,
+        replicateId: predictionId,
       });
 
-      if (!response.ok) {
-        const error = await response.text();
-        console.error("Replicate API error:", error);
-        return await failAndRefund("Failed to start image merge");
+      const result = await pollPrediction(replicateToken, predictionId);
+      if (result.kind === "timeout" || result.kind === "poll_error") {
+        if (result.kind === "poll_error") console.error('[IMAGE-MERGE] Status polling failed:', result.message);
+        await cancelPrediction(replicateToken, predictionId);
+        return await fail("Merge timed out and was canceled.", "billed");
+      }
+      if (result.kind === "failed") {
+        const message = isModerationError(result.error)
+          ? "Content moderation flagged these images. Please try different images."
+          : `Merge failed: ${result.error}.`;
+        return await fail(message, "billed");
       }
 
-      const prediction = await response.json();
-      
-      // Update with Replicate ID
-      await ctx.runMutation(internal.imageMerger.updateMergeStatus, {
-        mergeId,
-        status: "processing",
-        replicateId: prediction.id,
+      const imageUrl = extractOutputUrl(result.output);
+      if (!imageUrl) {
+        return await fail("Replicate returned an invalid result.", "billed");
+      }
+
+      // Download into Convex storage so the result URL doesn't expire (the
+      // provider URL is short-lived). The provider already billed this
+      // request, so a storage failure is failed_billed rather than refunded.
+      let finalUrl: string | null = null;
+      let storedId: Id<"_storage"> | null = null;
+      try {
+        const imageResponse = await fetch(imageUrl);
+        if (!imageResponse.ok) {
+          throw new Error(`Failed to download image: ${imageResponse.statusText}`);
+        }
+        storedId = await ctx.storage.store(await imageResponse.blob());
+        finalUrl = await ctx.storage.getUrl(storedId);
+      } catch (error) {
+        console.error("[IMAGE-MERGE] Error storing image:", error);
+      }
+      if (!storedId || !finalUrl) {
+        if (storedId) await ctx.storage.delete(storedId).catch(() => {});
+        return await fail("Failed to save the merged image.", "billed");
+      }
+
+      const completion = await ctx.runMutation(internal.aiOperations.completeOperation, {
+        operationType: "image-merge",
+        operationId: mergeId,
+        resultImageUrl: finalUrl,
+        guestKey: args.guestKey,
       });
-
-      // Poll for completion
-      let attempts = 0;
-      const parsedTimeout = parseInt(process.env.REPLICATE_TIMEOUT_SECONDS || "180", 10);
-      const maxAttempts = Number.isFinite(parsedTimeout) && parsedTimeout > 0 ? parsedTimeout : 180;
-      
-      while (attempts < maxAttempts) {
-        const statusResponse = await fetch(
-          `https://api.replicate.com/v1/predictions/${prediction.id}`,
-          {
-            headers: {
-              "Authorization": `Token ${replicateToken}`,
-            },
-          }
-        );
-
-        if (!statusResponse.ok) {
-          console.error('Failed to check status, response:', await statusResponse.text());
-          throw new Error("Failed to check prediction status");
-        }
-
-        const status = await statusResponse.json();
-
-        if (status.status === "succeeded") {
-          let imageUrl: string | undefined;
-          if (Array.isArray(status.output)) {
-            if (status.output.length > 10 && status.output.every((item: any) => typeof item === 'string' && item.length === 1)) {
-              imageUrl = status.output.join('');
-            } else {
-              imageUrl = status.output[0];
-            }
-          } else if (typeof status.output === 'string') {
-            imageUrl = status.output;
-          } else if (status.output && typeof status.output === 'object') {
-            imageUrl = status.output.url || status.output.image || status.output[0];
-          }
-          
-          if (!imageUrl || imageUrl.length === 1) {
-            return await failAndRefund("Replicate returned invalid URL. Please try again.");
-          }
-
-          let finalUrl = imageUrl;
-          try {
-            const imageResponse = await fetch(imageUrl);
-            if (!imageResponse.ok) {
-              throw new Error(`Failed to download image: ${imageResponse.statusText}`);
-            }
-            const imageBlob = await imageResponse.blob();
-            const storageId = await ctx.storage.store(imageBlob);
-            const storageUrl = await ctx.storage.getUrl(storageId);
-            if (storageUrl) {
-              finalUrl = storageUrl;
-            }
-          } catch (error) {
-            console.error("[IMAGE-MERGE] Error storing image:", error);
-          }
-
-          await ctx.runMutation(internal.imageMerger.updateMergeStatus, {
-            mergeId,
-            status: "completed",
-            resultImageUrl: finalUrl,
-          });
-          
-          return { success: true, imageUrl: finalUrl };
-        } else if (status.status === "failed" || status.status === "canceled") {
-          return await failAndRefund(status.error || "Merge failed");
-        }
-
-        // Wait 1 second before polling again
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        attempts++;
+      if (completion !== "completed") {
+        if (storedId) await ctx.storage.delete(storedId).catch(() => {});
+        return {
+          success: false,
+          error:
+            completion === "access_lost"
+              ? "You no longer have access to this painting, so the result was discarded."
+              : "This merge was already finalized.",
+        };
       }
 
-      // Timeout
-      return await failAndRefund("Merge timed out");
-
+      return { success: true, imageUrl: finalUrl };
     } catch (error) {
-      console.error("[IMAGE-MERGE] Image merge error:", error);
-      console.error("[IMAGE-MERGE] Error details:", error instanceof Error ? error.message : String(error));
-      return await failAndRefund("An error occurred during merge");
+      console.error("[IMAGE-MERGE] Image merge error:", error instanceof Error ? error.message : String(error));
+      if (predictionId) await cancelPrediction(replicateToken, predictionId);
+      return await fail("An error occurred during merge.", predictionId ? "billed" : "refund");
     }
   },
 });

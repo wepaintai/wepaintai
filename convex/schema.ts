@@ -1,6 +1,18 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
+// Lifecycle of a token-billed AI operation row (aiGenerations, imageMerges,
+// backgroundRemovals). `failed` means the token was refunded; `failed_billed`
+// means the provider had already accepted (and billed) the request, so the
+// token was intentionally not refunded.
+export const aiOperationStatus = v.union(
+  v.literal("pending"),
+  v.literal("processing"),
+  v.literal("completed"),
+  v.literal("failed"),
+  v.literal("failed_billed"),
+);
+
 const schema = defineSchema({
   paintingSessions: defineTable({
     name: v.optional(v.string()),
@@ -169,7 +181,7 @@ const schema = defineSchema({
     sessionId: v.id("paintingSessions"),
     userId: v.optional(v.string()), // User identity subject
     prompt: v.optional(v.string()), // Made optional to handle existing data
-    status: v.union(v.literal("pending"), v.literal("processing"), v.literal("completed"), v.literal("failed")),
+    status: aiOperationStatus,
     error: v.optional(v.string()),
     errorType: v.optional(v.string()), // Added missing field
     resultImageUrl: v.optional(v.string()),
@@ -309,7 +321,20 @@ const schema = defineSchema({
     secondLayerId: v.string(), // ID of second layer to merge
     controlLayerId: v.optional(v.string()), // Optional control layer ID for controlnet
     mergeMode: v.union(v.literal("full"), v.literal("left_right"), v.literal("top_bottom")),
-    status: v.union(v.literal("pending"), v.literal("processing"), v.literal("completed"), v.literal("failed")),
+    status: aiOperationStatus,
+    error: v.optional(v.string()),
+    resultImageUrl: v.optional(v.string()),
+    replicateId: v.optional(v.string()),
+    createdAt: v.number(),
+  }).index("by_session", ["sessionId"]),
+
+  // Background removal requests: the operation row that keys the token debit,
+  // refunds, and stale-operation sweeps (same lifecycle as aiGenerations).
+  backgroundRemovals: defineTable({
+    sessionId: v.id("paintingSessions"),
+    userId: v.optional(v.string()), // User identity subject
+    targetLayerId: v.optional(v.string()),
+    status: aiOperationStatus,
     error: v.optional(v.string()),
     resultImageUrl: v.optional(v.string()),
     replicateId: v.optional(v.string()),

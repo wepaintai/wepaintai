@@ -400,6 +400,7 @@ export const purgeDeletedSessions = internalMutation({
         ctx.db.query("paintLayers").withIndex("by_session", (q) => q.eq("sessionId", session._id)),
         ctx.db.query("aiGeneratedImages").withIndex("by_session", (q) => q.eq("sessionId", session._id)),
         ctx.db.query("imageMerges").withIndex("by_session", (q) => q.eq("sessionId", session._id)),
+        ctx.db.query("backgroundRemovals").withIndex("by_session", (q) => q.eq("sessionId", session._id)),
       ];
       for (const query of sessionQueries) {
         const docs = await query.take(PURGE_DOCS_PER_TABLE);
