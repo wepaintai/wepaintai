@@ -688,7 +688,9 @@ export const deleteImage = mutation({
     if (!image) throw new Error("Image not found");
     const session = await ctx.db.get(image.sessionId);
     if (!session) throw new Error("Session not found");
-    await assertCanModifySession(ctx, session, args.guestKey, { editKey: args.editKey });
+    // Hard delete (layer, attached strokes and the stored file): owner only,
+    // even for edit-link collaborators.
+    await assertCanModifySession(ctx, session, args.guestKey, { ownerOnly: true });
 
     // Delete any strokes attached to this image layer
     const attachedStrokes = await ctx.db
@@ -927,7 +929,9 @@ export const deleteAIImage = mutation({
 
     const session = await ctx.db.get(image.sessionId);
     if (!session) throw new Error("Session not found");
-    await assertCanModifySession(ctx, session, args.guestKey, { editKey: args.editKey });
+    // Hard delete (layer, attached strokes and the stored file): owner only,
+    // even for edit-link collaborators.
+    await assertCanModifySession(ctx, session, args.guestKey, { ownerOnly: true });
     
     console.log('[deleteAIImage] Found image to delete:', image);
 

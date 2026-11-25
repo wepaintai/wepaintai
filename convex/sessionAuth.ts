@@ -27,15 +27,18 @@ export async function resolveAuthenticatedUser(
     .first();
 }
 
+/**
+ * True when `editKey` matches the session's active collaboration edit key.
+ * Only the dedicated `editKey` argument is consulted: the guest owner key and
+ * the edit key are separate secrets and are never accepted in each other's
+ * slot. Empty or missing keys never match.
+ */
 export function hasValidEditKey(
   session: Doc<"paintingSessions">,
   editKey: string | undefined,
-  fallbackGuestKey?: string,
 ): boolean {
-  if (!session.editKey) return false;
-  if (editKey && keysMatch(session.editKey, editKey)) return true;
-  if (fallbackGuestKey && keysMatch(session.editKey, fallbackGuestKey)) return true;
-  return false;
+  if (!session.editKey || !editKey) return false;
+  return keysMatch(session.editKey, editKey);
 }
 
 export interface SessionAccess {
@@ -68,7 +71,7 @@ export async function getSessionAccess(
     (!!user && session.createdBy === user._id) ||
     (!!session.guestOwnerKey && !!guestKey && keysMatch(session.guestOwnerKey, guestKey));
 
-  const canEdit = isOwner || hasValidEditKey(session, editKey, guestKey);
+  const canEdit = isOwner || hasValidEditKey(session, editKey);
   const canRead = session.isPublic || canEdit;
 
   return { canRead, canEdit, isOwner, user };

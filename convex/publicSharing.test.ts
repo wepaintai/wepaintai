@@ -1,6 +1,8 @@
 import { convexTest } from 'convex-test'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { api } from './_generated/api'
+import { api, internal } from './_generated/api'
+import type { Id } from './_generated/dataModel'
+import { hasValidEditKey } from './sessionAuth'
 import schema from './schema'
 import { modules } from './test.setup'
 
@@ -16,6 +18,19 @@ function makePngBytes(width: number, height: number): Uint8Array<ArrayBuffer> {
   view.setUint32(16, width, false)
   view.setUint32(20, height, false)
   return bytes
+}
+
+async function addSecondLayer(fixture: { t: ReturnType<typeof createTestBackend>; sessionId: Id<'paintingSessions'> }) {
+  return await fixture.t.run((ctx) =>
+    ctx.db.insert('paintLayers', {
+      sessionId: fixture.sessionId,
+      name: 'Layer 2',
+      layerOrder: 3,
+      visible: true,
+      opacity: 1,
+      createdAt: Date.now(),
+    }),
+  )
 }
 
 async function seedSharingFixture(options: {
@@ -116,6 +131,96 @@ async function seedSharingFixture(options: {
     asOwner: t.withIdentity({ subject: 'share-owner' }),
     asViewer: t.withIdentity({ subject: 'share-viewer' }),
   }
+}
+
+type Fixture = Awaited<ReturnType<typeof seedSharingFixture>>
+type Caller = Fixture['t'] | Fixture['asViewer']
+type KeyArgs = { editKey?: string; guestKey?: string }
+
+/**
+ * Every session-scoped write a non-editor must be denied: strokes, live
+ * strokes, uploads, images, paint layers (both modules), unified reorder,
+ * thumbnails/prompts, viewer state and WebRTC signaling.
+ */
+async function expectEveryWriteDenied(
+  caller: Caller,
+  ids: {
+    sessionId: Id<'paintingSessions'>
+    layerId: Id<'paintLayers'>
+    otherLayerId: Id<'paintLayers'>
+    strokeId: Id<'strokes'>
+    uploadedImageId: Id<'uploadedImages'>
+    aiImageId: Id<'aiGeneratedImages'>
+  },
+  keys: KeyArgs,
+) {
+  const { sessionId, layerId, otherLayerId, strokeId, uploadedImageId, aiImageId } = ids
+  // Owner-only mutations take no editKey argument at all
+  const ownerKeys = keys.guestKey !== undefined ? { guestKey: keys.guestKey } : {}
+  const denied: Array<[string, () => Promise<unknown>]> = [
+    ['strokes.addStroke', () => caller.mutation(api.strokes.addStroke, {
+      sessionId, layerId, userColor: '#f00', points: [{ x: 1, y: 2 }],
+      brushColor: '#f00', brushSize: 5, opacity: 1, ...keys,
+    })],
+    ['strokes.removeLastStroke', () => caller.mutation(api.strokes.removeLastStroke, { sessionId, ...keys })],
+    ['strokes.restoreLastDeletedStroke', () => caller.mutation(api.strokes.restoreLastDeletedStroke, { sessionId, ...keys })],
+    ['strokes.deleteStroke', () => caller.mutation(api.strokes.deleteStroke, { strokeId, ...ownerKeys })],
+    ['strokes.clearSession', () => caller.mutation(api.strokes.clearSession, { sessionId, ...ownerKeys })],
+    ['liveStrokes.updateLiveStroke', () => caller.mutation(api.liveStrokes.updateLiveStroke, {
+      sessionId, userColor: '#f00', userName: 'Vandal', points: [{ x: 1, y: 2 }],
+      brushColor: '#f00', brushSize: 5, opacity: 1, ...keys,
+    })],
+    ['liveStrokes.clearLiveStroke', () => caller.mutation(api.liveStrokes.clearLiveStroke, { sessionId, guestId: 'g', ...keys })],
+    ['liveStrokes.clearSessionLiveStrokes', () => caller.mutation(api.liveStrokes.clearSessionLiveStrokes, { sessionId, ...ownerKeys })],
+    ['images.createUploadIntent', () => caller.mutation(api.images.createUploadIntent, { sessionId, ...keys })],
+    ['images.addAIGeneratedImage', () => caller.mutation(api.images.addAIGeneratedImage, {
+      sessionId, imageUrl: 'https://example.com/vandal.png', width: 100, height: 100, ...keys,
+    })],
+    ['images.updateImageTransform', () => caller.mutation(api.images.updateImageTransform, { imageId: uploadedImageId, x: 999, ...keys })],
+    ['images.updateAIImageTransform', () => caller.mutation(api.images.updateAIImageTransform, { imageId: aiImageId, x: 999, ...keys })],
+    ['images.updateImageLayerOrder', () => caller.mutation(api.images.updateImageLayerOrder, { imageId: uploadedImageId, newLayerOrder: 0, ...keys })],
+    ['images.updateAIImageLayerOrder', () => caller.mutation(api.images.updateAIImageLayerOrder, { imageId: aiImageId, newLayerOrder: 0, ...keys })],
+    ['images.deleteImage', () => caller.mutation(api.images.deleteImage, { imageId: uploadedImageId, ...keys })],
+    ['images.deleteAIImage', () => caller.mutation(api.images.deleteAIImage, { imageId: aiImageId, ...keys })],
+    ['paintLayers.createPaintLayer', () => caller.mutation(api.paintLayers.createPaintLayer, { sessionId, name: 'Vandal', ...keys })],
+    ['paintLayers.updatePaintLayer', () => caller.mutation(api.paintLayers.updatePaintLayer, { layerId, visible: false, ...keys })],
+    ['paintLayers.updatePaintLayerTransform', () => caller.mutation(api.paintLayers.updatePaintLayerTransform, { layerId, x: 5, ...keys })],
+    ['paintLayers.deletePaintLayer', () => caller.mutation(api.paintLayers.deletePaintLayer, { layerId, ...keys })],
+    ['paintLayers.reorderPaintLayer', () => caller.mutation(api.paintLayers.reorderPaintLayer, { layerId, newOrder: 3, ...keys })],
+    ['paintLayers.mergePaintLayers', () => caller.mutation(api.paintLayers.mergePaintLayers, {
+      sourceLayerId: otherLayerId, targetLayerId: layerId, ...keys,
+    })],
+    ['paintLayers.ensureDefaultPaintLayer', () => caller.mutation(api.paintLayers.ensureDefaultPaintLayer, { sessionId, ...keys })],
+    ['paintLayer.updatePaintLayerOrder', () => caller.mutation(api.paintLayer.updatePaintLayerOrder, { sessionId, newLayerOrder: 1, ...keys })],
+    ['paintLayer.updatePaintLayerVisibility', () => caller.mutation(api.paintLayer.updatePaintLayerVisibility, { sessionId, visible: false, ...keys })],
+    ['paintLayer.normalizeLayerOrders', () => caller.mutation(api.paintLayer.normalizeLayerOrders, { sessionId, ...keys })],
+    ['layers.reorderLayer', () => caller.mutation(api.layers.reorderLayer, { sessionId, layerId, newOrder: 2, ...keys })],
+    ['paintingSessions.updateSessionThumbnail', () => caller.mutation(api.paintingSessions.updateSessionThumbnail, {
+      sessionId, thumbnailUrl: 'https://cdn.example.com/vandal.png', ...keys,
+    })],
+    ['paintingSessions.addAIPrompt', () => caller.mutation(api.paintingSessions.addAIPrompt, { sessionId, prompt: 'vandal', ...keys })],
+    ['viewerAcks.upsertViewerState', () => caller.mutation(api.viewerAcks.upsertViewerState, {
+      sessionId, viewerId: 'vandal-viewer', lastAckedStrokeOrder: 99, ...keys,
+    })],
+    ['viewerAcks.removeViewerState', () => caller.mutation(api.viewerAcks.removeViewerState, { sessionId, viewerId: 'vandal-viewer', ...keys })],
+    ['webrtc.joinP2PSession', () => caller.mutation(api.webrtc.joinP2PSession, { sessionId, peerId: 'vandal-peer', ...keys })],
+    ['webrtc.sendSignal', () => caller.mutation(api.webrtc.sendSignal, {
+      sessionId, fromPeerId: 'vandal-peer', toPeerId: 'owner-peer', type: 'offer', data: { sdp: 'x' }, ...keys,
+    })],
+    ['webrtc.getSignals', () => caller.query(api.webrtc.getSignals, { sessionId, peerId: 'owner-peer', ...keys })],
+    ['webrtc.deleteSignals', () => caller.mutation(api.webrtc.deleteSignals, { sessionId, peerId: 'owner-peer', signalIds: [], ...keys })],
+    ['webrtc.leaveP2PSession', () => caller.mutation(api.webrtc.leaveP2PSession, { sessionId, peerId: 'owner-peer', ...keys })],
+  ]
+  for (const [name, run] of denied) {
+    await expect(run(), name).rejects.toThrow('Unauthorized')
+  }
+  // Presence is best-effort: a non-editor's update is ignored, never written
+  expect(
+    await caller.mutation(api.presence.updatePresence, {
+      sessionId, guestId: 'vandal-guest', userColor: '#f00', userName: 'Vandal',
+      cursorX: 1, cursorY: 2, isDrawing: false, currentTool: 'brush', ...keys,
+    }),
+  ).toBeNull()
 }
 
 afterEach(() => {
@@ -316,6 +421,7 @@ describe('AUD-005 public read-only viewing and secret edit links', () => {
       layerId,
       strokeId,
       uploadedImageId,
+      aiImageId,
       asOwner,
       asViewer,
     } = await seedSharingFixture({ isPublic: false })
@@ -389,12 +495,63 @@ describe('AUD-005 public read-only viewing and secret edit links', () => {
     })
     expect(uploadedId).toBeTruthy()
 
-    // Collaborator passing editKey via guestKey (capability compatibility) also works for editing
+    // The edit key is only accepted in the editKey slot: the guest owner key
+    // and the edit key are separate secrets
+    await expect(
+      t.mutation(api.images.updateImageTransform, {
+        imageId: uploadedImageId,
+        rotation: 15,
+        guestKey: editKey,
+      }),
+    ).rejects.toThrow('Unauthorized')
     await t.mutation(api.images.updateImageTransform, {
       imageId: uploadedImageId,
       rotation: 15,
-      guestKey: editKey,
+      editKey,
     })
+
+    // Hard-destructive operations are owner-only: an edit-link holder can't
+    // permanently destroy the owner's work, whichever slot carries the key
+    for (const keys of [{ editKey }, { guestKey: editKey }, { editKey, guestKey: editKey }]) {
+      for (const caller of [t, asViewer]) {
+        await expect(
+          caller.mutation(api.paintLayers.deletePaintLayer, { layerId, ...keys }),
+        ).rejects.toThrow('Unauthorized')
+        await expect(
+          caller.mutation(api.paintLayers.mergePaintLayers, {
+            sourceLayerId: newLayerId,
+            targetLayerId: layerId,
+            ...keys,
+          }),
+        ).rejects.toThrow('Unauthorized')
+        await expect(
+          caller.mutation(api.images.deleteImage, { imageId: uploadedImageId, ...keys }),
+        ).rejects.toThrow('Unauthorized')
+        await expect(
+          caller.mutation(api.images.deleteAIImage, { imageId: aiImageId, ...keys }),
+        ).rejects.toThrow('Unauthorized')
+      }
+    }
+    const survivors = await t.run(async (ctx) => ({
+      layer: await ctx.db.get(layerId),
+      newLayer: await ctx.db.get(newLayerId),
+      image: await ctx.db.get(uploadedImageId),
+      ai: await ctx.db.get(aiImageId),
+      stroke: await ctx.db.get(strokeId),
+    }))
+    expect(survivors.layer).not.toBeNull()
+    expect(survivors.newLayer).not.toBeNull()
+    expect(survivors.image).not.toBeNull()
+    expect(survivors.ai).not.toBeNull()
+    expect(survivors.stroke).not.toBeNull()
+
+    // The owner can still perform them
+    await asOwner.mutation(api.paintLayers.mergePaintLayers, {
+      sourceLayerId: newLayerId,
+      targetLayerId: layerId,
+    })
+    await asOwner.mutation(api.images.deleteAIImage, { imageId: aiImageId })
+    expect(await t.run((ctx) => ctx.db.get(aiImageId))).toBeNull()
 
     // Collaborator with editKey CANNOT perform ANY owner-only action (even if passed as guestKey!)
     await expect(
@@ -659,8 +816,192 @@ describe('AUD-005 public read-only viewing and secret edit links', () => {
     ).rejects.toThrow('Unauthorized')
   })
 
+  test('viewer denial covers WebRTC signaling, viewer state and every layer/image mutation, with no side effects', async () => {
+    const seeded = await seedSharingFixture({ isPublic: true, editKey: 'the-real-edit-key' })
+    const fixture = { ...seeded, otherLayerId: await addSecondLayer(seeded) }
+    await fixture.t.run(async (ctx) => {
+      await ctx.db.insert('webrtcSignals', {
+        sessionId: fixture.sessionId,
+        fromPeerId: 'owner-peer',
+        toPeerId: 'collab-peer',
+        type: 'offer',
+        data: { sdp: 'secret-sdp' },
+        timestamp: Date.now(),
+      })
+    })
+    const snapshot = () =>
+      fixture.t.run(async (ctx) => ({
+        session: await ctx.db.get(fixture.sessionId),
+        strokes: await ctx.db.query('strokes').collect(),
+        layers: await ctx.db.query('paintLayers').collect(),
+        images: await ctx.db.query('uploadedImages').collect(),
+        ai: await ctx.db.query('aiGeneratedImages').collect(),
+        presence: await ctx.db.query('userPresence').collect(),
+        viewerStates: await ctx.db.query('viewerStates').collect(),
+        signals: await ctx.db.query('webrtcSignals').collect(),
+        intents: await ctx.db.query('imageUploadIntents').collect(),
+      }))
+    const before = await snapshot()
+
+    // No key, wrong key, empty key and the edit key in the wrong slot
+    const keyVariants: KeyArgs[] = [
+      {},
+      { editKey: '' },
+      { editKey: 'not-the-edit-key' },
+      { guestKey: '' },
+      { guestKey: 'the-real-edit-key' },
+    ]
+    for (const caller of [fixture.t, fixture.asViewer]) {
+      for (const keys of keyVariants) {
+        await expectEveryWriteDenied(caller, fixture, keys)
+      }
+    }
+    expect(await snapshot()).toEqual(before)
+  })
+
+  test('an empty-string editKey never grants access, even against a legacy empty stored key', async () => {
+    // Stored key is empty (legacy/corrupt row) and the session is private
+    const seededLegacy = await seedSharingFixture({ isPublic: false, editKey: '' })
+    const legacy = { ...seededLegacy, otherLayerId: await addSecondLayer(seededLegacy) }
+    expect(
+      await legacy.t.query(api.paintingSessions.getSession, { sessionId: legacy.sessionId, editKey: '' }),
+    ).toEqual({ status: 'unauthorized' })
+    expect(
+      await legacy.t.query(api.strokes.getSessionStrokes, { sessionId: legacy.sessionId, editKey: '' }),
+    ).toEqual([])
+    await expectEveryWriteDenied(legacy.t, legacy, { editKey: '' })
+    await expectEveryWriteDenied(legacy.asViewer, legacy, { editKey: '', guestKey: '' })
+
+    // Unit level: no combination of empty/missing keys matches
+    const doc = (editKey?: string) => ({ editKey }) as unknown as Parameters<typeof hasValidEditKey>[0]
+    expect(hasValidEditKey(doc(''), '')).toBe(false)
+    expect(hasValidEditKey(doc(undefined), '')).toBe(false)
+    expect(hasValidEditKey(doc(undefined), undefined)).toBe(false)
+    expect(hasValidEditKey(doc('real-key'), '')).toBe(false)
+    expect(hasValidEditKey(doc('real-key'), undefined)).toBe(false)
+    expect(hasValidEditKey(doc('real-key'), 'real-key')).toBe(true)
+  })
+
+  test('restoring a deleted session clears its edit link', async () => {
+    const { t, sessionId, layerId, asOwner } = await seedSharingFixture({ isPublic: false })
+    const editKey = await asOwner.mutation(api.paintingSessions.enableEditLink, { sessionId })
+    await asOwner.mutation(api.paintingSessions.deleteSession, { sessionId })
+    expect(await asOwner.mutation(api.paintingSessions.restoreSession, { sessionId })).toBe('restored')
+
+    expect(await asOwner.query(api.paintingSessions.getSessionEditKey, { sessionId })).toBeNull()
+    expect(await t.query(api.paintingSessions.getSession, { sessionId, editKey })).toEqual({
+      status: 'unauthorized',
+    })
+    await expect(
+      t.mutation(api.strokes.addStroke, {
+        sessionId, layerId, userColor: '#000', points: [{ x: 1, y: 1 }],
+        brushColor: '#000', brushSize: 4, opacity: 1, editKey,
+      }),
+    ).rejects.toThrow('Unauthorized')
+    // A fresh link can be issued and differs from the old one
+    const fresh = await asOwner.mutation(api.paintingSessions.enableEditLink, { sessionId })
+    expect(fresh).not.toBe(editKey)
+  })
+
+  test('rotating or revoking the edit link evicts collaborator presence, live strokes and signals at once', async () => {
+    const { t, ownerId, sessionId, asOwner, asViewer } = await seedSharingFixture({ isPublic: true })
+    const presenceArgs = {
+      userColor: '#123', userName: 'x', cursorX: 1, cursorY: 1, isDrawing: false, currentTool: 'brush',
+    }
+    const liveArgs = {
+      userColor: '#123', userName: 'x', points: [{ x: 1, y: 1 }], brushColor: '#000', brushSize: 3, opacity: 1,
+    }
+    for (const action of ['rotate', 'revoke'] as const) {
+      const editKey = await asOwner.mutation(api.paintingSessions.enableEditLink, { sessionId })
+      await asOwner.mutation(api.presence.updatePresence, { sessionId, ...presenceArgs })
+      await asOwner.mutation(api.liveStrokes.updateLiveStroke, { sessionId, ...liveArgs })
+      await asViewer.mutation(api.presence.updatePresence, { sessionId, editKey, ...presenceArgs })
+      await asViewer.mutation(api.liveStrokes.updateLiveStroke, { sessionId, editKey, ...liveArgs })
+      await t.mutation(api.presence.updatePresence, { sessionId, guestId: 'anon-collab', editKey, ...presenceArgs })
+      await t.mutation(api.webrtc.sendSignal, {
+        sessionId, fromPeerId: 'collab', toPeerId: 'owner', type: 'offer', data: {}, editKey,
+      })
+      const editorsBefore = await asOwner.query(api.presence.getSessionPresence, { sessionId })
+      expect(editorsBefore).toHaveLength(3)
+
+      if (action === 'rotate') {
+        await asOwner.mutation(api.paintingSessions.rotateEditLink, { sessionId })
+      } else {
+        await asOwner.mutation(api.paintingSessions.revokeEditLink, { sessionId })
+      }
+
+      const rows = await t.run(async (ctx) => ({
+        presence: await ctx.db.query('userPresence').collect(),
+        live: await ctx.db.query('liveStrokes').collect(),
+        signals: await ctx.db.query('webrtcSignals').collect(),
+      }))
+      expect(rows.presence.map((p) => p.userId)).toEqual([ownerId])
+      expect(rows.live.map((l) => l.userId)).toEqual([ownerId])
+      expect(rows.signals).toHaveLength(0)
+
+      // The revoked collaborator can't re-enter the editor set
+      expect(
+        await asViewer.mutation(api.presence.updatePresence, { sessionId, editKey, ...presenceArgs }),
+      ).toBeNull()
+      expect(await asOwner.query(api.presence.getSessionPresence, { sessionId })).toHaveLength(1)
+    }
+  })
+
+  test('admin path resolves legacy ownerless sessions and leaves owned sessions alone', async () => {
+    const orphan = await seedSharingFixture({ isPublic: true, orphan: true })
+    await expect(
+      orphan.t.mutation(internal.paintingSessions.resolveOwnerlessSession, {
+        sessionId: orphan.sessionId,
+        action: 'assign',
+      }),
+    ).rejects.toThrow('ownerUserId')
+    expect(
+      await orphan.t.mutation(internal.paintingSessions.resolveOwnerlessSession, {
+        sessionId: orphan.sessionId,
+        action: 'assign',
+        ownerUserId: orphan.viewerId,
+      }),
+    ).toBe('assigned')
+    const claimed = await orphan.asViewer.query(api.paintingSessions.getSession, {
+      sessionId: orphan.sessionId,
+    })
+    expect(claimed.status === 'ok' && claimed.isOwner && claimed.canEdit).toBe(true)
+    // Now owned: a second admin call is a no-op
+    expect(
+      await orphan.t.mutation(internal.paintingSessions.resolveOwnerlessSession, {
+        sessionId: orphan.sessionId,
+        action: 'delete',
+      }),
+    ).toBe('has_owner')
+
+    const orphan2 = await seedSharingFixture({ isPublic: true, orphan: true })
+    expect(
+      await orphan2.t.mutation(internal.paintingSessions.resolveOwnerlessSession, {
+        sessionId: orphan2.sessionId,
+        action: 'delete',
+      }),
+    ).toBe('deleted')
+    expect(
+      await orphan2.t.query(api.paintingSessions.getSession, { sessionId: orphan2.sessionId }),
+    ).toEqual({ status: 'not_found' })
+
+    const guestOwned = await seedSharingFixture({ guestOwnerKey: 'guest-owner' })
+    expect(
+      await guestOwned.t.mutation(internal.paintingSessions.resolveOwnerlessSession, {
+        sessionId: guestOwned.sessionId,
+        action: 'delete',
+      }),
+    ).toBe('has_owner')
+  })
+
   test('signed-in collaborator with valid editKey can invoke AI actions using their own tokens', async () => {
-    const { sessionId, asOwner, asViewer } = await seedSharingFixture({ isPublic: false })
+    const { t, ownerId, viewerId, sessionId, asOwner, asViewer } = await seedSharingFixture({ isPublic: false })
+    const balances = () =>
+      t.run(async (ctx) => ({
+        owner: (await ctx.db.get(ownerId))?.tokens,
+        collaborator: (await ctx.db.get(viewerId))?.tokens,
+      }))
+    expect(await balances()).toEqual({ owner: 10, collaborator: 10 })
     vi.stubEnv('REPLICATE_API_TOKEN', 'test-replicate-token')
 
     const editKey = await asOwner.mutation(api.paintingSessions.enableEditLink, { sessionId })
@@ -688,5 +1029,11 @@ describe('AUD-005 public read-only viewing and secret edit links', () => {
       editKey,
     })
     expect(result.success).toBe(true)
+
+    // Billed to the collaborator who ran it, never to the session owner
+    expect(await balances()).toEqual({ owner: 10, collaborator: 9 })
+    const ledger = await t.run((ctx) => ctx.db.query('tokenTransactions').collect())
+    expect(ledger.filter((tx) => tx.userId === ownerId)).toHaveLength(0)
+    expect(ledger.filter((tx) => tx.userId === viewerId).length).toBeGreaterThan(0)
   })
 })

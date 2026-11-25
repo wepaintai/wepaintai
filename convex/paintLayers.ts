@@ -180,7 +180,9 @@ export const deletePaintLayer = mutation({
     }
     const session = await ctx.db.get(layer.sessionId);
     if (!session) throw new Error("Session not found");
-    await assertCanModifySession(ctx, session, args.guestKey, { editKey: args.editKey });
+    // Hard-destructive (strokes are deleted or re-parented with no backup):
+    // owner only, even for edit-link collaborators.
+    await assertCanModifySession(ctx, session, args.guestKey, { ownerOnly: true });
     
     // Check if this is the last paint layer
     const allPaintLayers = await ctx.db
@@ -298,7 +300,9 @@ export const mergePaintLayers = mutation({
     }
     const session = await ctx.db.get(sourceLayer.sessionId);
     if (!session) throw new Error("Session not found");
-    await assertCanModifySession(ctx, session, args.guestKey, { editKey: args.editKey });
+    // Hard-destructive (strokes are deleted or re-parented with no backup):
+    // owner only, even for edit-link collaborators.
+    await assertCanModifySession(ctx, session, args.guestKey, { ownerOnly: true });
     
     // Get all strokes from source layer
     const sourceStrokes = await ctx.db

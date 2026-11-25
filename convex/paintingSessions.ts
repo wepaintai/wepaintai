@@ -1,4 +1,4 @@
-import { internalMutation, mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query, type MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { createUserWithWelcomeTokens } from "./users";
@@ -22,6 +22,43 @@ function generateEditKey(excludeKeys: Array<string | undefined> = []): string {
     }
   }
   throw new Error("Failed to generate unique edit key");
+}
+
+const EVICT_BATCH = 500;
+
+/**
+ * Rotating or revoking the edit link invalidates every collaborator at once.
+ * Drop their presence rows, live strokes and pending WebRTC signals so the
+ * editor set other clients derive from presence (used to ignore P2P packets
+ * from peers who are no longer editors) updates immediately instead of after
+ * the presence staleness window. The signed-in owner's own rows are kept; a
+ * guest owner's row is recreated by its next presence heartbeat. Revoked
+ * clients can't write new rows: presence and live strokes require edit access.
+ */
+async function evictCollaborators(ctx: MutationCtx, session: Doc<"paintingSessions">) {
+  const isOwnerRow = (row: { userId?: Id<"users"> }) =>
+    session.createdBy !== undefined && row.userId === session.createdBy;
+  const presence = await ctx.db
+    .query("userPresence")
+    .withIndex("by_session", (q) => q.eq("sessionId", session._id))
+    .take(EVICT_BATCH);
+  for (const row of presence) {
+    if (!isOwnerRow(row)) await ctx.db.delete(row._id);
+  }
+  const live = await ctx.db
+    .query("liveStrokes")
+    .withIndex("by_session", (q) => q.eq("sessionId", session._id))
+    .take(EVICT_BATCH);
+  for (const row of live) {
+    if (!isOwnerRow(row)) await ctx.db.delete(row._id);
+  }
+  const signals = await ctx.db
+    .query("webrtcSignals")
+    .withIndex("by_session_to", (q) => q.eq("sessionId", session._id))
+    .take(EVICT_BATCH);
+  for (const row of signals) {
+    await ctx.db.delete(row._id);
+  }
 }
 
 /**
@@ -366,7 +403,9 @@ export const restoreSession = mutation({
     }
 
     if (session.deletedAt === undefined) return "restored"; // already live
-    await ctx.db.patch(args.sessionId, { deletedAt: undefined });
+    // Restoring never revives the old collaboration link: any edit link that
+    // was shared before the delete stays dead until the owner enables a new one.
+    await ctx.db.patch(args.sessionId, { deletedAt: undefined, editKey: undefined });
     return "restored";
   },
 });
@@ -732,6 +771,7 @@ export const rotateEditLink = mutation({
 
     const editKey = generateEditKey([session.guestOwnerKey, session.editKey]);
     await ctx.db.patch(args.sessionId, { editKey, lastModified: Date.now() });
+    await evictCollaborators(ctx, session);
     return editKey;
   },
 });
@@ -752,6 +792,51 @@ export const revokeEditLink = mutation({
     await assertCanModifySession(ctx, session, args.guestKey, { ownerOnly: true });
 
     await ctx.db.patch(args.sessionId, { editKey: undefined, lastModified: Date.now() });
+    await evictCollaborators(ctx, session);
     return null;
+  },
+});
+
+/**
+ * Admin path for legacy ownerless sessions (no `createdBy` and no guest owner
+ * key). Before AUD-005 such public sessions were editable by anyone; now
+ * nobody can edit, claim or delete them. Run from the Convex dashboard or
+ * `npx convex run paintingSessions:resolveOwnerlessSession` to either assign
+ * an owner or soft-delete the session (the purge cron hard-deletes it after
+ * the grace window). Sessions that already have an owner are left untouched.
+ */
+export const resolveOwnerlessSession = internalMutation({
+  args: {
+    sessionId: v.id("paintingSessions"),
+    action: v.union(v.literal("assign"), v.literal("delete")),
+    ownerUserId: v.optional(v.id("users")),
+  },
+  returns: v.union(
+    v.literal("assigned"),
+    v.literal("deleted"),
+    v.literal("not_found"),
+    v.literal("has_owner"),
+  ),
+  handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) return "not_found" as const;
+    if (session.createdBy !== undefined || session.guestOwnerKey) {
+      return "has_owner" as const;
+    }
+    if (args.action === "assign") {
+      if (!args.ownerUserId || !(await ctx.db.get(args.ownerUserId))) {
+        throw new Error("ownerUserId must reference an existing user");
+      }
+      await ctx.db.patch(args.sessionId, {
+        createdBy: args.ownerUserId,
+        lastModified: Date.now(),
+      });
+      return "assigned" as const;
+    }
+    await ctx.db.patch(args.sessionId, {
+      deletedAt: session.deletedAt ?? Date.now(),
+      editKey: undefined,
+    });
+    return "deleted" as const;
   },
 });
