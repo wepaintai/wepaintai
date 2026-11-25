@@ -17,6 +17,9 @@ if ! command -v node >/dev/null 2>&1; then
   fi
 fi
 
-export HOST="${HOST:-127.0.0.1}"
+# zsh presets $HOST to the machine hostname, so never default from it:
+# binding to the hostname listens on [::1] and the tunnel (127.0.0.1) gets 502.
+export HOST="${WEPAINTAI_HOST:-127.0.0.1}"
+export NITRO_HOST="$HOST"
 export PORT="${PORT:-3000}"
 exec node .output/server/index.mjs

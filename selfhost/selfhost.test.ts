@@ -105,7 +105,7 @@ describe('self-host configuration', () => {
       '    service: http://127.0.0.1:3210',
       '    service: http://127.0.0.1:3211',
     ])
-    expect(read('selfhost/bin/start-app.sh')).toContain('export HOST="${HOST:-127.0.0.1}"')
+    expect(read('selfhost/bin/start-app.sh')).toContain('export HOST="${WEPAINTAI_HOST:-127.0.0.1}"')
   })
 
   test('launchd plists do not point into ~/Documents', () => {
