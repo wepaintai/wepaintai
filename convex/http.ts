@@ -2,6 +2,7 @@ import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { handlePolarWebhook } from "./polarWebhook";
+import { imageUpload, imageUploadPreflight } from "./imageUploadHttp";
 import { authComponent, createAuth } from "./auth";
 
 const http = httpRouter();
@@ -50,6 +51,19 @@ http.route({
     }
     return new Response(null, { status: 200 });
   }),
+});
+
+// Image uploads (AUD-009): bytes for a createUploadIntent intent, called
+// cross-origin from the app with a CORS preflight.
+http.route({
+  path: "/uploads/image",
+  method: "POST",
+  handler: imageUpload,
+});
+http.route({
+  path: "/uploads/image",
+  method: "OPTIONS",
+  handler: imageUploadPreflight,
 });
 
 // Polar webhook endpoint

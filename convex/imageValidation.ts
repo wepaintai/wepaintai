@@ -4,6 +4,18 @@ export const MAX_AI_IMAGE_DIMENSION = 8192
 export const MAX_FILENAME_LENGTH = 255
 export const UPLOAD_INTENT_TTL_MS = 10 * 60 * 1000 // 10 minutes
 
+// Upload-intent rate limits, per bucket (signed-in user, guest owner of a
+// session, or anonymous editors of a public session).
+export const UPLOAD_RATE_WINDOW_MS = 60 * 60 * 1000 // 1 hour
+export const MAX_OPEN_UPLOAD_INTENTS = 10 // unexpired and not yet committed
+export const MAX_UPLOAD_INTENTS_PER_WINDOW = 60
+
+// Hosts an AI image URL may point at besides this deployment's own storage.
+// All current AI flows store their output in Convex storage first; the
+// provider CDN is kept for robustness. PR #106 replaces URL insertion with a
+// storageId binding entirely.
+export const AI_IMAGE_PROVIDER_HOSTS: readonly string[] = ['replicate.delivery']
+
 export type AllowedImageMimeType = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'
 
 export interface DecodedImageInfo {
@@ -179,22 +191,56 @@ export function sanitizeFilename(raw: string): string {
   return cleaned || 'image'
 }
 
-export function assertSafeImageUrl(url: string): string {
-  const trimmed = url.trim()
+function originOf(raw: string | undefined): string | null {
+  if (!raw) return null
+  try {
+    const url = new URL(raw)
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.origin : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Accept an AI image URL only when it points at this deployment's file storage
+ * (`<CONVEX_CLOUD_URL or CONVEX_SITE_URL>/api/storage/...`, any scheme that
+ * origin uses, so a local http backend works) or at a known provider CDN over
+ * HTTPS. Everything else, including arbitrary HTTPS hosts that could be used
+ * for tracking pixels or unmoderated content, is rejected.
+ */
+export function assertAllowedAiImageUrl(
+  url: string,
+  storageOrigins: ReadonlyArray<string | undefined>,
+): string {
   let parsed: URL
   try {
-    parsed = new URL(trimmed)
+    parsed = new URL(url.trim())
   } catch {
     throw new Error('Invalid image URL')
   }
-  if (parsed.protocol === 'https:') {
-    return trimmed
+  if (parsed.username || parsed.password) {
+    throw new Error('Invalid image URL')
   }
-  if (
-    parsed.protocol === 'http:' &&
-    (parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost')
-  ) {
-    return trimmed
+
+  const allowedOrigins = new Set(
+    storageOrigins.map(originOf).filter((origin): origin is string => origin !== null),
+  )
+  if (allowedOrigins.has(parsed.origin) && parsed.pathname.startsWith('/api/storage/')) {
+    return parsed.href
   }
-  throw new Error('Image URL must use HTTPS')
+
+  if (parsed.protocol === 'https:' && parsed.port === '') {
+    const host = parsed.hostname.toLowerCase()
+    if (AI_IMAGE_PROVIDER_HOSTS.some((allowed) => host === allowed || host.endsWith(`.${allowed}`))) {
+      return parsed.href
+    }
+  }
+
+  throw new Error("Image URL must be an HTTPS URL from this app's image storage")
+}
+
+/** Canvas size hints from the client: finite, positive, and bounded. */
+export function sanitizeCanvasDimension(value: number | undefined, fallback: number): number {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) return fallback
+  return Math.min(value, MAX_AI_IMAGE_DIMENSION)
 }
