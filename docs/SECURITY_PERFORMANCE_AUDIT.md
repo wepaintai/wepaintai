@@ -229,10 +229,13 @@ This document tracks the repository audit findings so work can continue across s
 
 ### AUD-009: Secure image uploads and storage registration
 
-- Status: TODO
+- Status: DONE
 - Area: Upload security / Cost control
 - Files:
   - `convex/images.ts`
+  - `convex/imageUploadHttp.ts`
+  - `convex/imageValidation.ts`
+  - `convex/uploadToken.ts`
   - `src/utils/imageUpload.ts`
 - Problem: Anyone can request an upload URL, and server mutations trust client MIME type, dimensions, filename, storage ID, session, and user ID. The 5 MB/type checks exist only in the browser.
 - Required changes:
@@ -244,8 +247,8 @@ This document tracks the repository audit findings so work can continue across s
   - Bypassing the frontend cannot upload arbitrary type/size content.
   - A storage object cannot be attached to an unauthorized session.
   - Abandoned objects expire or are cleaned up.
-- Verification: Not run
-- Notes:
+- Verification: `pnpm typecheck` PASS; `pnpm test:run` PASS (`convex/images.test.ts`: spoofed type/size, over-cap streamed bodies with and without Content-Length, token mismatch, a blob created after the intent by another user can never be attached or deleted, double upload on one intent, expired-intent blob cleanup, rate limits, CORS, old-API stubs); `pnpm exec eslint . --quiet` PASS; `pnpm build` PASS. Production `OPTIONS https://site.wepaint.ai/uploads/image` from the app origin returns 204 (2026-11-25).
+- Notes: Completed 2026-11-24 (PR #103). `createUploadIntent` (edit access required; at most 10 open and 60 per hour per user/guest bucket) returns a 256-bit upload token stored only as a SHA-256 hash. The browser posts the file to the `POST /uploads/image` HTTP action, which checks the intent and token before reading the body, streams with a hard 5 MiB cap (413), validates decoded type and dimensions server-side, stores the blob and records its `storageId` on the intent in one mutation (a second upload's blob is deleted). `commitImageUpload` uses only the intent's recorded `storageId`; no client-supplied storage ID is accepted. The old `generateUploadUrl`/`uploadImage` functions remain as stubs that tell stale tabs to reload. Expired, unconsumed intents have their blobs deleted by `cleanupExpiredUploadIntents`, and the AUD-010 orphan sweep (PR #106) removes any other unreferenced blob after 24 h. AI result images are bound by `storageId` (PR #106) rather than client URLs.
 
 ### AUD-010: Implement storage lifecycle and cascading deletion
 
