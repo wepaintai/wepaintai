@@ -1,16 +1,20 @@
-import React, { useRef, useEffect, useState, useCallback, forwardRef, useImperativeHandle, memo, useMemo, useSyncExternalStore } from 'react'
+import React, { useRef, useEffect, useState, useCallback, forwardRef, useImperativeHandle, memo } from 'react'
 import { Stage, Layer, Path, Image as KonvaImage, Circle, Text, Group, Arc, Transformer, Line } from 'react-konva'
 import Konva from 'konva'
 import { getStroke } from 'perfect-freehand'
-import { usePaintingSession, type PaintPoint, type Stroke, type UserPresence, type LiveStroke } from '../hooks/usePaintingSession'
-import { editorPeerIdsFromPresence, useP2PPainting } from '../hooks/useP2PPainting'
-import { useSessionImages } from '../hooks/useSessionImages'
+import type { Stroke, UserPresence } from '../hooks/usePaintingSession'
+import {
+  useRemoteCursors,
+  useRemoteStrokes,
+  type P2PLiveStore,
+} from '../lib/webrtc/p2pLiveStore'
+import { usePaintingEditor } from '../context/PaintingEditorContext'
 import { Id } from '../../convex/_generated/dataModel'
 import { Layer as LayerType } from './ToolPanel'
-import { useQuery, useMutation } from 'convex/react'
+import { useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import { shouldShowAdminFeatures } from '../utils/environment'
-import { uploadImageFile, validateImageFile, ACCEPTED_TYPES } from '../utils/imageUpload'
+import { uploadImageFile, validateImageFile } from '../utils/imageUpload'
 import { useClipboardContext } from '../context/ClipboardContext'
 import {
   calculateCaptureDimensions,
@@ -19,8 +23,8 @@ import {
   type CanvasCapturePreset,
   type CanvasCaptureResult,
 } from '../utils/canvasCapture'
-import { getEditKey, getGuestKey, subscribeEditKeys } from '../utils/guestKey'
 import { installUnloadGuard, registerUnsavedWorkCounter } from '../lib/unsavedChanges'
+import { reconcilePendingStrokes } from '../utils/pendingStrokes'
 
 const average = (a: number, b: number): number => (a + b) / 2
 
@@ -185,6 +189,111 @@ interface LocalStroke {
   targetLayerId?: string
 }
 
+/**
+ * P2P remote live strokes. Subscribes to the live store itself so incoming
+ * stroke packets re-render only this layer, not KonvaCanvas or PaintingView.
+ */
+const RemoteStrokesLayer = memo(function RemoteStrokesLayer({
+  liveStore,
+  width,
+  height,
+  getStrokePathData,
+}: {
+  liveStore: P2PLiveStore
+  width: number
+  height: number
+  getStrokePathData: (stroke: LocalStroke) => { pathData: string }
+}) {
+  const remoteStrokes = useRemoteStrokes(liveStore)
+  return (
+    <>
+      {Array.from(remoteStrokes.values()).map((remoteStroke) => {
+        if (remoteStroke.points.length === 0) return null
+
+        // Denormalize points from 0-1 to canvas coordinates
+        const denormalizedPoints = remoteStroke.points.map(p => ({
+          x: p.x * width,
+          y: p.y * height,
+          pressure: p.pressure
+        }))
+
+        const { pathData } = getStrokePathData({
+          points: denormalizedPoints,
+          color: remoteStroke.color,
+          size: remoteStroke.size,
+          opacity: 0.8, // Slightly transparent for preview
+          isLive: true,
+        })
+
+        if (!pathData) return null
+
+        return (
+          <Path
+            key={`${remoteStroke.peerId}:${remoteStroke.strokeId}`}
+            data={pathData}
+            fill={remoteStroke.color}
+            opacity={0.8}
+            listening={false}
+          />
+        )
+      })}
+    </>
+  )
+})
+
+/**
+ * P2P remote cursors. Subscribes to the live store itself so incoming cursor
+ * packets (up to ~30 Hz per peer) re-render only this layer.
+ */
+const RemoteCursorsLayer = memo(function RemoteCursorsLayer({
+  liveStore,
+  width,
+  height,
+  presence,
+}: {
+  liveStore: P2PLiveStore
+  width: number
+  height: number
+  presence: ReadonlyArray<UserPresence>
+}) {
+  const remoteCursors = useRemoteCursors(liveStore)
+  return (
+    <>
+      {Array.from(remoteCursors.entries()).map(([peerId, cursor]) => {
+        const x = cursor.x * width
+        const y = cursor.y * height
+
+        // Get peer color from presence
+        const peer = presence.find(p => p.userName === peerId || p.userId?.toString() === peerId)
+        const peerColor = peer?.userColor || '#666666'
+        const peerName = peer?.userName || peerId.substring(0, 8)
+
+        return (
+          <Group key={peerId} x={x} y={y} listening={false}>
+            <Circle
+              radius={cursor.drawing ? 8 : 5}
+              fill={peerColor}
+              stroke={cursor.drawing ? '#000000' : '#FFFFFF'}
+              strokeWidth={cursor.drawing ? 2 : 1}
+            />
+            <Text
+              text={peerName}
+              fontSize={11}
+              fontStyle="bold"
+              fill="white"
+              stroke={peerColor}
+              strokeWidth={3}
+              x={-20}
+              y={-25}
+              align="center"
+            />
+          </Group>
+        )
+      })}
+    </>
+  )
+})
+
 interface KonvaCanvasProps {
   sessionId: Id<"paintingSessions"> | null
   canEdit?: boolean
@@ -242,13 +351,6 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     endTaper = 0,
     endCap = true,
   } = props
-  const guestKey = getGuestKey(sessionId) || undefined
-  const editKey =
-    useSyncExternalStore(
-      subscribeEditKeys,
-      () => getEditKey(sessionId),
-      () => null,
-    ) || undefined
   
   const stageRef = useRef<Konva.Stage>(null)
   const strokeLayerRef = useRef<Konva.Layer>(null)
@@ -308,80 +410,42 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   const [isDragOver, setIsDragOver] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
 
-  // Use the painting session hook
+  // Consume shared session, layer, image, and P2P state from the single editor
+  // controller mounted in PaintingView (avoids duplicate subscriptions & side effects).
   const {
     canEdit: sessionCanEdit,
+    guestKey,
+    editKey,
     strokes,
+    rawStrokes,
     presence,
-    liveStrokes,
     currentUser,
     selfPresenceId,
     addStrokeToSession,
     updateUserPresence,
-    setPresenceCadence,
-    updateLiveStrokeForUser,
-    clearLiveStrokeForUser,
-  } = usePaintingSession(sessionId)
-  const effectiveCanEdit = props.canEdit ?? sessionCanEdit
-  
-  // Debug log strokes
-  // useEffect(() => {
-  //   console.log('[KonvaCanvas] strokes updated:', {
-  //     sessionId,
-  //     strokesLength: strokes?.length || 0,
-  //     strokes: strokes?.slice(0, 2), // Log first 2 strokes
-  //     activePaintLayerId,
-  //     activeLayerId,
-  //     layers: layers.map(l => ({ id: l.id, type: l.type, name: l.name }))
-  //   })
-  // }, [strokes, sessionId, activePaintLayerId, activeLayerId, layers])
+    images,
+    uploadedImages,
+    aiImages,
+    paintLayers: paintLayersData,
+    updateImageTransform,
+    updateAIImageTransform,
+    updatePaintLayer: updatePaintLayerTransform,
+    p2p: {
+      isConnected: isP2PConnected,
+      liveStore: p2pLiveStore,
+      sendStrokePoint,
+      sendCursorPosition,
+    },
+  } = usePaintingEditor()
 
-  // Use the session images hook
-  const { images } = useSessionImages(sessionId)
-  
-  // Get AI generated images separately
-  const aiImages = useQuery(api.images.getAIGeneratedImages, sessionId ? { sessionId, guestKey, editKey } : 'skip')
-  // Get paint layers for transforms
-  const paintLayersData = useQuery(api.paintLayers.getPaintLayers, sessionId ? { sessionId, guestKey, editKey } : 'skip')
-  
-  // Mutations for updating positions
-  const updateImageTransform = useMutation(api.images.updateImageTransform)
-  const updateAIImageTransform = useMutation(api.images.updateAIImageTransform)
-  const updatePaintLayerTransform = useMutation(api.paintLayers.updatePaintLayer)
-  
+  const effectiveCanEdit = props.canEdit ?? sessionCanEdit
+
   // Image upload: intent (+ secret token) -> POST /uploads/image -> commit
   const createUploadIntent = useMutation(api.images.createUploadIntent)
   const commitImageUpload = useMutation(api.images.commitImageUpload)
 
-  // P2P preview layer
-  // Only peers that are current editors (present in editor-only presence) may
-  // paint into our canvas over P2P; see useP2PPainting allowedPeerIds.
-  const editorPeerIds = useMemo(() => editorPeerIdsFromPresence(presence), [presence])
-  const {
-    isConnected: isP2PConnected,
-    connectionMode,
-    remoteStrokes,
-    remoteCursors,
-    sendStrokePoint,
-    sendCursorPosition,
-    clearRemoteStroke,
-    metrics: p2pMetrics,
-  } = useP2PPainting({
-    sessionId,
-    userId: currentUser.id ? currentUser.id.toString() : currentUser.name,
-    enabled: !!currentUser.id && effectiveCanEdit,
-    presence,
-    allowedPeerIds: editorPeerIds,
-  })
-
   // Track current stroke ID for P2P
   const [currentStrokeId, setCurrentStrokeId] = useState<string | null>(null)
-
-  // When P2P carries cursors, back Convex presence off to a coarse heartbeat;
-  // otherwise send at ~4 Hz so collaborators still see live cursors.
-  useEffect(() => {
-    setPresenceCadence(isP2PConnected ? 'coarse' : 'realtime')
-  }, [isP2PConnected, setPresenceCadence])
   
   // Track which layer is being dragged (not needed with Konva's built-in dragging)
 
@@ -407,23 +471,19 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     }
 
     // Load uploaded images
-    if (images) {
-      images.forEach(image => {
-        if (image.url) {
-          loadImage(image._id, image.url)
-        }
-      })
-    }
+    uploadedImages.forEach(image => {
+      if (image.url) {
+        loadImage(image._id, image.url)
+      }
+    })
 
     // Load AI images
-    if (aiImages) {
-      aiImages.forEach(image => {
-        if (image.imageUrl) {
-          loadImage(image._id, image.imageUrl)
-        }
-      })
-    }
-  }, [images, aiImages, konvaImages])
+    aiImages.forEach(image => {
+      if (image.imageUrl) {
+        loadImage(image._id, image.imageUrl)
+      }
+    })
+  }, [uploadedImages, aiImages, konvaImages])
 
   // Update dimensions when container resizes
   useEffect(() => {
@@ -446,37 +506,32 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
   // Editors only: viewers can't write transforms (and would get Unauthorized)
   useEffect(() => {
     if (!effectiveCanEdit) return
-    if (!images || dimensions.width === 0 || dimensions.height === 0) return
-    images
-      .filter((img: any) => !img.type || img.type === 'uploaded')
-      .forEach((img: any) => {
-        if (!img || autoFittedRef.current.has(img._id)) return
-        // Use "cover" fit so the image fills the canvas (may crop on one axis), never upscale above 1
-        const desiredScale = Math.min(Math.max(dimensions.width / img.width, dimensions.height / img.height), 1)
-        const desiredX = dimensions.width / 2
-        const desiredY = dimensions.height / 2
-        const currentScale = typeof img.scale === 'number' ? img.scale : 1
-        if (Math.abs(currentScale - desiredScale) > 0.02 || Math.abs(img.x - desiredX) > 2 || Math.abs(img.y - desiredY) > 2) {
-          updateImageTransform({
-            imageId: img._id as Id<"uploadedImages">,
-            scale: desiredScale,
-            scaleX: desiredScale,
-            scaleY: desiredScale,
-            x: desiredX,
-            y: desiredY,
-            guestKey,
-            editKey,
-          } as any)
-          autoFittedRef.current.add(img._id)
-        }
-      })
-  }, [effectiveCanEdit, images, dimensions.width, dimensions.height, updateImageTransform, guestKey, editKey])
+    if (uploadedImages.length === 0 || dimensions.width === 0 || dimensions.height === 0) return
+    uploadedImages.forEach((img) => {
+      if (!img || autoFittedRef.current.has(img._id)) return
+      // Use "cover" fit so the image fills the canvas (may crop on one axis), never upscale above 1
+      const desiredScale = Math.min(Math.max(dimensions.width / img.width, dimensions.height / img.height), 1)
+      const desiredX = dimensions.width / 2
+      const desiredY = dimensions.height / 2
+      const currentScale = typeof img.scale === 'number' ? img.scale : 1
+      if (Math.abs(currentScale - desiredScale) > 0.02 || Math.abs(img.x - desiredX) > 2 || Math.abs(img.y - desiredY) > 2) {
+        void updateImageTransform(img._id, {
+          scale: desiredScale,
+          scaleX: desiredScale,
+          scaleY: desiredScale,
+          x: desiredX,
+          y: desiredY,
+        })
+        autoFittedRef.current.add(img._id)
+      }
+    })
+  }, [effectiveCanEdit, uploadedImages, dimensions.width, dimensions.height, updateImageTransform])
 
   // Auto-fit newly loaded AI images once as well
   useEffect(() => {
     if (!effectiveCanEdit) return
-    if (!aiImages || dimensions.width === 0 || dimensions.height === 0) return
-    aiImages.forEach((img: any) => {
+    if (aiImages.length === 0 || dimensions.width === 0 || dimensions.height === 0) return
+    aiImages.forEach((img) => {
       if (!img || autoFittedRef.current.has(img._id)) return
       // Use "cover" fit for AI images as well
       const desiredScale = Math.min(Math.max(dimensions.width / img.width, dimensions.height / img.height), 1)
@@ -484,20 +539,17 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       const desiredY = dimensions.height / 2
       const currentScale = typeof img.scale === 'number' ? img.scale : 1
       if (Math.abs(currentScale - desiredScale) > 0.02 || Math.abs(img.x - desiredX) > 2 || Math.abs(img.y - desiredY) > 2) {
-        updateAIImageTransform({
-          imageId: img._id as Id<"aiGeneratedImages">,
+        void updateAIImageTransform(img._id, {
           scale: desiredScale,
           scaleX: desiredScale,
           scaleY: desiredScale,
           x: desiredX,
           y: desiredY,
-          guestKey,
-          editKey,
-        } as any)
+        })
         autoFittedRef.current.add(img._id)
       }
     })
-  }, [effectiveCanEdit, aiImages, dimensions.width, dimensions.height, updateAIImageTransform, guestKey, editKey])
+  }, [effectiveCanEdit, aiImages, dimensions.width, dimensions.height, updateAIImageTransform])
 
   // Warn before tab close while a stroke is mid-draw or still syncing
   // (in-flight/queued strokes are counted in unsavedChanges/syncStatus)
@@ -509,28 +561,18 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     return registerUnsavedWorkCounter(() => (isDrawingRef.current ? 1 : 0))
   }, [])
 
-  // Remove confirmed strokes from pending when they appear in the strokes array
+  // Remove confirmed strokes from pending when they appear in the backend
+  // strokes. Uses rawStrokes (not filtered by optimistic undo): a stroke the
+  // user undoes while its save is still in flight is still *confirmed*, and
+  // must not leave its optimistic copy stuck on the canvas.
   useEffect(() => {
-    confirmedStrokeIdsRef.current = new Set(strokes.map(s => s._id))
-    if (strokes.length > 0) {
-      setPendingStrokes(prev => {
-        const newPending = new Map(prev)
-        const strokeIds = confirmedStrokeIdsRef.current
-
-        // Check each pending stroke to see if it's been confirmed
-        for (const [tempId, pendingStroke] of newPending) {
-          const backendId = pendingStrokeIdsRef.current.get(tempId)
-          if (backendId && strokeIds.has(backendId)) {
-            // This pending stroke has been confirmed, remove it
-            newPending.delete(tempId)
-            pendingStrokeIdsRef.current.delete(tempId)
-          }
-        }
-        
-        return newPending
-      })
+    confirmedStrokeIdsRef.current = new Set(rawStrokes.map(s => s._id))
+    if (rawStrokes.length > 0) {
+      setPendingStrokes(prev =>
+        reconcilePendingStrokes(prev, pendingStrokeIdsRef.current, confirmedStrokeIdsRef.current)
+      )
     }
-  }, [strokes])
+  }, [rawStrokes])
 
   // Clean up pending strokes that haven't been confirmed after 30 seconds
   useEffect(() => {
@@ -1204,7 +1246,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       }
 
       const visibleLayerIds = new Set(layers.filter((layer) => layer.visible).map((layer) => layer.id))
-      const rasterScales = [...(images ?? []), ...(aiImages ?? [])]
+      const rasterScales = images
         .filter((image) => visibleLayerIds.has(image._id))
         .flatMap((image) => [image.scaleX ?? image.scale, image.scaleY ?? image.scale])
         .filter((scale): scale is number => typeof scale === 'number')
@@ -1269,7 +1311,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
         stageRef.current.batchDraw()
       }
     },
-  }), [dimensions, images, aiImages, layers])
+  }), [dimensions, images, layers])
 
   // Find layer info
   const getLayerInfo = (layerId: string) => {
@@ -1304,7 +1346,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       transformer.nodes([])
       stage.batchDraw()
     }
-  }, [effectiveCanEdit, selectedTool, activeLayerId, layers, images, aiImages])
+  }, [effectiveCanEdit, selectedTool, activeLayerId, layers, images])
 
   // Helper: map stage point to active paint layer local coordinates
   const toActivePaintLayerLocal = useCallback((pt: Point): Point => {
@@ -1385,7 +1427,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       {process.env.NODE_ENV === 'development' && shouldShowAdminFeatures() && (
         <div className="absolute top-2 right-2 bg-black/80 text-white text-xs p-2 z-50 rounded">
           <div className="font-bold mb-1">Layer Render Order:</div>
-          {layers
+          {[...layers]
             .sort((a, b) => a.order - b.order)
             .map((layer, idx) => (
               <div key={layer.id} className="flex items-center gap-2">
@@ -1410,7 +1452,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
       >
         {/* Content layers render first; transformer should be above them */}
         {/* Render layers in order */}
-        {layers
+        {[...layers]
           // On equal order (legacy data), render paint layers above images to
           // match the layers panel, which lists paint layers on top for ties
           .sort((a, b) => (a.order - b.order) || ((a.type === 'paint' ? 1 : 0) - (b.type === 'paint' ? 1 : 0)))
@@ -1495,11 +1537,9 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       if (!effectiveCanEdit) return
                       const node = e.target as Konva.Group
                       await updatePaintLayerTransform({
-                        layerId: layer.id as any,
+                        layerId: layer.id as Id<'paintLayers'>,
                         x: node.x(),
                         y: node.y(),
-                        guestKey,
-                        editKey,
                       })
                     }}
                     onTransformEnd={async (e) => {
@@ -1509,15 +1549,13 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       const newScaleY = node.scaleY()
                       const newRotation = node.rotation()
                       await updatePaintLayerTransform({
-                        layerId: layer.id as any,
+                        layerId: layer.id as Id<'paintLayers'>,
                         scaleX: newScaleX,
                         scaleY: newScaleY,
                         rotation: newRotation,
                         x: node.x(),
                         y: node.y(),
-                        guestKey,
-                        editKey,
-                      } as any)
+                      })
                       // Do not reset node scale here; let controlled props re-render with persisted values
                     }}
                     onTransformStart={() => {
@@ -1718,7 +1756,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
 
             // Uploaded image layer
             if (layer.type === 'image') {
-              const image = images?.find(img => img._id === layer.id)
+              const image = uploadedImages.find(img => img._id === layer.id)
               const loadedImage = konvaImages.get(layer.id)
               
               if (!image || !loadedImage) return null
@@ -1726,7 +1764,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
               return (
                 <Layer 
                   key={layer.id} 
-                  ref={layer.id === images?.[0]?._id ? imageLayerRef : undefined} 
+                  ref={layer.id === uploadedImages[0]?._id ? imageLayerRef : undefined} 
                   listening={effectiveCanEdit && selectedTool === 'transform'} 
                   opacity={layer.opacity}
                 >
@@ -1743,8 +1781,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       width={image.width}
                       height={image.height}
                       rotation={image.rotation}
-                      scaleX={(image as any).scaleX ?? image.scale}
-                      scaleY={(image as any).scaleY ?? image.scale}
+                      scaleX={image.scaleX ?? image.scale}
+                      scaleY={image.scaleY ?? image.scale}
                       offsetX={image.width / 2}
                       offsetY={image.height / 2}
                       draggable={effectiveCanEdit && selectedTool === 'transform'}
@@ -1752,12 +1790,9 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       onDragEnd={async (e) => {
                         if (!effectiveCanEdit) return
                         const node = e.target
-                        await updateImageTransform({
-                          imageId: layer.id as Id<"uploadedImages">,
+                        await updateImageTransform(layer.id as Id<"uploadedImages">, {
                           x: node.x(),
                           y: node.y(),
-                          guestKey,
-                          editKey,
                         })
                       }}
                       onTransformEnd={async (e) => {
@@ -1766,16 +1801,13 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                         const newScaleX = node.scaleX()
                         const newScaleY = node.scaleY()
                         const newRotation = node.rotation()
-                        await updateImageTransform({
-                          imageId: layer.id as Id<"uploadedImages">,
+                        await updateImageTransform(layer.id as Id<"uploadedImages">, {
                           scaleX: newScaleX,
                           scaleY: newScaleY,
                           rotation: newRotation,
                           x: node.x(),
                           y: node.y(),
-                          guestKey,
-                          editKey,
-                        } as any)
+                        })
                         // Do not reset node scale here; let controlled props re-render with persisted values
                       }}
                       onTransformStart={() => {
@@ -1914,7 +1946,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
 
             // AI-generated image layer
             if (layer.type === 'ai-image') {
-              const aiImage = aiImages?.find(img => img._id === layer.id)
+              const aiImage = aiImages.find(img => img._id === layer.id)
               const loadedImage = konvaImages.get(layer.id)
               
               if (!aiImage || !loadedImage) return null
@@ -1922,7 +1954,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
               return (
                 <Layer 
                   key={layer.id} 
-                  ref={layer.id === aiImages?.[0]?._id ? aiImageLayerRef : undefined} 
+                  ref={layer.id === aiImages[0]?._id ? aiImageLayerRef : undefined} 
                   listening={effectiveCanEdit && selectedTool === 'transform'} 
                   opacity={layer.opacity}
                 >
@@ -1939,8 +1971,8 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       width={aiImage.width}
                       height={aiImage.height}
                       rotation={aiImage.rotation}
-                      scaleX={(aiImage as any).scaleX ?? aiImage.scale}
-                      scaleY={(aiImage as any).scaleY ?? aiImage.scale}
+                      scaleX={aiImage.scaleX ?? aiImage.scale}
+                      scaleY={aiImage.scaleY ?? aiImage.scale}
                       offsetX={aiImage.width / 2}
                       offsetY={aiImage.height / 2}
                       draggable={effectiveCanEdit && selectedTool === 'transform'}
@@ -1948,12 +1980,9 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                       onDragEnd={async (e) => {
                         if (!effectiveCanEdit) return
                         const node = e.target
-                        await updateAIImageTransform({
-                          imageId: layer.id as Id<"aiGeneratedImages">,
+                        await updateAIImageTransform(layer.id as Id<"aiGeneratedImages">, {
                           x: node.x(),
                           y: node.y(),
-                          guestKey,
-                          editKey,
                         })
                       }}
                       onTransformEnd={async (e) => {
@@ -1962,16 +1991,13 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                         const newScaleX = node.scaleX()
                         const newScaleY = node.scaleY()
                         const newRotation = node.rotation()
-                        await updateAIImageTransform({
-                          imageId: layer.id as Id<"aiGeneratedImages">,
+                        await updateAIImageTransform(layer.id as Id<"aiGeneratedImages">, {
                           scaleX: newScaleX,
                           scaleY: newScaleY,
                           rotation: newRotation,
                           x: node.x(),
                           y: node.y(),
-                          guestKey,
-                          editKey,
-                        } as any)
+                        })
                         // Do not reset node scale here; let controlled props re-render with persisted values
                       }}
                       onTransformStart={() => {
@@ -2135,68 +2161,24 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
             )}
 
             {/* P2P remote strokes */}
-            {isP2PConnected && Array.from(remoteStrokes.values()).map((remoteStroke) => {
-              if (remoteStroke.points.length === 0) return null
-              
-              // Denormalize points from 0-1 to canvas coordinates
-              const denormalizedPoints = remoteStroke.points.map(p => ({
-                x: p.x * dimensions.width,
-                y: p.y * dimensions.height,
-                pressure: p.pressure
-              }))
-              
-              const { pathData } = getStrokePathData({
-                points: denormalizedPoints,
-                color: remoteStroke.color,
-                size: remoteStroke.size,
-                opacity: 0.8, // Slightly transparent for preview
-                isLive: true,
-              })
-              
-              if (!pathData) return null
-              
-              return (
-                <Path
-                  key={remoteStroke.strokeId}
-                  data={pathData}
-                  fill={remoteStroke.color}
-                  opacity={0.8}
-                  listening={false}
-                />
-              )
-            })}
+            {isP2PConnected && (
+              <RemoteStrokesLayer
+                liveStore={p2pLiveStore}
+                width={dimensions.width}
+                height={dimensions.height}
+                getStrokePathData={getStrokePathData}
+              />
+            )}
 
             {/* Remote cursors */}
-            {isP2PConnected && Array.from(remoteCursors.entries()).map(([peerId, cursor]) => {
-              const x = cursor.x * dimensions.width
-              const y = cursor.y * dimensions.height
-              
-              // Get peer color from presence
-              const peerColor = presence.find(p => p.userName === peerId || p.userId?.toString() === peerId)?.userColor || '#666666'
-              const peerName = presence.find(p => p.userName === peerId || p.userId?.toString() === peerId)?.userName || peerId.substring(0, 8)
-              
-              return (
-                <Group key={peerId} x={x} y={y}>
-                  <Circle
-                    radius={cursor.drawing ? 8 : 5}
-                    fill={peerColor}
-                    stroke={cursor.drawing ? '#000000' : '#FFFFFF'}
-                    strokeWidth={cursor.drawing ? 2 : 1}
-                  />
-                  <Text
-                    text={peerName}
-                    fontSize={11}
-                    fontStyle="bold"
-                    fill="white"
-                    stroke={peerColor}
-                    strokeWidth={3}
-                    x={-20}
-                    y={-25}
-                    align="center"
-                  />
-                </Group>
-              )
-            })}
+            {isP2PConnected && (
+              <RemoteCursorsLayer
+                liveStore={p2pLiveStore}
+                width={dimensions.width}
+                height={dimensions.height}
+                presence={presence}
+              />
+            )}
 
             {/* Fallback remote cursors from Convex presence when P2P is not connected */}
             {!isP2PConnected && presence

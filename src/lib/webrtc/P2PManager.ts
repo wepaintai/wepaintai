@@ -24,7 +24,15 @@ export interface P2PManagerOptions {
   onPeerConnected?: (peerId: string) => void;
   onPeerDisconnected?: (peerId: string) => void;
   onModeChanged?: (mode: ConnectionMode) => void;
+  /**
+   * Minimum interval between outgoing cursor packets (default ~30 Hz). Extra
+   * cursor moves inside the window are coalesced into one trailing send that
+   * carries the latest position and drawing flag.
+   */
+  cursorSendIntervalMs?: number;
 }
+
+export const DEFAULT_CURSOR_SEND_INTERVAL_MS = 33;
 
 export class P2PManager {
   private config: P2PConfig;
@@ -35,7 +43,12 @@ export class P2PManager {
   private peerId: string;
   private guestKey?: string;
   private editKey?: string;
-  private pollingInterval: NodeJS.Timeout | null = null;
+  private pollingInterval: ReturnType<typeof setInterval> | null = null;
+  private destroyed = false;
+  private cursorSendIntervalMs: number;
+  private lastCursorSentAt = Number.NEGATIVE_INFINITY;
+  private pendingCursorPacket: CursorPacket | null = null;
+  private cursorFlushTimer: ReturnType<typeof setTimeout> | null = null;
   private metrics: P2PMetrics = {
     latency: 0,
     packetsSent: 0,
@@ -61,6 +74,7 @@ export class P2PManager {
     this.onPeerConnected = options.onPeerConnected;
     this.onPeerDisconnected = options.onPeerDisconnected;
     this.onModeChanged = options.onModeChanged;
+    this.cursorSendIntervalMs = options.cursorSendIntervalMs ?? DEFAULT_CURSOR_SEND_INTERVAL_MS;
     
     console.log('P2PManager created with peerId:', this.peerId);
   }
@@ -84,13 +98,23 @@ export class P2PManager {
       );
 
       console.log('🔍 P2P: Found peers:', peers.length, 'Mode:', mode);
+      if (this.destroyed) {
+        return;
+      }
       this.mode = mode;
       this.onModeChanged?.(mode);
 
       // Connect to each peer
       for (const peerId of peers) {
+        if (this.destroyed) {
+          return;
+        }
         console.log('🤝 P2P: Connecting to peer:', peerId);
         await this.connectToPeer(peerId);
+      }
+
+      if (this.destroyed) {
+        return;
       }
 
       // Start polling for signaling messages
@@ -157,7 +181,11 @@ export class P2PManager {
   private setupDataChannel(channel: RTCDataChannel, peerConn: PeerConnection): void {
     peerConn.dataChannel = channel;
 
+    // A destroyed manager must never report peers or packets: its channels
+    // close asynchronously after destroy(), and a late onclose would otherwise
+    // reach the owner's callbacks (and e.g. drop a peer a newer manager has).
     channel.onopen = () => {
+      if (this.destroyed) return;
       console.log('✅ P2P: Data channel opened with peer:', peerConn.peerId);
       peerConn.isConnected = true;
       this.metrics.connectedPeers++;
@@ -166,12 +194,14 @@ export class P2PManager {
     };
 
     channel.onclose = () => {
+      if (this.destroyed) return;
       peerConn.isConnected = false;
       this.metrics.connectedPeers--;
       this.onPeerDisconnected?.(peerConn.peerId);
     };
 
     channel.onmessage = (event) => {
+      if (this.destroyed) return;
       this.handleDataChannelMessage(peerConn.peerId, event.data);
     };
 
@@ -233,7 +263,13 @@ export class P2PManager {
    * Start polling for signaling messages
    */
   private startSignalPolling(): void {
+    if (this.destroyed || this.pollingInterval) {
+      return;
+    }
     this.pollingInterval = setInterval(async () => {
+      if (this.destroyed) {
+        return;
+      }
       try {
         const signals = await this.convexClient.query(api.webrtc.getSignals, {
           sessionId: this.sessionId,
@@ -242,10 +278,17 @@ export class P2PManager {
           editKey: this.editKey,
         });
 
+        if (this.destroyed) {
+          return;
+        }
+
         if (signals.length > 0) {
           // Process signals
           console.log(`📨 P2P: Received ${signals.length} signals`);
           for (const signal of signals) {
+            if (this.destroyed) {
+              return;
+            }
             await this.handleSignal(signal);
           }
           
@@ -358,6 +401,30 @@ export class P2PManager {
    * Send a cursor packet to all connected peers
    */
   sendCursorPacket(packet: CursorPacket): void {
+    if (this.destroyed) return;
+    const now = Date.now();
+    const elapsed = now - this.lastCursorSentAt;
+    if (elapsed >= this.cursorSendIntervalMs && !this.cursorFlushTimer) {
+      this.lastCursorSentAt = now;
+      this.writeCursorPacket(packet);
+      return;
+    }
+    // Inside the throttle window: keep only the latest packet and send it on
+    // the trailing edge so the final position (and drawing flag) always lands.
+    this.pendingCursorPacket = packet;
+    if (!this.cursorFlushTimer) {
+      this.cursorFlushTimer = setTimeout(() => {
+        this.cursorFlushTimer = null;
+        const pending = this.pendingCursorPacket;
+        this.pendingCursorPacket = null;
+        if (!pending || this.destroyed) return;
+        this.lastCursorSentAt = Date.now();
+        this.writeCursorPacket(pending);
+      }, Math.max(0, this.cursorSendIntervalMs - elapsed));
+    }
+  }
+
+  private writeCursorPacket(packet: CursorPacket): void {
     const data = encodeCursorPacket(packet);
     
     for (const peer of this.peers.values()) {
@@ -383,6 +450,18 @@ export class P2PManager {
    * Clean up and disconnect
    */
   async destroy(): Promise<void> {
+    if (this.destroyed) {
+      return;
+    }
+    this.destroyed = true;
+
+    // Drop any trailing cursor send
+    if (this.cursorFlushTimer) {
+      clearTimeout(this.cursorFlushTimer);
+      this.cursorFlushTimer = null;
+    }
+    this.pendingCursorPacket = null;
+
     // Stop polling
     if (this.pollingInterval) {
       clearInterval(this.pollingInterval);

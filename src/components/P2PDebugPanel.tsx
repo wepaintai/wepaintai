@@ -1,19 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import type { ConnectionMode, P2PMetrics } from '../lib/webrtc/types';
+import type { ConnectionMode } from '../lib/webrtc/types';
+import { useP2PMetrics, useRemoteStrokes, type P2PLiveStore } from '../lib/webrtc/p2pLiveStore';
 
 interface P2PDebugPanelProps {
   isConnected: boolean;
   connectionMode: ConnectionMode;
-  metrics: P2PMetrics | null;
-  remoteStrokesCount: number;
+  /** Subscribed here so live P2P traffic only re-renders this panel. */
+  liveStore: P2PLiveStore;
 }
 
-export function P2PDebugPanel({ 
-  isConnected, 
-  connectionMode, 
-  metrics, 
-  remoteStrokesCount 
+export function P2PDebugPanel({
+  isConnected,
+  connectionMode,
+  liveStore,
 }: P2PDebugPanelProps) {
+  const metrics = useP2PMetrics(liveStore);
+  const remoteStrokesCount = useRemoteStrokes(liveStore).size;
   const [isExpanded, setIsExpanded] = useState(false);
   const [convexCallCount, setConvexCallCount] = useState(0);
   const [p2pMessageCount, setP2PMessageCount] = useState(0);

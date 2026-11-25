@@ -84,37 +84,98 @@ export interface LiveStroke {
   lastUpdated: number;
 }
 
-export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
+export interface CurrentUser {
+  id: Id<"users"> | null;
+  name: string;
+  color: string;
+}
+
+export interface UsePaintingSessionOptions {
+  /**
+   * Whether to subscribe to Convex liveStrokes. The main editor renders
+   * real-time previews over WebRTC P2P and does not render Convex liveStrokes,
+   * so it disables this subscription to avoid an unused reactive query.
+   */
+  includeLiveStrokes?: boolean;
+}
+
+const EMPTY_STROKES: Stroke[] = [];
+const EMPTY_PRESENCE: UserPresence[] = [];
+const EMPTY_LIVE_STROKES: LiveStroke[] = [];
+
+// Placeholder identity used on the server and during hydration, before the
+// per-browser client id can be read (keeps SSR and the first client render
+// identical).
+const PENDING_GUEST_IDENTITY: CurrentUser = {
+  id: null,
+  name: 'Anonymous User',
+  color: 'hsl(0, 0%, 60%)',
+};
+
+function hashIdentitySeed(seed: string): number {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = (hash + seed.charCodeAt(i)) % 360000;
+  }
+  return hash;
+}
+
+function getUserColor(seed: string): string {
+  return `hsl(${hashIdentitySeed(seed) % 360}, 70%, 50%)`;
+}
+
+function createGuestIdentity(clientId: string): CurrentUser {
+  const hash = hashIdentitySeed(clientId);
+  return {
+    id: null,
+    name: `Guest ${hash % 1000}`,
+    color: `hsl(${hash % 360}, 70%, 50%)`,
+  };
+}
+
+const noopSubscribe = () => () => {};
+const getServerClientId = () => null;
+
+export function usePaintingSession(
+  sessionId: Id<"paintingSessions"> | null,
+  options?: UsePaintingSessionOptions
+) {
+  const includeLiveStrokes = options?.includeLiveStrokes ?? true;
+
   // Get current authenticated user from Better Auth
   const authenticatedUser = useQuery(api.auth.getCurrentUser);
-  
-  // Generate a consistent color based on user ID or use a random one for anonymous users
-  const getUserColor = (userId: string | null) => {
-    if (!userId) return `hsl(${Math.floor(Math.random() * 360)}, 70%, 50%)`;
-    // Generate a consistent color based on user ID
-    const hash = userId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-    return `hsl(${hash % 360}, 70%, 50%)`;
-  };
-  
-  const [currentUser, setCurrentUser] = useState<{
-    id: Id<"users"> | null;
-    name: string;
-    color: string;
-  }>({
-    id: null,
-    name: 'Anonymous User',
-    color: getUserColor(null),
-  });
 
-  // Guest key state (in-memory) to ensure we always pass it on initial queries
-  const [guestKeyState, setGuestKeyState] = useState<string | null>(null);
-  useEffect(() => {
-    // Re-read on session change so a stale key from a previous session is never sent
-    setGuestKeyState(getGuestKey(sessionId as any));
-  }, [sessionId]);
+  // Stable per-browser id used to derive a consistent guest display identity
+  // (and, server-side only, to key guest presence rows). Read via
+  // useSyncExternalStore so SSR/hydration see null and the client fills it in.
+  const guestClientId = useSyncExternalStore(noopSubscribe, getClientId, getServerClientId);
+
+  const authenticatedUserId = authenticatedUser?._id as Id<"users"> | undefined;
+  const authenticatedUserName = authenticatedUser?.name;
+  const authenticatedUserEmail = authenticatedUser?.email;
+
+  const currentUser = useMemo<CurrentUser>(() => {
+    if (authenticatedUserId) {
+      return {
+        id: authenticatedUserId,
+        name: authenticatedUserName || authenticatedUserEmail || 'User',
+        color: getUserColor(authenticatedUserId),
+      };
+    }
+    return guestClientId ? createGuestIdentity(guestClientId) : PENDING_GUEST_IDENTITY;
+  }, [authenticatedUserId, authenticatedUserName, authenticatedUserEmail, guestClientId]);
+
+  // In-memory fallback guest key scoped to the exact sessionId that created it
+  // (covers browsers where localStorage writes fail without leaking keys across sessions).
+  const [createdGuestKey, setCreatedGuestKey] = useState<{
+    sessionId: Id<"paintingSessions">;
+    key: string;
+  } | null>(null);
 
   // Queries
-  const localGuestKey = guestKeyState || getGuestKey(sessionId as any);
+  const localGuestKey =
+    getGuestKey(sessionId) ||
+    (sessionId && createdGuestKey?.sessionId === sessionId ? createdGuestKey.key : null);
   const localEditKey = useSyncExternalStore(
     subscribeEditKeys,
     () => getEditKey(sessionId),
@@ -166,7 +227,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
   
   const liveStrokes = useQuery(
     api.liveStrokes.getLiveStrokes,
-    sessionId && canReadSessionData
+    includeLiveStrokes && sessionId && canReadSessionData
       ? { sessionId, guestKey: localGuestKey || undefined, editKey: localEditKey || undefined }
       : "skip"
   );
@@ -207,24 +268,6 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
 
   const localLastAckedStrokeOrderRef = useRef<number>(0);
 
-  // Update current user when authenticated user changes
-  useEffect(() => {
-    if (authenticatedUser) {
-      setCurrentUser({
-        id: authenticatedUser._id as Id<"users">,
-        name: authenticatedUser.name || authenticatedUser.email || 'User',
-        color: getUserColor(authenticatedUser._id),
-      });
-    } else {
-      // For anonymous users, we'll use a session-based identifier
-      setCurrentUser({
-        id: null,
-        name: `Guest ${Math.floor(Math.random() * 1000)}`,
-        color: getUserColor(null),
-      });
-    }
-  }, [authenticatedUser]);
-
   // Drop a stale/revoked edit key once the backend confirms it no longer grants
   // edit access, along with any queued strokes that relied on it (they can
   // never be saved; the sync banner tells the user they were dropped).
@@ -256,7 +299,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
         // (wrong key or someone else owns the session) — either way, drop the
         // local pointers so signed-in loads stop resuming this session.
         removeGuestKey(sessionId);
-        setGuestKeyState(null);
+        setCreatedGuestKey((prev) => (prev?.sessionId === sessionId ? null : prev));
         if (getCurrentGuestSession() === sessionId) {
           clearCurrentGuestSession();
         }
@@ -269,7 +312,10 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
       });
   }, [sessionId, authenticatedUser, session, claimGuestSession]);
 
-  // Remove duplicate warming queries as they're ineffective and already defined above
+  // Reset per-session ack tracking when switching sessions
+  useEffect(() => {
+    localLastAckedStrokeOrderRef.current = 0;
+  }, [sessionId]);
 
   // Effect to initialize lastAckedStrokeOrder from server
   useEffect(() => {
@@ -302,14 +348,22 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     canvasWidth: number = 800,
     canvasHeight: number = 600
   ) => {
-    const payload: any = { name, canvasWidth, canvasHeight, isPublic: false };
+    const payload: {
+      name?: string;
+      canvasWidth: number;
+      canvasHeight: number;
+      isPublic: boolean;
+      guestKey?: string;
+    } = { name, canvasWidth, canvasHeight, isPublic: false };
     // Private by default; guests authenticate with a per-session guestOwnerKey
     if (!authenticatedUser) {
       const guestKey = generateGuestKey();
-      setGuestKeyState(guestKey);
       payload.guestKey = guestKey;
       const newId = await createSession(payload);
-      if (newId) setGuestKey(newId, guestKey);
+      if (newId) {
+        setGuestKey(newId, guestKey);
+        setCreatedGuestKey({ sessionId: newId, key: guestKey });
+      }
       return newId;
     }
     return await createSession(payload);
@@ -377,7 +431,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
   const selfPresenceId = useSelfPresenceId(sessionId);
 
   // Presence throttling and heartbeat
-  const presenceIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const presenceIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastPresenceSentAtRef = useRef<number>(0);
   const pendingPresenceRef = useRef<{
     cursorX: number;
@@ -393,12 +447,19 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
   } | null>(null);
   const presenceInFlightRef = useRef<boolean>(false);
   // Cursor send cadence. Defaults to ~4 Hz so collaborators see each other's
-  // cursors via Convex presence; when P2P is connected the canvas switches to
+  // cursors via Convex presence; when P2P is connected the editor switches to
   // 'coarse' (20s) since cursors travel over the data channel instead.
   const presenceThrottleMsRef = useRef<number>(250);
   const setPresenceCadence = useCallback((mode: 'realtime' | 'coarse') => {
     presenceThrottleMsRef.current = mode === 'realtime' ? 250 : 20000;
   }, []);
+
+  // Reset queued/last-sent cursor presence when switching sessions
+  useEffect(() => {
+    pendingPresenceRef.current = null;
+    lastSentPresenceRef.current = null;
+    lastPresenceSentAtRef.current = 0;
+  }, [sessionId]);
 
   // Send the latest queued presence update if not already in flight
   const flushPresence = useCallback(async () => {
@@ -458,7 +519,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
       if (!pendingPresenceRef.current && lastSentPresenceRef.current) {
         pendingPresenceRef.current = lastSentPresenceRef.current;
       }
-      flushPresence();
+      void flushPresence();
     }, 20000); // 20s
 
     return () => {
@@ -467,7 +528,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
         presenceIntervalRef.current = null;
       }
     };
-  }, [sessionId, canEdit, currentUser.id, currentUser.color, currentUser.name, flushPresence]);
+  }, [sessionId, canEdit, flushPresence]);
 
   // Update user presence (enqueue latest + leading-edge send if stale)
   const updateUserPresence = useCallback(
@@ -499,7 +560,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
         await flushPresence();
       }
     },
-    [sessionId, canEdit, currentUser.id, currentUser.color, currentUser.name, flushPresence]
+    [sessionId, canEdit, flushPresence]
   );
 
   // Clear all strokes from the session (owner only)
@@ -573,7 +634,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
   }, [sessionId, canEdit, restoreLastDeletedStroke, localGuestKey, localEditKey]);
 
   // Throttle live stroke updates to reduce lag
-  const liveStrokeUpdateRef = useRef<NodeJS.Timeout | null>(null);
+  const liveStrokeUpdateRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingLiveStrokeRef = useRef<{
     points: PaintPoint[];
     brushColor: string;
@@ -672,10 +733,37 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     });
   }, [sessionId, canEdit, currentUser.id, clearLiveStroke, localGuestKey, localEditKey]);
 
-  // Leave session on unmount and cleanup timeouts
+  // Leave session on unmount / session (or identity) change and cleanup timeouts.
+  //
+  // The effect is keyed only on the session and the viewer identity — never on
+  // load state — so a transient return to "loading" (e.g. while a guest key is
+  // claimed on sign-in) can't remove our presence row or viewer state. The
+  // leave itself is deferred one tick and cancelled if the same session/viewer
+  // re-subscribes immediately, which is what React StrictMode's simulated
+  // unmount/remount does in development.
+  // Sessions this hook has had edit access to. The leave cleanup checks this
+  // instead of the live canEdit: by the time a session switch's cleanup runs,
+  // canEdit already describes the *new* (still loading) session.
+  const editorSessionsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (sessionId && canEdit) editorSessionsRef.current.add(sessionId);
+  }, [sessionId, canEdit]);
+
+  const pendingLeaveRef = useRef<{
+    key: string;
+    timer: ReturnType<typeof setTimeout>;
+    run: () => void;
+  } | null>(null);
   useEffect(() => {
     const currentSessionId = sessionId; // Capture sessionId for cleanup
     const currentViewerId = currentUser.id; // Capture viewerId for cleanup
+    const leaveKey = `${currentSessionId ?? ''}|${currentViewerId ?? 'guest'}`;
+
+    if (pendingLeaveRef.current?.key === leaveKey) {
+      // Same session + viewer re-subscribed right away: not a real leave.
+      clearTimeout(pendingLeaveRef.current.timer);
+      pendingLeaveRef.current = null;
+    }
 
     // Tab close / navigation away never runs React cleanup reliably, and
     // WebSocket mutations don't flush during pagehide — use sendBeacon to an
@@ -704,16 +792,27 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
 
     return () => {
       window.removeEventListener("pagehide", handlePageHide);
-      if (currentSessionId && canEditRef.current) {
+      // Clean up any pending live stroke updates
+      if (liveStrokeUpdateRef.current) {
+        clearTimeout(liveStrokeUpdateRef.current);
+        liveStrokeUpdateRef.current = null;
+      }
+      if (!currentSessionId || !editorSessionsRef.current.has(currentSessionId)) return;
+      const runLeave = () => {
+        pendingLeaveRef.current = null;
         const currentGuestKey = getGuestKey(currentSessionId) || undefined;
         const currentEditKey = getEditKey(currentSessionId) || undefined;
-        // Guests identify by their stable client id instead of a user id
-        void leaveSession({
-          sessionId: currentSessionId,
-          guestId: currentViewerId ? undefined : getClientId(),
-          guestKey: currentGuestKey,
-          editKey: currentEditKey,
-        }).catch(() => {});
+        // Only remove a presence row we actually established.
+        if (getSelfPresence(currentSessionId)) {
+          // Guests identify by their stable client id instead of a user id
+          void leaveSession({
+            sessionId: currentSessionId,
+            guestId: currentViewerId ? undefined : getClientId(),
+            guestKey: currentGuestKey,
+            editKey: currentEditKey,
+          }).catch(() => {});
+          setSelfPresence(currentSessionId, null);
+        }
         if (currentViewerId) {
           void removeViewerState({
             sessionId: currentSessionId,
@@ -722,18 +821,21 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
             editKey: currentEditKey,
           }).catch(() => {});
         }
+      };
+      const previous = pendingLeaveRef.current;
+      if (previous) {
+        // A different session/viewer was still pending: flush it now.
+        clearTimeout(previous.timer);
+        previous.run();
       }
-      // Clean up any pending live stroke updates
-      if (liveStrokeUpdateRef.current) {
-        clearTimeout(liveStrokeUpdateRef.current);
-      }
+      pendingLeaveRef.current = { key: leaveKey, timer: setTimeout(runLeave, 0), run: runLeave };
     };
   }, [sessionId, leaveSession, removeViewerState, currentUser.id]);
 
   // Memoized strokes with pre-sorted order and metadata for O(1) access
   const { memoizedStrokes, lastStrokeInfo } = useMemo(() => {
     if (!strokes || strokes.length === 0) {
-      return { memoizedStrokes: [], lastStrokeInfo: null };
+      return { memoizedStrokes: EMPTY_STROKES, lastStrokeInfo: null };
     }
     
     // Check if strokes are already sorted to avoid unnecessary sorting
@@ -772,10 +874,12 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     sessionStatus,
     canEdit,
     isOwner,
+    guestKey: localGuestKey || undefined,
+    editKey: localEditKey || undefined,
     strokes: memoizedStrokes,
     lastStrokeInfo,
-    presence: presence || [],
-    liveStrokes: liveStrokes || [],
+    presence: presence ?? EMPTY_PRESENCE,
+    liveStrokes: liveStrokes ?? EMPTY_LIVE_STROKES,
     currentUser,
     selfPresenceId,
     undoRedoAvailability,

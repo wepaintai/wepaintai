@@ -3,15 +3,17 @@ import { api } from '../../convex/_generated/api'
 import { useAuthState } from '../lib/auth-client'
 
 export function AuthDebug() {
+  // Only show in development and when auth is not disabled
+  const shouldHide = import.meta.env.PROD || import.meta.env.VITE_AUTH_DISABLED === 'true'
+
   // Better Auth session state
   const { isSignedIn, isLoaded, user, userId } = useAuthState()
 
   // Convex auth state
   const { isAuthenticated, isLoading } = useConvexAuth()
-  const currentUser = useQuery(api.auth.getCurrentUser)
+  const currentUser = useQuery(api.auth.getCurrentUser, shouldHide ? 'skip' : {})
 
-  // Only show in development and when auth is not disabled
-  if (import.meta.env.PROD || import.meta.env.VITE_AUTH_DISABLED === 'true') return null
+  if (shouldHide) return null
 
   return (
     <div className="fixed bottom-4 left-4 bg-black/90 text-white p-4 rounded-lg text-xs font-mono max-w-sm z-50">

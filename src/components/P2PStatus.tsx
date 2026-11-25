@@ -1,14 +1,18 @@
 import React from 'react';
-import type { ConnectionMode, P2PMetrics } from '../lib/webrtc/types';
+import type { ConnectionMode } from '../lib/webrtc/types';
+import { useP2PMetrics, type P2PLiveStore } from '../lib/webrtc/p2pLiveStore';
 
 interface P2PStatusProps {
   isConnected: boolean;
   connectionMode: ConnectionMode;
-  metrics: P2PMetrics | null;
+  /** Metrics are read from the P2P live store here, not passed down, so a
+   * metrics tick only re-renders this badge. */
+  liveStore: P2PLiveStore;
   className?: string;
 }
 
-export function P2PStatus({ isConnected, connectionMode, metrics, className = '' }: P2PStatusProps) {
+export function P2PStatus({ isConnected, connectionMode, liveStore, className = '' }: P2PStatusProps) {
+  const metrics = useP2PMetrics(liveStore);
   const getStatusColor = () => {
     if (!isConnected) return 'bg-red-500'; // Red when not connected (no fallback)
     if (connectionMode === 'mesh') return 'bg-green-500';

@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useCallback, useMemo, useSyncExternalStore } from 'react'
+import React, { useRef, useState, useEffect, useCallback } from 'react'
 import { useAuthState } from '../lib/auth-client'
 import { KonvaCanvas, CanvasRef } from './KonvaCanvas'
 import { ToolPanel, Layer } from './ToolPanel'
@@ -16,29 +16,29 @@ import { BackgroundRemovalModal } from './BackgroundRemovalModal'
 import { MergeTwoModal } from './MergeTwoModal'
 import { ExportModal, buildExportFilename } from './ExportModal'
 import { TokenDisplay } from './TokenDisplay'
-import { usePaintingSession } from '../hooks/usePaintingSession'
 import { useConnectionStatus } from '../hooks/useConnectionStatus'
-import { editorPeerIdsFromPresence, useP2PPainting } from '../hooks/useP2PPainting'
-import { useSessionImages } from '../hooks/useSessionImages'
 import { shouldShowAdminFeatures } from '../utils/environment'
 import { isIOS } from '../utils/device'
 import { Id } from '../../convex/_generated/dataModel'
 import { initP2PLogger } from '../lib/p2p-logger'
-import { useMutation, useQuery } from 'convex/react'
-import { api } from '../../convex/_generated/api'
 import { useThumbnailGenerator } from '../hooks/useThumbnailGenerator'
 import { ClipboardProvider } from '../context/ClipboardContext'
+import {
+  PaintingEditorProvider,
+  usePaintingEditorController,
+} from '../context/PaintingEditorContext'
 import {
   getCurrentGuestSession,
   setCurrentGuestSession,
   clearCurrentGuestSession,
   getGuestKey,
-  getEditKey,
-  subscribeEditKeys,
   consumeEditKeyFromWindowUrl,
   touchRecentGuestSession,
   removeRecentGuestSession,
 } from '../utils/guestKey'
+
+// Constant linear easing avoids invalidating KonvaCanvas stroke memoization on re-render
+const LINEAR_EASING = (t: number) => t
 
 // Wrapper component for background removal modal
 function BackgroundRemovalModalWrapper({ 
@@ -227,9 +227,6 @@ export function PaintingView() {
     }
   }, [brushSettings])
 
-  // For simplicity, easing is kept constant for now.
-  // If it needs to be dynamic, it requires a more complex state management.
-  const easing = (t: number) => t
   // Cap settings are kept constant
   const startCap = true
   const endCap = true
@@ -270,42 +267,51 @@ export function PaintingView() {
   // Track whether we have locally drawn since load (helps enable Undo immediately on fresh sessions)
   const [hasLocalStrokes, setHasLocalStrokes] = useState(false)
   
-  // Removed localLastStrokeInfo - now using lastStrokeInfo from usePaintingSession
-
-  const { session, sessionStatus, canEdit, isOwner, createNewSession, presence, currentUser, selfPresenceId, isLoading, clearSession, undoLastStroke, redoLastStroke, strokes: rawStrokes, undoRedoAvailability, lastStrokeInfo } = usePaintingSession(sessionId)
+  // Single editor session controller shared with KonvaCanvas via PaintingEditorProvider
+  const editor = usePaintingEditorController({
+    sessionId,
+    pendingUndoStrokeIds,
+  })
+  const {
+    session,
+    sessionStatus,
+    canEdit,
+    isOwner,
+    sessionReady,
+    validSessionId,
+    sessionError,
+    createNewSession,
+    presence,
+    currentUser,
+    selfPresenceId,
+    clearSession,
+    undoLastStroke,
+    redoLastStroke,
+    rawStrokes,
+    strokes,
+    undoRedoAvailability,
+    lastStrokeInfo,
+    uploadedImages,
+    aiImages,
+    updateImageTransform,
+    updateAIImageTransform,
+    deleteImage,
+    deleteAIImage,
+    addAIGeneratedImage,
+    paintLayers,
+    createPaintLayer,
+    updatePaintLayer,
+    deletePaintLayer,
+    reorderLayer,
+    layers,
+    p2p: {
+      isConnected: isP2PConnected,
+      connectionMode,
+      liveStore: p2pLiveStore,
+    },
+  } = editor
   const connectionStatus = useConnectionStatus()
 
-  // Only hit session-scoped queries once the session is confirmed accessible;
-  // a malformed URL id would otherwise throw validation errors in every query.
-  const sessionReady = !!sessionId && sessionStatus === 'ok'
-  const validSessionId = sessionReady ? sessionId : null
-  const imageGuestKey = getGuestKey(validSessionId) || undefined
-  const sessionEditKey =
-    useSyncExternalStore(
-      subscribeEditKeys,
-      () => getEditKey(validSessionId),
-      () => null,
-    ) || undefined
-  const sessionError: 'not_found' | 'unauthorized' | null =
-    sessionId && (sessionStatus === 'not_found' || sessionStatus === 'unauthorized') ? sessionStatus : null
-
-  // Filter out strokes that are pending undo for optimistic UI
-  // Strokes are already pre-sorted in usePaintingSession for performance
-  const strokes = useMemo(() => {
-    if (!rawStrokes) return rawStrokes
-    if (pendingUndoStrokeIds.size === 0) return rawStrokes
-    
-    // Only filter if there are pending undos
-    return rawStrokes.filter(stroke => !pendingUndoStrokeIds.has(stroke._id))
-  }, [rawStrokes, pendingUndoStrokeIds])
-  const addAIGeneratedImage = useMutation(api.images.addAIGeneratedImage)
-  const updateAIImageTransform = useMutation(api.images.updateAIImageTransform)
-  
-  // Get images to find AI-generated ones
-  const { images, updateImageTransform, deleteImage, changeLayerOrder } = useSessionImages(validSessionId)
-  const aiGeneratedImages = images.filter(img => (img as any).type === 'ai-generated')
-  
-  // Paint layer mutations
   // Thumbnail generation (editors only — avoid unauthorized mutation spam in view-only mode)
   const { generateNow: generateThumbnail } = useThumbnailGenerator({
     sessionId: validSessionId || undefined,
@@ -313,65 +319,7 @@ export function PaintingView() {
     interval: 30000, // Generate thumbnail every 30 seconds
     enabled: sessionReady && canEdit
   })
-  const paintLayerSettings = useQuery(api.paintLayer.getPaintLayerSettings, validSessionId ? { sessionId: validSessionId, guestKey: imageGuestKey, editKey: sessionEditKey } : 'skip')
-
-  // Multiple paint layers support
-  const paintLayers = useQuery(api.paintLayers.getPaintLayers, validSessionId ? { sessionId: validSessionId, guestKey: imageGuestKey, editKey: sessionEditKey } : 'skip')
-  const createPaintLayer = useMutation(api.paintLayers.createPaintLayer)
-  const updatePaintLayer = useMutation(api.paintLayers.updatePaintLayer)
-  const deletePaintLayer = useMutation(api.paintLayers.deletePaintLayer)
-  const ensureDefaultPaintLayer = useMutation(api.paintLayers.ensureDefaultPaintLayer)
   const [activePaintLayerId, setActivePaintLayerId] = useState<string | null>(null)
-  
-  // Unified layer reordering
-  const reorderLayer = useMutation(api.layers.reorderLayer)
-  
-  // Debug: Log both image sources
-  // useEffect(() => {
-  //   console.log('[PaintingView] Images from useSessionImages:', images)
-  //   console.log('[PaintingView] AI images filtered from images:', aiGeneratedImages)
-  // }, [images, aiGeneratedImages])
-  
-  // Debug strokes from usePaintingSession
-  useEffect(() => {
-    // console.log('[Layers] Strokes from usePaintingSession:', {
-    //   strokesExist: !!strokes,
-    //   strokesLength: strokes?.length,
-    //   strokesIsArray: Array.isArray(strokes),
-    //   strokesValue: strokes,
-    //   sessionId,
-    //   currentUser
-    // })
-  }, [strokes, sessionId, currentUser])
-  
-  // Get AI generated images separately
-  // validSessionId is only set after mount, so this never reads storage
-  // during SSR or the hydration render.
-  const aiImages = useQuery(api.images.getAIGeneratedImages, validSessionId ? { sessionId: validSessionId, guestKey: imageGuestKey, editKey: sessionEditKey } : 'skip')
-  const updateAIImageTransformMutation = useMutation(api.images.updateAIImageTransform)
-  const deleteAIImageMutation = useMutation(api.images.deleteAIImage)
-  const updateAIImageLayerOrderMutation = useMutation(api.images.updateAIImageLayerOrder)
-  
-  // Debug: Log aiImages from direct query
-  useEffect(() => {
-    // console.log('[PaintingView] AI images from direct query:', aiImages)
-  }, [aiImages])
-
-  // P2P connection status
-  // Ignore P2P packets from peers that aren't current editors (presence is
-  // editor-only and is cleared for collaborators when the edit link changes).
-  const editorPeerIds = useMemo(() => editorPeerIdsFromPresence(presence), [presence])
-  const {
-    isConnected: isP2PConnected,
-    connectionMode,
-    metrics: p2pMetrics,
-    remoteStrokes
-  } = useP2PPainting({
-    sessionId: validSessionId,
-    userId: currentUser.id ? currentUser.id.toString() : currentUser.name, // Convert ID to string
-    enabled: !!currentUser.id && sessionReady && canEdit, // Only enable for editors when session is accessible
-    allowedPeerIds: editorPeerIds,
-  })
 
   // Initialize P2P logger in development
   useEffect(() => {
@@ -379,21 +327,6 @@ export function PaintingView() {
       initP2PLogger();
     }
   }, []);
-
-  // Ensure default paint layer exists (editors only)
-  useEffect(() => {
-    if (validSessionId && canEdit && paintLayers !== undefined) {
-      if (!paintLayers || paintLayers.length === 0) {
-        ensureDefaultPaintLayer({
-          sessionId: validSessionId,
-          guestKey: imageGuestKey,
-          editKey: sessionEditKey,
-        })
-      }
-    }
-  }, [validSessionId, canEdit, paintLayers, ensureDefaultPaintLayer, imageGuestKey, sessionEditKey])
-
-  // Remove duplicate warming query - it's already called in usePaintingSession
 
   // Set active paint layer when layers are loaded
   useEffect(() => {
@@ -609,7 +542,7 @@ export function PaintingView() {
     setActivePaintLayerId(null)
   }, [sessionId])
 
-  const handleStrokeEnd = () => {
+  const handleStrokeEnd = useCallback(() => {
     if (!canEdit) return
     // Mark that we have at least one local stroke in this session
     setHasLocalStrokes(true)
@@ -619,9 +552,9 @@ export function PaintingView() {
       // console.log('[PaintingView] Triggering thumbnail generation after stroke')
       generateThumbnail()
     }, 1000)
-  }
+  }, [canEdit, generateThumbnail])
 
-  const handleUndo = async () => {
+  const handleUndo = useCallback(async () => {
     if (!canEdit) return
     // Skip the undoRedoAvailability check if we know we have strokes
     // This avoids waiting for the query on first undo
@@ -673,9 +606,9 @@ export function PaintingView() {
         })
       }
     }
-  }
+  }, [canEdit, hasLocalStrokes, lastStrokeInfo, rawStrokes, undoRedoAvailability?.canUndo, isMutating, undoLastStroke, releaseMutationLock])
 
-  const handleRedo = async () => {
+  const handleRedo = useCallback(async () => {
     if (!canEdit) return
     // Check if we can redo before attempting
     if (!undoRedoAvailability?.canRedo || isMutating) return
@@ -695,9 +628,9 @@ export function PaintingView() {
     } finally {
       releaseMutationLock()
     }
-  }
+  }, [canEdit, undoRedoAvailability?.canRedo, isMutating, redoLastStroke, releaseMutationLock])
 
-  const handleClear = async () => {
+  const handleClear = useCallback(async () => {
     if (!isOwner || isClearing) return
     setIsClearing(true)
     // Clear local canvas immediately for responsiveness
@@ -715,9 +648,9 @@ export function PaintingView() {
     } finally {
       setIsClearing(false)
     }
-  }
+  }, [isOwner, isClearing, sessionId, clearSession])
 
-  const handleExport = () => {
+  const handleExport = useCallback(() => {
     if (isExporting) return
     setIsExporting(true)
     try {
@@ -743,7 +676,7 @@ export function PaintingView() {
       // can't trigger a second download
       setTimeout(() => setIsExporting(false), 600)
     }
-  }
+  }, [isExporting, session?.name, canEdit, generateThumbnail])
 
   const toggleAdminPanel = useCallback(() => {
     setIsAdminPanelVisible(prev => !prev)
@@ -774,7 +707,7 @@ export function PaintingView() {
   }, [canEdit])
 
   const handleAIGenerationComplete = useCallback(async (imageUrl: string, storageId: Id<"_storage">) => {
-    if (!sessionId) return
+    if (!sessionId || !canEdit) return
     
     // Add the generated image to the canvas
     // console.log('handleAIGenerationComplete called with URL:', imageUrl)
@@ -818,10 +751,8 @@ export function PaintingView() {
         })
         
         // Add the AI-generated image to Convex
+        // (session, guest key and edit key are filled in by the editor context)
         const newImageId = await addAIGeneratedImage({
-          sessionId,
-          guestKey: getGuestKey(sessionId) || undefined,
-          editKey: getEditKey(sessionId) || undefined,
           // The server derives the layer URL from the blob
           storageId,
           width: img.naturalWidth || img.width,
@@ -851,7 +782,7 @@ export function PaintingView() {
     }
     
     img.src = imageUrl
-  }, [sessionId, addAIGeneratedImage])
+  }, [sessionId, canEdit, addAIGeneratedImage])
 
   const handleToolChange = useCallback((tool: string) => {
     if (!canEdit) return
@@ -925,71 +856,6 @@ export function PaintingView() {
     }
   }, [canEdit, toggleAdminPanel, adminFeaturesEnabled, handleImageUpload, handleAIGenerate, handleUndo, handleRedo])
 
-  // Use persisted paint layer settings or defaults
-  const paintingLayerVisible = paintLayerSettings?.visible ?? true
-  const paintingLayerOrder = paintLayerSettings?.layerOrder ?? 0
-  
-  // Create layers from strokes and images
-  const layers = useMemo(() => {
-    const allLayers: Layer[] = []
-    
-    // Add paint layers - there should always be at least one
-    if (paintLayers && paintLayers.length > 0) {
-      paintLayers.forEach((paintLayer) => {
-        allLayers.push({
-          id: paintLayer._id,
-          type: 'paint',
-          name: paintLayer.name,
-          visible: paintLayer.visible,
-          opacity: paintLayer.opacity,
-          order: paintLayer.layerOrder,
-        })
-      })
-    }
-    
-    // Add uploaded images
-    const uploadedImages = images.filter(img => !(img as any).type || (img as any).type === 'uploaded')
-    uploadedImages.forEach((img, index) => {
-      allLayers.push({
-        id: img._id,
-        type: 'image',
-        name: `Upload ${index + 1}`,
-        visible: img.opacity > 0,
-        opacity: img.opacity,
-        order: img.layerOrder,
-        thumbnailUrl: img.url || undefined,
-      })
-    })
-    
-    // Add AI-generated images
-    if (aiImages) {
-      // console.log('[Layers] Adding AI images to layers:', aiImages.length)
-      aiImages.forEach((img, index) => {
-        // console.log('[Layers] AI image:', img._id, img)
-        // console.log('[Layers] AI image layerOrder:', img.layerOrder)
-        allLayers.push({
-          id: img._id,
-          type: 'ai-image',
-          name: `AI Image ${index + 1}`,
-          visible: img.opacity > 0,
-          opacity: img.opacity,
-          order: img.layerOrder,
-          thumbnailUrl: img.imageUrl,
-        })
-      })
-    }
-    
-    // Debug: Log all layers with their orders
-    // console.log('[Layers] All layers computed:', allLayers.map(l => ({
-    //   id: l.id,
-    //   type: l.type,
-    //   name: l.name,
-    //   order: l.order
-    // })))
-    
-    return allLayers
-  }, [strokes, images, aiImages, paintingLayerVisible, paintingLayerOrder, paintLayers])
-
   // Update activeLayerId when layers change (especially important for new sessions)
   useEffect(() => {
     // If no active layer is set and we have layers, select the first paint layer
@@ -1013,10 +879,8 @@ export function PaintingView() {
       if (paintLayer) {
         console.log('[PaintingView] Toggling paint layer visibility', { layerId, name: paintLayer.name, to: visible })
         await updatePaintLayer({
-          layerId: layerId as any,
+          layerId: paintLayer._id,
           visible,
-          guestKey: getGuestKey(sessionId) || undefined,
-          editKey: getEditKey(sessionId) || undefined,
         })
         console.log('[PaintingView] Paint layer visibility updated OK', { layerId, to: visible })
         // Force canvas redraw
@@ -1025,19 +889,19 @@ export function PaintingView() {
       }
 
       // Check if it's an uploaded image
-      const uploadedImage = images.find(img => img._id === layerId)
+      const uploadedImage = uploadedImages.find(img => img._id === layerId)
       if (uploadedImage) {
         console.log('[PaintingView] Toggling uploaded image visibility', { layerId, filename: uploadedImage.filename, to: visible })
-        await updateImageTransform(layerId as Id<'uploadedImages'>, { opacity: visible ? 1 : 0 })
+        await updateImageTransform(uploadedImage._id, { opacity: visible ? 1 : 0 })
         console.log('[PaintingView] Uploaded image opacity updated OK', { layerId, to: visible ? 1 : 0 })
         return
       }
 
       // Check if it's an AI image
-      const aiImage = aiImages?.find(img => img._id === layerId)
+      const aiImage = aiImages.find(img => img._id === layerId)
       if (aiImage) {
         console.log('[PaintingView] Toggling AI image visibility', { layerId, to: visible })
-        await updateAIImageTransformMutation({ imageId: layerId as Id<'aiGeneratedImages'>, opacity: visible ? 1 : 0, guestKey: imageGuestKey, editKey: sessionEditKey })
+        await updateAIImageTransform(aiImage._id, { opacity: visible ? 1 : 0 })
         console.log('[PaintingView] AI image opacity updated OK', { layerId, to: visible ? 1 : 0 })
         return
       }
@@ -1046,18 +910,13 @@ export function PaintingView() {
     } catch (err) {
       console.error('[PaintingView] Error toggling layer visibility', { layerId, visible, err })
     }
-  }, [canEdit, images, aiImages, paintLayers, sessionId, updateImageTransform, updateAIImageTransformMutation, updatePaintLayer, imageGuestKey, sessionEditKey])
+  }, [canEdit, uploadedImages, aiImages, paintLayers, updateImageTransform, updateAIImageTransform, updatePaintLayer])
 
   const handleLayerDelete = useCallback(async (layerId: string) => {
     // Deleting layers/images is owner-only (the backend enforces it too)
     if (!isOwner) return
-    // console.log('[PaintingView] handleLayerDelete called with layerId:', layerId)
-    // console.log('[PaintingView] Available paint layers:', paintLayers)
-    // console.log('[PaintingView] Available layers:', layers)
-    
     // Check if it's a paint layer
     const paintLayer = paintLayers?.find(layer => layer._id === layerId)
-    // console.log('[PaintingView] Found paint layer:', paintLayer)
     if (paintLayer) {
       // Prevent deleting the last paint layer
       const paintLayersCount = paintLayers?.length || 0
@@ -1065,67 +924,45 @@ export function PaintingView() {
         console.log('[PaintingView] Cannot delete the last paint layer')
         return
       }
-      
-      // console.log('[PaintingView] Deleting paint layer:', layerId)
+
       try {
-        await deletePaintLayer({
-          layerId: layerId as Id<"paintLayers">,
-          guestKey: getGuestKey(sessionId) || undefined,
-          editKey: getEditKey(sessionId) || undefined,
-        })
-        // console.log('[PaintingView] Paint layer deleted successfully')
+        await deletePaintLayer(paintLayer._id)
       } catch (error) {
         console.error('[PaintingView] Error deleting paint layer:', error)
       }
       return
     }
-    
-    // Check if it's an uploaded image (not AI-generated)
-    const uploadedImage = images.find(img => img._id === layerId && (img as any).type !== 'ai-generated')
+
+    // Check if it's an uploaded image
+    const uploadedImage = uploadedImages.find(img => img._id === layerId)
     if (uploadedImage) {
-      // console.log('[PaintingView] Deleting uploaded image:', layerId)
-      await deleteImage(layerId as Id<"uploadedImages">)
+      await deleteImage(uploadedImage._id)
       return
     }
-    
-    // Check if it's an AI image (either in aiImages or in images with type 'ai-generated')
-    const aiImageFromQuery = aiImages?.find(img => img._id === layerId)
-    const aiImageFromImages = images.find(img => img._id === layerId && (img as any).type === 'ai-generated')
-    const aiImage = aiImageFromQuery || aiImageFromImages
-    
-    // console.log('[PaintingView] AI images from query:', aiImages)
-    // console.log('[PaintingView] Found AI image from query:', aiImageFromQuery)
-    // console.log('[PaintingView] Found AI image from images:', aiImageFromImages)
-    
+
+    // Check if it's an AI image
+    const aiImage = aiImages.find(img => img._id === layerId)
     if (aiImage) {
-      // console.log('[PaintingView] Deleting AI image:', layerId)
       try {
-        await deleteAIImageMutation({ imageId: layerId as Id<"aiGeneratedImages">, guestKey: imageGuestKey, editKey: sessionEditKey })
-        // console.log('[PaintingView] AI image deleted successfully')
+        await deleteAIImage(aiImage._id)
       } catch (error) {
         console.error('[PaintingView] Error deleting AI image:', error)
       }
     } else {
       console.warn('[PaintingView] Layer not found for deletion:', layerId)
     }
-  }, [isOwner, images, aiImages, paintLayers, sessionId, deleteImage, deletePaintLayer, deleteAIImageMutation, imageGuestKey, sessionEditKey])
+  }, [isOwner, uploadedImages, aiImages, paintLayers, deleteImage, deletePaintLayer, deleteAIImage])
 
   const handleLayerReorder = useCallback(async (layerId: string, newOrder: number) => {
     if (!sessionId || !canEdit) return
-    
+
     // Clamp newOrder to valid range
     const maxOrder = layers.length - 1
     const clampedOrder = Math.max(0, Math.min(newOrder, maxOrder))
-    
+
     // Use the unified reorderLayer mutation
-    await reorderLayer({
-      sessionId,
-      layerId,
-      newOrder: clampedOrder,
-      guestKey: getGuestKey(sessionId) || undefined,
-      editKey: getEditKey(sessionId) || undefined,
-    })
-    
+    await reorderLayer(layerId, clampedOrder)
+
     // Force canvas redraw to reflect new layer order
     canvasRef.current?.forceRedraw?.()
   }, [sessionId, canEdit, layers, reorderLayer])
@@ -1136,50 +973,38 @@ export function PaintingView() {
     const paintLayer = paintLayers?.find(layer => layer._id === layerId)
     if (paintLayer) {
       await updatePaintLayer({
-        layerId: layerId as any,
+        layerId: paintLayer._id,
         opacity,
-        guestKey: getGuestKey(sessionId) || undefined,
-        editKey: getEditKey(sessionId) || undefined,
       })
       // Force canvas redraw
       canvasRef.current?.forceRedraw?.()
       return
     }
-    
+
     // Check if it's an uploaded image
-    const uploadedImage = images.find(img => img._id === layerId)
+    const uploadedImage = uploadedImages.find(img => img._id === layerId)
     if (uploadedImage) {
-      await updateImageTransform(layerId as Id<"uploadedImages">, { opacity })
+      await updateImageTransform(uploadedImage._id, { opacity })
       return
     }
-    
+
     // Check if it's an AI image
-    const aiImage = aiImages?.find(img => img._id === layerId)
+    const aiImage = aiImages.find(img => img._id === layerId)
     if (aiImage) {
-      await updateAIImageTransformMutation({
-        imageId: layerId as Id<"aiGeneratedImages">,
-        opacity,
-        guestKey: imageGuestKey,
-        editKey: sessionEditKey,
-      })
+      await updateAIImageTransform(aiImage._id, { opacity })
     }
-  }, [canEdit, images, aiImages, paintLayers, sessionId, updateImageTransform, updateAIImageTransformMutation, updatePaintLayer, imageGuestKey, sessionEditKey])
+  }, [canEdit, uploadedImages, aiImages, paintLayers, updateImageTransform, updateAIImageTransform, updatePaintLayer])
 
   // Handle creating new paint layer
   const handleCreatePaintLayer = useCallback(async () => {
     if (!sessionId || !canEdit) return
-    
+
     // Generate a name for the new layer
     const paintLayerCount = paintLayers?.filter(l => l.name.startsWith('Layer')).length || 0
     const newLayerName = `Layer ${paintLayerCount + 2}` // +2 because we already have Layer 1
-    
-    const layerId = await createPaintLayer({
-      sessionId,
-      name: newLayerName,
-      guestKey: getGuestKey(sessionId) || undefined,
-      editKey: getEditKey(sessionId) || undefined,
-    })
-    
+
+    const layerId = await createPaintLayer(newLayerName)
+
     // Set the new layer as active
     if (layerId) {
       setActiveLayerId(layerId)
@@ -1189,6 +1014,7 @@ export function PaintingView() {
 
   return (
     <ClipboardProvider isAIModalOpen={showAIGeneration}>
+      <PaintingEditorProvider value={editor}>
       <div className="relative w-full h-full bg-gray-50">
       {/* Button to toggle Admin Panel - only shown when admin features are enabled */}
       {adminFeaturesEnabled && (
@@ -1226,7 +1052,7 @@ export function PaintingView() {
           smoothing={brushSettings.smoothing}
           thinning={brushSettings.thinning}
           streamline={brushSettings.streamline}
-          easing={easing}
+          easing={LINEAR_EASING}
           startTaper={brushSettings.startTaper}
           startCap={startCap}
           endTaper={brushSettings.endTaper}
@@ -1292,7 +1118,7 @@ export function PaintingView() {
         <P2PStatus
           isConnected={isP2PConnected}
           connectionMode={connectionMode}
-          metrics={p2pMetrics}
+          liveStore={p2pLiveStore}
           className="absolute bottom-2 left-2 z-10"
         />
       )}
@@ -1301,8 +1127,7 @@ export function PaintingView() {
         <P2PDebugPanel
           isConnected={isP2PConnected}
           connectionMode={connectionMode}
-          metrics={p2pMetrics}
-          remoteStrokesCount={remoteStrokes.size}
+          liveStore={p2pLiveStore}
         />
       )}
       <ToolPanel
@@ -1471,6 +1296,7 @@ export function PaintingView() {
         defaultFilename={buildExportFilename(session?.name)}
       />
     </div>
+      </PaintingEditorProvider>
       </ClipboardProvider>
   )
 }
