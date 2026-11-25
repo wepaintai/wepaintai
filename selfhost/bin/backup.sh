@@ -10,6 +10,17 @@ REPO_DIR="${WEPAINTAI_DIR:-$HOME/apps/wepaintai}"
 BACKUP_DIR="${WEPAINTAI_BACKUP_DIR:-$HOME/Backups/wepaintai/selfhosted}"
 KEEP=14
 
+die() {
+  print -u2 -- "backup.sh: ERROR: $*"
+  exit 1
+}
+
+[ -d "$REPO_DIR" ] || die "repo checkout not found at $REPO_DIR (set WEPAINTAI_DIR)."
+[ -f "$REPO_DIR/selfhost/.env.convex" ] \
+  || die "$REPO_DIR/selfhost/.env.convex is missing (CONVEX_SELF_HOSTED_URL + CONVEX_SELF_HOSTED_ADMIN_KEY)."
+[ -x "$REPO_DIR/node_modules/.bin/convex" ] \
+  || die "Convex CLI not installed in $REPO_DIR (node_modules/.bin/convex missing). Run: cd $REPO_DIR && corepack pnpm install --frozen-lockfile"
+
 mkdir -p "$BACKUP_DIR"
 cd "$REPO_DIR"
 
@@ -22,6 +33,9 @@ if ! command -v node >/dev/null 2>&1; then
     [ -n "$NVM_NODE" ] && export PATH="$NVM_NODE:$PATH"
   fi
 fi
+
+command -v node >/dev/null 2>&1 || die "node not found on PATH (Homebrew or nvm)."
+command -v corepack >/dev/null 2>&1 || die "corepack not found on PATH (ships with node)."
 
 STAMP=$(date +%Y-%m-%d_%H%M)
 BACKUP_FILE="$BACKUP_DIR/wepaintai-$STAMP.zip"
