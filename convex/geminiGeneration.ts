@@ -1,6 +1,10 @@
 import { v } from "convex/values";
 import { action } from "./_generated/server";
 import { internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
+import { beginErrorMessage } from "./aiOperations";
+import { isPromptTooLong, MAX_PROMPT_LENGTH } from "./tokenPolicy";
+import { BILLED_FAILURE_NOTE, REFUNDED_FAILURE_NOTE } from "./replicate";
 
 // Generate an image using Gemini 2.5 Flash Image (preview)
 export const generateImage = action({
@@ -10,23 +14,27 @@ export const generateImage = action({
     imageData: v.string(), // data URL or base64 PNG
     canvasWidth: v.optional(v.number()),
     canvasHeight: v.optional(v.number()),
+    guestKey: v.optional(v.string()),
   },
-  handler: async (ctx, args) => {
-    console.log('[GEMINI] generateImage called with prompt:', args.prompt);
+  handler: async (ctx, args): Promise<{ success: boolean; imageUrl?: string; error?: string }> => {
+    if (isPromptTooLong(args.prompt)) {
+      return { success: false, error: `Prompt is too long (max ${MAX_PROMPT_LENGTH} characters).` };
+    }
 
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
+    const access = await ctx.runQuery(internal.sessionAuth.verifySessionAccess, {
+      sessionId: args.sessionId,
+      guestKey: args.guestKey,
+      requireAuth: true,
+    });
+    if (access.status === "not_found") {
+      return { success: false, error: "Session not found" };
+    }
+    if (access.status === "unauthenticated") {
       console.error('[GEMINI] User not authenticated');
       return { success: false, error: "Please sign in to use AI generation." };
     }
-
-    // Token gating: 1 token per generation to match Replicate
-    const hasTokens = await ctx.runQuery(internal.tokens.hasEnoughTokensForOperation, {
-      operationType: "ai-generation",
-    });
-    if (!hasTokens) {
-      console.error('[GEMINI] Insufficient tokens');
-      return { success: false, error: "Insufficient tokens. Please purchase more tokens to continue." };
+    if (access.status !== "ok") {
+      return { success: false, error: "Unauthorized" };
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
@@ -35,83 +43,102 @@ export const generateImage = action({
       return { success: false, error: "AI generation not configured" };
     }
 
-    // Create a generation request record
-    const generationId = await ctx.runMutation(internal.aiGeneration.createGenerationRequest, {
+    // Insert the operation row and reserve 1 token atomically BEFORE calling Gemini
+    const begin = await ctx.runMutation(internal.aiOperations.beginOperation, {
       sessionId: args.sessionId,
-      prompt: args.prompt,
-      status: "pending",
-      provider: "gemini",
+      guestKey: args.guestKey,
+      operation: { type: "ai-generation", prompt: args.prompt, provider: "gemini" },
+    });
+    if (begin.status !== "ok") {
+      return { success: false, error: beginErrorMessage(begin.status) };
+    }
+    const generationId = begin.operationId;
+
+    const fail = async (error: string, outcome: "refund" | "billed") => {
+      await ctx.runMutation(internal.aiOperations.failOperation, {
+        operationType: "ai-generation",
+        operationId: generationId,
+        outcome,
+        error,
+      });
+      const note = outcome === "billed" ? BILLED_FAILURE_NOTE : REFUNDED_FAILURE_NOTE;
+      return { success: false as const, error: `${error} ${note}` };
+    };
+
+    // Normalize to base64 without data URL prefix
+    const imageDataUrl = args.imageData.startsWith('data:') ? args.imageData : `data:image/png;base64,${args.imageData}`;
+    const base64Data = imageDataUrl.split(',')[1] || args.imageData;
+
+    // Build request body for native image editing (image + text parts)
+    const body = {
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              inline_data: {
+                mime_type: 'image/png',
+                data: base64Data,
+              },
+            },
+            { text: args.prompt },
+          ],
+        },
+      ],
+    };
+
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent`;
+
+    // Mark the row in flight before the provider call: if this action dies
+    // mid-request, a stale-operation sweep must treat it as possibly billed.
+    // Explicit rejections below still refund (failOperation works from here).
+    await ctx.runMutation(internal.aiOperations.markOperationProcessing, {
+      operationType: "ai-generation",
+      operationId: generationId,
     });
 
+    let response: Response;
     try {
-      // Normalize to base64 without data URL prefix
-      const imageDataUrl = args.imageData.startsWith('data:') ? args.imageData : `data:image/png;base64,${args.imageData}`;
-      const base64Data = imageDataUrl.split(',')[1] || args.imageData;
-
-      // Build request body for native image editing (image + text parts)
-      const body = {
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              {
-                inline_data: {
-                  mime_type: 'image/png',
-                  data: base64Data,
-                },
-              },
-              { text: args.prompt },
-            ],
-          },
-        ],
-      };
-
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key=${apiKey}`;
-
-      console.log('[GEMINI] Sending request to Gemini endpoint');
-      const response = await fetch(endpoint, {
+      response = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
         },
         body: JSON.stringify(body),
       });
+    } catch (error) {
+      // Network failure before Gemini accepted the request: not billed.
+      console.error('[GEMINI] Network error:', error);
+      return await fail('Failed to reach the AI provider.', "refund");
+    }
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('[GEMINI] API error:', errorText);
-        await ctx.runMutation(internal.aiGeneration.updateGenerationStatus, {
-          generationId,
-          status: 'failed',
-          error: 'Failed to start generation',
-        });
-        return { success: false, error: 'Failed to start AI generation' };
-      }
+    if (!response.ok) {
+      // Gemini rejected the request (4xx validation/quota, 5xx): not billed.
+      const errorText = await response.text().catch(() => "");
+      console.error('[GEMINI] API error:', response.status, errorText.slice(0, 500));
+      return await fail('Failed to start AI generation.', "refund");
+    }
 
-      const json = await response.json();
-      // Extract inline image data from candidates
+    // Gemini answered 200: the call was billed from here on.
+    try {
       let imageBase64: string | null = null;
-      try {
-        const parts = json?.candidates?.[0]?.content?.parts || [];
-        for (const part of parts) {
-          const inlineData = part?.inlineData || part?.inline_data;
-          if (inlineData?.data) {
-            imageBase64 = inlineData.data as string;
-            break;
-          }
+      const json = await response.json();
+      const parts = json?.candidates?.[0]?.content?.parts || [];
+      for (const part of parts) {
+        const inlineData = part?.inlineData || part?.inline_data;
+        if (inlineData?.data) {
+          imageBase64 = inlineData.data as string;
+          break;
         }
-      } catch (e) {
-        console.error('[GEMINI] Failed parsing response parts', e);
       }
 
       if (!imageBase64) {
         console.error('[GEMINI] No image data in response');
-        await ctx.runMutation(internal.aiGeneration.updateGenerationStatus, {
-          generationId,
-          status: 'failed',
-          error: 'No image data returned from Gemini',
-        });
-        return { success: false, error: 'No image data returned from Gemini' };
+        return await fail(
+          'Gemini did not return an image (it may have replied with text only). Try rephrasing your prompt as an image edit.',
+          "billed",
+        );
       }
 
       // Convert base64 to Blob and store in Convex storage
@@ -120,26 +147,35 @@ export const generateImage = action({
       for (let i = 0; i < binaryString.length; i++) {
         bytes[i] = binaryString.charCodeAt(i);
       }
-      const blob = new Blob([bytes], { type: 'image/png' });
-      const storageId = await ctx.storage.store(blob);
+      const storageId: Id<"_storage"> = await ctx.storage.store(new Blob([bytes], { type: 'image/png' }));
       const storageUrl = await ctx.storage.getUrl(storageId);
 
-      await ctx.runMutation(internal.aiGeneration.updateGenerationStatus, {
-        generationId,
-        status: 'completed',
-        resultImageUrl: storageUrl || '',
-      });
+      if (!storageUrl) {
+        await ctx.storage.delete(storageId).catch(() => {});
+        return await fail('Failed to store generated image.', "billed");
+      }
 
-      // Consume tokens on success
-      await ctx.runMutation(internal.tokens.consumeTokensForOperation, {
-        operationId: generationId,
+      const completion = await ctx.runMutation(internal.aiOperations.completeOperation, {
         operationType: "ai-generation",
+        operationId: generationId,
+        resultImageUrl: storageUrl,
+        guestKey: args.guestKey,
       });
+      if (completion !== "completed") {
+        await ctx.storage.delete(storageId).catch(() => {});
+        return {
+          success: false,
+          error:
+            completion === "access_lost"
+              ? "You no longer have access to this painting, so the result was discarded."
+              : "This generation was already finalized.",
+        };
+      }
 
       return { success: true, imageUrl: storageUrl };
     } catch (error) {
       console.error('[GEMINI] Generation error:', error);
-      return { success: false, error: 'An error occurred during generation' };
+      return await fail('An error occurred while processing the AI result.', "billed");
     }
   },
 });

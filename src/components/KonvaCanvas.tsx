@@ -307,7 +307,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     presence,
     liveStrokes,
     currentUser,
-    presenceGuestId,
+    selfPresenceId,
     addStrokeToSession,
     updateUserPresence,
     setPresenceCadence,
@@ -2160,7 +2160,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
                 // Exclude our own presence record
                 const self = currentUser.id
                   ? p.userId === currentUser.id
-                  : !!presenceGuestId && p.guestId === presenceGuestId
+                  : !!selfPresenceId && p._id === selfPresenceId
                 if (self) return false
                 // Hide cursors that have gone stale (no movement in a while)
                 return Date.now() - p.lastSeen < 15000

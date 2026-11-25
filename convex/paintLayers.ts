@@ -1,26 +1,14 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import { assertCanModifySession } from "./sessionAuth";
+import { assertCanModifySession, canReadSession } from "./sessionAuth";
 
 // Query to get all paint layers for a session
 export const getPaintLayers = query({
   args: { sessionId: v.id("paintingSessions"), guestKey: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!session) return [];
-    if (!session.isPublic) {
-      const identity = await ctx.auth.getUserIdentity();
-      if (identity) {
-        const user = await ctx.db
-          .query("users")
-          .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
-          .first();
-        if (!user || session.createdBy !== user._id) {
-          if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
-        }
-      } else {
-        if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) return [];
-      }
+    if (!(await canReadSession(ctx, session, args.guestKey))) {
+      return [];
     }
     const layers = await ctx.db
       .query("paintLayers")

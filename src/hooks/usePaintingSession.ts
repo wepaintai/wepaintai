@@ -3,7 +3,6 @@ import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { useCallback, useEffect, useState, useRef, useMemo } from "react";
 import { p2pLogger } from "../lib/p2p-logger";
-import { convexLow } from "../lib/convex";
 import {
   reportSyncFailure,
   reportSyncSuccess,
@@ -12,6 +11,13 @@ import {
   retrySync,
 } from "../lib/syncStatus";
 import { beginInFlightStroke, endInFlightStroke } from "../lib/unsavedChanges";
+import {
+  getPresenceAuthState,
+  getPresenceClient,
+  getSelfPresence,
+  setSelfPresence,
+  useSelfPresenceId,
+} from "../lib/presenceClient";
 import {
   generateGuestKey,
   getGuestKey,
@@ -49,7 +55,6 @@ export interface UserPresence {
   _creationTime: number;
   sessionId: Id<"paintingSessions">;
   userId?: Id<"users">;
-  guestId?: string;
   userColor: string;
   userName: string;
   cursorX: number;
@@ -147,7 +152,6 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
   const clearSessionMutation = useMutation(api.strokes.clearSession);
   const removeLastStroke = useMutation(api.strokes.removeLastStroke);
   const restoreLastDeletedStroke = useMutation(api.strokes.restoreLastDeletedStroke);
-  // presence updates use convexLow.mutation with throttling; see updateUserPresence below
   const leaveSession = useMutation(api.presence.leaveSession);
   const updateLiveStroke = useMutation(api.liveStrokes.updateLiveStroke);
   const clearLiveStroke = useMutation(api.liveStrokes.clearLiveStroke);
@@ -160,7 +164,9 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
   // For viewer state, use user ID if authenticated, otherwise use name as viewer ID
   const viewerId = currentUser.id || currentUser.name;
   const getViewerState = useQuery(api.viewerAcks.getViewerState,
-    sessionId && viewerId && canReadSessionData ? { sessionId, viewerId } : "skip"
+    sessionId && viewerId && canReadSessionData
+      ? { sessionId, viewerId, guestKey: localGuestKey || undefined }
+      : "skip"
   );
 
   const localLastAckedStrokeOrderRef = useRef<number>(0);
@@ -332,8 +338,10 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     }
   }, [sessionId, addStroke, currentUser, localGuestKey]);
 
-  // Stable per-browser id used to key guest presence records (guests have no userId)
-  const presenceGuestId = currentUser.id ? undefined : getClientId();
+  // Opaque id of this browser's own presence row (from updatePresence), used
+  // to filter ourselves out of presence lists. Guests' per-browser client id
+  // is never exposed to other clients.
+  const selfPresenceId = useSelfPresenceId(sessionId);
 
   // Presence throttling and heartbeat
   const presenceIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -365,24 +373,33 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     if (presenceInFlightRef.current) return;
     const payload = pendingPresenceRef.current;
     if (!payload) return;
+    // Presence uses its own low-priority connection; wait until its auth has
+    // settled so a signed-in user's cursor never goes out as anonymous.
+    const presenceClient = getPresenceClient();
+    const presenceAuth = getPresenceAuthState();
+    if (!presenceClient || !presenceAuth.ready) return;
+    if (currentUser.id && !presenceAuth.authenticated) return;
     presenceInFlightRef.current = true;
     try {
-      await convexLow.mutation(api.presence.updatePresence, {
+      const result = await presenceClient.mutation(api.presence.updatePresence, {
         sessionId,
-        userId: currentUser.id || undefined,
         guestId: currentUser.id ? undefined : getClientId(),
         userColor: currentUser.color,
         userName: currentUser.name,
+        guestKey: localGuestKey || undefined,
         ...payload,
       });
+      if (result) {
+        setSelfPresence(sessionId, result);
+      }
       lastPresenceSentAtRef.current = Date.now();
       lastSentPresenceRef.current = payload;
       // Only clear if no newer update was queued while the mutation was in flight
       if (pendingPresenceRef.current === payload) {
         pendingPresenceRef.current = null;
       }
-      // updatePresence is unauthenticated, so this success can't clear an
-      // auth-kind error — reportSyncSuccess gates on the source.
+      // On public sessions presence can succeed without auth, so presence
+      // successes must not clear an auth-kind error — reportSyncSuccess gates on source.
       reportSyncSuccess("presence");
     } catch (e) {
       // Presence is best-effort, but a failure here is the same auth/network
@@ -391,7 +408,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     } finally {
       presenceInFlightRef.current = false;
     }
-  }, [sessionId, currentUser.id, currentUser.color, currentUser.name]);
+  }, [sessionId, currentUser.id, currentUser.color, currentUser.name, localGuestKey]);
 
   // Presence heartbeat every 20s: flush anything queued, or re-send the last
   // position so lastSeen stays fresh and idle users still count as online.
@@ -428,6 +445,19 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     ) => {
       if (!sessionId) return;
 
+      // Nothing changed since the last send: the 20s heartbeat keeps lastSeen
+      // fresh, so don't spend a mutation on it.
+      const last = lastSentPresenceRef.current;
+      if (
+        !pendingPresenceRef.current &&
+        last &&
+        last.cursorX === cursorX &&
+        last.cursorY === cursorY &&
+        last.isDrawing === isDrawing &&
+        last.currentTool === currentTool
+      ) {
+        return;
+      }
       pendingPresenceRef.current = { cursorX, cursorY, isDrawing, currentTool };
 
       const now = Date.now();
@@ -609,10 +639,14 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
       if (!currentSessionId) return;
       const siteUrl = import.meta.env.VITE_CONVEX_SITE_URL;
       if (!siteUrl || typeof navigator.sendBeacon !== "function") return;
+      // The leave token (issued to us by updatePresence) authorizes removing
+      // our own presence row; without it there is nothing to send.
+      const self = getSelfPresence(currentSessionId);
+      if (!self) return;
       const payload = JSON.stringify({
         sessionId: currentSessionId,
-        userId: currentViewerId || undefined,
-        guestId: currentViewerId ? undefined : getClientId(),
+        presenceId: self.presenceId,
+        leaveToken: self.leaveToken,
       });
       // text/plain keeps this a "simple" request (no CORS preflight)
       navigator.sendBeacon(
@@ -625,18 +659,19 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     return () => {
       window.removeEventListener("pagehide", handlePageHide);
       if (currentSessionId) {
+        const currentGuestKey = getGuestKey(currentSessionId) || undefined;
         // Guests identify by their stable client id instead of a user id
-        convexLow.mutation(api.presence.leaveSession, {
+        void leaveSession({
           sessionId: currentSessionId,
-          userId: currentViewerId || undefined,
           guestId: currentViewerId ? undefined : getClientId(),
-        });
+          guestKey: currentGuestKey,
+        }).catch(() => {});
         if (currentViewerId) {
-          removeViewerState({
+          void removeViewerState({
             sessionId: currentSessionId,
             viewerId: currentViewerId,
-            guestKey: getGuestKey(currentSessionId) || undefined,
-          });
+            guestKey: currentGuestKey,
+          }).catch(() => {});
         }
       }
       // Clean up any pending live stroke updates
@@ -691,7 +726,7 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
     presence: presence || [],
     liveStrokes: liveStrokes || [],
     currentUser,
-    presenceGuestId,
+    selfPresenceId,
     undoRedoAvailability,
 
     // Actions

@@ -2,7 +2,8 @@ import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { createUserWithWelcomeTokens } from "./users";
-import { assertCanModifySession } from "./sessionAuth";
+import { assertCanModifySession, canReadSession, keysMatch } from "./sessionAuth";
+import { isPromptTooLong, MAX_PROMPT_LENGTH } from "./tokenPolicy";
 
 /**
  * Create a new painting session
@@ -114,7 +115,8 @@ const sessionObjectValidator = v.object({
  * know whether a guest owner exists.
  */
 function sanitizeSession(session: Doc<"paintingSessions">) {
-  const { guestOwnerKey, ...rest } = session;
+  // Undo/redo bookkeeping is server-internal and not part of the client shape.
+  const { guestOwnerKey, clearHistory: _clearHistory, redoStack: _redoStack, ...rest } = session;
   return { ...rest, hasGuestOwner: !!guestOwnerKey };
 }
 
@@ -158,7 +160,7 @@ export const getSession = query({
     }
 
     // Guest ownership
-    if (session.guestOwnerKey && args.guestKey && session.guestOwnerKey === args.guestKey) {
+    if (session.guestOwnerKey && args.guestKey && keysMatch(session.guestOwnerKey, args.guestKey)) {
       return { status: "ok" as const, session: sanitizeSession(session) };
     }
     return { status: "unauthorized" as const };
@@ -399,6 +401,7 @@ export const purgeDeletedSessions = internalMutation({
         ctx.db.query("paintLayers").withIndex("by_session", (q) => q.eq("sessionId", session._id)),
         ctx.db.query("aiGeneratedImages").withIndex("by_session", (q) => q.eq("sessionId", session._id)),
         ctx.db.query("imageMerges").withIndex("by_session", (q) => q.eq("sessionId", session._id)),
+        ctx.db.query("backgroundRemovals").withIndex("by_session", (q) => q.eq("sessionId", session._id)),
       ];
       for (const query of sessionQueries) {
         const docs = await query.take(PURGE_DOCS_PER_TABLE);
@@ -414,6 +417,29 @@ export const purgeDeletedSessions = internalMutation({
     return null;
   },
 });
+
+// Session-document size guards: an unbounded prompt list or thumbnail could
+// push the session doc to Convex's size limit and make every later patch fail.
+export const MAX_SESSION_PROMPTS = 50;
+export const MAX_THUMBNAIL_URL_LENGTH = 200 * 1024; // ~200 KB as a string
+
+function assertValidThumbnailUrl(url: string) {
+  if (url.length > MAX_THUMBNAIL_URL_LENGTH) {
+    throw new Error("Thumbnail is too large");
+  }
+  const isImageDataUrl = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(url);
+  let isHttpsUrl = false;
+  if (!isImageDataUrl) {
+    try {
+      isHttpsUrl = new URL(url).protocol === "https:";
+    } catch {
+      isHttpsUrl = false;
+    }
+  }
+  if (!isImageDataUrl && !isHttpsUrl) {
+    throw new Error("Thumbnail must be an image data URL or an HTTPS URL");
+  }
+}
 
 /**
  * Update session thumbnail
@@ -431,6 +457,7 @@ export const updateSessionThumbnail = mutation({
     }
 
     await assertCanModifySession(ctx, session, args.guestKey);
+    assertValidThumbnailUrl(args.thumbnailUrl);
 
     await ctx.db.patch(args.sessionId, {
       thumbnailUrl: args.thumbnailUrl,
@@ -456,12 +483,17 @@ export const addAIPrompt = mutation({
 
     await assertCanModifySession(ctx, session, args.guestKey);
 
+    if (isPromptTooLong(args.prompt)) {
+      throw new Error(`Prompt is too long (max ${MAX_PROMPT_LENGTH} characters)`);
+    }
+
     const currentPrompts = session.aiPrompts || [];
-    
-    // Only add if it's not already in the list (avoid duplicates)
+
+    // Only add if it's not already in the list (avoid duplicates). Keep the
+    // most recent MAX_SESSION_PROMPTS so the session document stays bounded.
     if (!currentPrompts.includes(args.prompt)) {
       await ctx.db.patch(args.sessionId, {
-        aiPrompts: [...currentPrompts, args.prompt],
+        aiPrompts: [...currentPrompts, args.prompt].slice(-MAX_SESSION_PROMPTS),
         lastModified: Date.now(),
       });
     }
@@ -479,32 +511,16 @@ export const getAIPrompts = query({
   returns: v.array(v.string()),
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!session) {
+    if (!session || !(await canReadSession(ctx, session, args.guestKey))) {
       return [];
-    }
-    if (!session.isPublic) {
-      const identity = await ctx.auth.getUserIdentity();
-      let authorized = false;
-      if (identity) {
-        const user = await ctx.db
-          .query("users")
-          .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
-          .first();
-        authorized = !!user && session.createdBy === user._id;
-      }
-      if (!authorized) {
-        if (!(session.guestOwnerKey && args.guestKey && session.guestOwnerKey === args.guestKey)) {
-          return [];
-        }
-      }
     }
     return session.aiPrompts || [];
   },
 });
 
 /**
- * Claim ownership of an orphaned session (createdBy is undefined)
- * Assigns to the current authenticated user if no owner is set.
+ * Claim ownership of an orphaned public session (createdBy is undefined).
+ * Assigns to the current authenticated user if no owner or guest key is set.
  */
 export const claimSessionOwnership = mutation({
   args: {
@@ -515,7 +531,8 @@ export const claimSessionOwnership = mutation({
     if (!identity) return;
 
     const session = await ctx.db.get(args.sessionId);
-    if (!session) return;
+    if (!session || session.deletedAt !== undefined) return;
+    if (!session.isPublic) return;
 
     // Only claim if no owner is set
     if (session.createdBy !== undefined) return;
@@ -564,7 +581,7 @@ export const claimGuestSession = mutation({
     if (session.createdBy !== undefined) {
       return user && session.createdBy === user._id ? "already_owned" : "invalid";
     }
-    if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) {
+    if (!session.guestOwnerKey || !keysMatch(session.guestOwnerKey, args.guestKey)) {
       return "invalid";
     }
 
@@ -599,27 +616,12 @@ export const setSessionVisibility = mutation({
   },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!session) throw new Error("Session not found");
-    
-    // If authenticated, require owner
-    const identity = await ctx.auth.getUserIdentity();
-    if (identity) {
-      const user = await ctx.db
-        .query("users")
-        .withIndex("by_auth_id", (q) => q.eq("authId", identity.subject))
-        .first();
-      if (!user) throw new Error("User not found");
-      if (session.createdBy !== user._id) {
-        // Not owner as user, try guest key
-        if (!(session.guestOwnerKey && args.guestKey && session.guestOwnerKey === args.guestKey)) {
-          throw new Error("Only the owner can change visibility");
-        }
-      }
-    } else {
-      // Guest path: validate guest key
-      if (!(session.guestOwnerKey && args.guestKey && session.guestOwnerKey === args.guestKey)) {
-        throw new Error("Only the owner can change visibility");
-      }
+    if (!session || session.deletedAt !== undefined) throw new Error("Session not found");
+
+    try {
+      await assertCanModifySession(ctx, session, args.guestKey, { ownerOnly: true });
+    } catch {
+      throw new Error("Only the owner can change visibility");
     }
 
     await ctx.db.patch(args.sessionId, { isPublic: args.isPublic, lastModified: Date.now() });

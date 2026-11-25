@@ -1,6 +1,18 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
+// Lifecycle of a token-billed AI operation row (aiGenerations, imageMerges,
+// backgroundRemovals). `failed` means the token was refunded; `failed_billed`
+// means the provider had already accepted (and billed) the request, so the
+// token was intentionally not refunded.
+export const aiOperationStatus = v.union(
+  v.literal("pending"),
+  v.literal("processing"),
+  v.literal("completed"),
+  v.literal("failed"),
+  v.literal("failed_billed"),
+);
+
 const schema = defineSchema({
   paintingSessions: defineTable({
     name: v.optional(v.string()),
@@ -23,6 +35,20 @@ const schema = defineSchema({
     // Last action metadata (e.g. for undoing a Clear)
     lastAction: v.optional(v.string()), // e.g., 'clear'
     lastClearBatchId: v.optional(v.string()),
+    // Linear undo history. Clears that are applied (and therefore undoable),
+    // oldest first; `order` is the strokeOrder slot the clear occupies.
+    clearHistory: v.optional(v.array(v.object({
+      batchId: v.string(),
+      order: v.number(),
+    }))),
+    // Redo stack (top = last element). "stroke" entries reference the
+    // deletedStrokes row holding the undone stroke; "clear" entries reference
+    // the clear batch id to re-apply. Any new stroke or clear empties it.
+    redoStack: v.optional(v.array(v.object({
+      kind: v.union(v.literal("stroke"), v.literal("clear")),
+      ref: v.string(),
+      order: v.number(),
+    }))),
     // AI generation prompts history
     aiPrompts: v.optional(v.array(v.string())), // Array of unique prompts used in this session
     // Soft delete: set when the owner deletes the session; hard-deleted by a
@@ -62,6 +88,9 @@ const schema = defineSchema({
     isDrawing: v.boolean(),
     currentTool: v.string(),
     lastSeen: v.number(),
+    // Secret issued to the presence owner at join; authorizes the
+    // unauthenticated sendBeacon leave. Never returned to other clients.
+    leaveToken: v.optional(v.string()),
   }).index("by_session", ["sessionId"])
     .index("by_user_session", ["userId", "sessionId"])
     .index("by_guest_session", ["guestId", "sessionId"]),
@@ -155,7 +184,7 @@ const schema = defineSchema({
     sessionId: v.id("paintingSessions"),
     userId: v.optional(v.string()), // User identity subject
     prompt: v.optional(v.string()), // Made optional to handle existing data
-    status: v.union(v.literal("pending"), v.literal("processing"), v.literal("completed"), v.literal("failed")),
+    status: aiOperationStatus,
     error: v.optional(v.string()),
     errorType: v.optional(v.string()), // Added missing field
     resultImageUrl: v.optional(v.string()),
@@ -216,7 +245,8 @@ const schema = defineSchema({
     clearBatchId: v.optional(v.string()),
   }).index("by_session_deleted", ["sessionId", "deletedAt"])
     .index("by_session_layer_deleted", ["sessionId", "layerId", "deletedAt"])
-    .index("by_session_stroke", ["sessionId", "strokeOrder"]),
+    .index("by_session_stroke", ["sessionId", "strokeOrder"])
+    .index("by_session_clear_batch", ["sessionId", "clearBatchId"]),
 
   // Paint layers for multi-layer painting support
   paintLayers: defineTable({
@@ -307,7 +337,20 @@ const schema = defineSchema({
     secondLayerId: v.string(), // ID of second layer to merge
     controlLayerId: v.optional(v.string()), // Optional control layer ID for controlnet
     mergeMode: v.union(v.literal("full"), v.literal("left_right"), v.literal("top_bottom")),
-    status: v.union(v.literal("pending"), v.literal("processing"), v.literal("completed"), v.literal("failed")),
+    status: aiOperationStatus,
+    error: v.optional(v.string()),
+    resultImageUrl: v.optional(v.string()),
+    replicateId: v.optional(v.string()),
+    createdAt: v.number(),
+  }).index("by_session", ["sessionId"]),
+
+  // Background removal requests: the operation row that keys the token debit,
+  // refunds, and stale-operation sweeps (same lifecycle as aiGenerations).
+  backgroundRemovals: defineTable({
+    sessionId: v.id("paintingSessions"),
+    userId: v.optional(v.string()), // User identity subject
+    targetLayerId: v.optional(v.string()),
+    status: aiOperationStatus,
     error: v.optional(v.string()),
     resultImageUrl: v.optional(v.string()),
     replicateId: v.optional(v.string()),

@@ -262,7 +262,7 @@ export function PaintingView() {
   
   // Removed localLastStrokeInfo - now using lastStrokeInfo from usePaintingSession
 
-  const { session, sessionStatus, createNewSession, presence, currentUser, presenceGuestId, isLoading, clearSession, undoLastStroke, redoLastStroke, strokes: rawStrokes, undoRedoAvailability, lastStrokeInfo } = usePaintingSession(sessionId)
+  const { session, sessionStatus, createNewSession, presence, currentUser, selfPresenceId, isLoading, clearSession, undoLastStroke, redoLastStroke, strokes: rawStrokes, undoRedoAvailability, lastStrokeInfo } = usePaintingSession(sessionId)
   const connectionStatus = useConnectionStatus()
 
   // Only hit session-scoped queries once the session is confirmed accessible;
@@ -1209,7 +1209,7 @@ export function PaintingView() {
         <PresenceStrip
           presence={presence}
           currentUser={currentUser}
-          presenceGuestId={presenceGuestId}
+          selfPresenceId={selfPresenceId}
           connectionStatus={connectionStatus}
         />
       )}
@@ -1221,7 +1221,7 @@ export function PaintingView() {
       {adminFeaturesEnabled && (
         <SessionInfo
           sessionId={sessionId}
-          userCount={activeCollaborators(presence, currentUser.id, presenceGuestId).length + 1}
+          userCount={activeCollaborators(presence, currentUser.id, selfPresenceId).length + 1}
           currentUser={currentUser}
         />
       )}

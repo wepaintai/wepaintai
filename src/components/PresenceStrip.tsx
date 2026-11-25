@@ -11,7 +11,7 @@ interface PresenceStripProps {
     color: string
   }
   /** Stable client id identifying this browser when the user is a guest */
-  presenceGuestId?: string
+  selfPresenceId?: string
   connectionStatus: ConnectionStatus
 }
 
@@ -26,30 +26,30 @@ function initialOf(name: string): string {
 
 /**
  * Presence rows for everyone but the current user, deduped by identity
- * (userId, guestId, or record id as fallback) and limited to recently-active
+ * (userId, or the opaque record id for guests) and limited to recently-active
  * records. Shared so every online count in the UI agrees with the strip.
  */
 export function activeCollaborators(
   presence: UserPresence[],
   currentUserId: Id<'users'> | null,
-  presenceGuestId?: string
+  selfPresenceId?: string
 ): UserPresence[] {
   const now = Date.now()
   const isSelf = (p: UserPresence) =>
-    currentUserId ? p.userId === currentUserId : !!presenceGuestId && p.guestId === presenceGuestId
+    currentUserId ? p.userId === currentUserId : !!selfPresenceId && p._id === selfPresenceId
   const seen = new Set<string>()
   return presence.filter((p) => {
     if (isSelf(p)) return false
     if (now - p.lastSeen > ACTIVE_WINDOW_MS) return false
-    const key = p.userId?.toString() || p.guestId || p._id.toString()
+    const key = p.userId?.toString() || p._id.toString()
     if (seen.has(key)) return false
     seen.add(key)
     return true
   })
 }
 
-export function PresenceStrip({ presence, currentUser, presenceGuestId, connectionStatus }: PresenceStripProps) {
-  const collaborators = activeCollaborators(presence, currentUser.id, presenceGuestId)
+export function PresenceStrip({ presence, currentUser, selfPresenceId, connectionStatus }: PresenceStripProps) {
+  const collaborators = activeCollaborators(presence, currentUser.id, selfPresenceId)
 
   const onlineCount = collaborators.length + 1
   const maxDots = 5

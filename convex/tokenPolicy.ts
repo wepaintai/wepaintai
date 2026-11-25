@@ -33,3 +33,11 @@ export function assertValidTokenBalance(balance: number): number {
   }
   return balance
 }
+
+// Server-side cap on AI prompt length (generation actions and stored prompt
+// history). Keeps provider requests and session/user documents bounded.
+export const MAX_PROMPT_LENGTH = 2000
+
+export function isPromptTooLong(prompt: string): boolean {
+  return prompt.length > MAX_PROMPT_LENGTH
+}

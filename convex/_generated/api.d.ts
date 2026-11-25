@@ -9,6 +9,7 @@
  */
 
 import type * as aiGeneration from "../aiGeneration.js";
+import type * as aiOperations from "../aiOperations.js";
 import type * as auth from "../auth.js";
 import type * as backgroundRemoval from "../backgroundRemoval.js";
 import type * as crons from "../crons.js";
@@ -30,6 +31,7 @@ import type * as polarReconcile from "../polarReconcile.js";
 import type * as polarWebhook from "../polarWebhook.js";
 import type * as presence from "../presence.js";
 import type * as previewSeed from "../previewSeed.js";
+import type * as replicate from "../replicate.js";
 import type * as sessionAuth from "../sessionAuth.js";
 import type * as strokes from "../strokes.js";
 import type * as tokenPolicy from "../tokenPolicy.js";
@@ -47,6 +49,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   aiGeneration: typeof aiGeneration;
+  aiOperations: typeof aiOperations;
   auth: typeof auth;
   backgroundRemoval: typeof backgroundRemoval;
   crons: typeof crons;
@@ -68,6 +71,7 @@ declare const fullApi: ApiFromModules<{
   polarWebhook: typeof polarWebhook;
   presence: typeof presence;
   previewSeed: typeof previewSeed;
+  replicate: typeof replicate;
   sessionAuth: typeof sessionAuth;
   strokes: typeof strokes;
   tokenPolicy: typeof tokenPolicy;

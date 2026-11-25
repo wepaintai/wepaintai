@@ -1,185 +1,176 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { action } from "./_generated/server";
-import { api, internal } from "./_generated/api";
+import { internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
+import {
+  BILLED_FAILURE_NOTE,
+  REFUNDED_FAILURE_NOTE,
+  cancelPrediction,
+  createPrediction,
+  extractOutputUrl,
+  isModerationError,
+  pollPrediction,
+} from "./replicate";
 
+// User-facing failures are thrown as ConvexError so their message reaches the
+// client even where plain server errors are redacted to "Server Error".
 export const removeBackground = action({
   args: {
     sessionId: v.id("paintingSessions"),
     imageData: v.string(),
     targetLayerId: v.optional(v.string()),
+    guestKey: v.optional(v.string()),
   },
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ success: true; imageUrl: string; storageId: Id<"_storage"> }> => {
     console.log("[BG-REMOVAL] Starting background removal process");
 
-    // Get the session to check ownership
-    const sessionResult = await ctx.runQuery(api.paintingSessions.getSession, {
+    const access = await ctx.runQuery(internal.sessionAuth.verifySessionAccess, {
       sessionId: args.sessionId,
+      guestKey: args.guestKey,
+      requireAuth: true,
     });
 
-    if (sessionResult.status === "not_found") {
-      throw new Error("Session not found");
+    if (access.status === "not_found") {
+      throw new ConvexError("Session not found");
     }
-    if (sessionResult.status !== "ok") {
-      throw new Error("You don't have permission to edit this painting");
+    if (access.status === "unauthenticated") {
+      throw new ConvexError("Authentication required for background removal");
     }
-    const session = sessionResult.session;
-
-    // Check authentication
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      throw new Error("Authentication required for background removal");
+    if (access.status !== "ok") {
+      throw new ConvexError("You don't have permission to edit this painting");
     }
 
-    const userId = identity.subject;
-
-    // Check if user owns the session (createdBy is optional, so also check if session is public)
-    if (session.createdBy && session.createdBy !== userId) {
-      throw new Error("You don't have permission to edit this painting");
-    }
-
-    // Check if user has enough tokens (1 token per background removal)
-    const hasTokens = await ctx.runQuery(internal.tokens.hasEnoughTokensForOperation, {
-      operationType: "background-removal",
-    });
-    
-    if (!hasTokens) {
-      throw new Error("Insufficient tokens. Background removal costs 1 token.");
-    }
-
-    // Get Replicate API token from environment
+    // Get Replicate API token from environment before reserving tokens
     const replicateToken = process.env.REPLICATE_API_TOKEN;
     if (!replicateToken) {
-      throw new Error("Replicate API token not configured");
+      throw new ConvexError("Replicate API token not configured");
     }
 
-    try {
-      console.log("[BG-REMOVAL] Running Replicate model...");
-      
-      // Create prediction using Replicate API
-      const requestBody = {
-        version: "a029dff38972b5fda4ec5d75d7d1cd25aeff621d2cf4946a41055d7db66b80bc",
-        input: {
-          image: args.imageData,
-        }
-      };
+    // Insert the operation row and reserve 1 token atomically BEFORE any
+    // provider spending. Users without tokens never get a row.
+    const begin = await ctx.runMutation(internal.aiOperations.beginOperation, {
+      sessionId: args.sessionId,
+      guestKey: args.guestKey,
+      operation: { type: "background-removal", targetLayerId: args.targetLayerId },
+    });
+    if (begin.status === "insufficient_tokens") {
+      throw new ConvexError("Insufficient tokens. Background removal costs 1 token.");
+    }
+    if (begin.status === "unauthenticated") {
+      throw new ConvexError("Authentication required for background removal");
+    }
+    if (begin.status !== "ok") {
+      throw new ConvexError("You don't have permission to edit this painting");
+    }
+    const operationId = begin.operationId;
 
-      const response = await fetch("https://api.replicate.com/v1/predictions", {
-        method: "POST",
-        headers: {
-          "Authorization": `Token ${replicateToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(requestBody),
-      });
-
-      if (!response.ok) {
-        const error = await response.text();
-        console.error("[BG-REMOVAL] Replicate API error:", error);
-        throw new Error("Failed to start background removal");
-      }
-
-      const prediction = await response.json();
-      console.log("[BG-REMOVAL] Created prediction:", prediction);
-
-      // Poll for completion
-      let attempts = 0;
-      const maxAttempts = parseInt(process.env.REPLICATE_TIMEOUT_SECONDS || "180"); // Default 180 seconds timeout
-      let output: any;
-
-      while (attempts < maxAttempts) {
-        const statusResponse = await fetch(
-          `https://api.replicate.com/v1/predictions/${prediction.id}`,
-          {
-            headers: {
-              "Authorization": `Token ${replicateToken}`,
-            },
-          }
-        );
-
-        if (!statusResponse.ok) {
-          throw new Error("Failed to check prediction status");
-        }
-
-        const status = await statusResponse.json();
-        console.log(`[BG-REMOVAL] Status after ${attempts} attempts:`, status.status);
-
-        if (status.status === "succeeded") {
-          output = status.output;
-          console.log("[BG-REMOVAL] Model output:", output);
-          break;
-        } else if (status.status === "failed") {
-          throw new Error(status.error || "Background removal failed");
-        }
-
-        // Wait 1 second before polling again
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        attempts++;
-      }
-
-      if (!output) {
-        throw new Error("Background removal timed out");
-      }
-
-      // Handle the output URL (similar to AI generation)
-      let outputUrl: string;
-      if (Array.isArray(output)) {
-        if (output.length > 10 && output.every(char => typeof char === 'string' && char.length === 1)) {
-          // Handle character array bug
-          outputUrl = output.join('');
-          console.log("[BG-REMOVAL] Fixed character array URL:", outputUrl);
-        } else if (typeof output[0] === 'string') {
-          outputUrl = output[0];
-        } else {
-          throw new Error("Unexpected output format from Replicate");
-        }
-      } else if (typeof output === 'string') {
-        outputUrl = output;
-      } else {
-        throw new Error("Unexpected output format from Replicate");
-      }
-
-      // Store the image in Convex storage
-      console.log("[BG-REMOVAL] Fetching image from URL:", outputUrl);
-      const imageResponse = await fetch(outputUrl);
-      
-      if (!imageResponse.ok) {
-        throw new Error(`Failed to fetch generated image: ${imageResponse.statusText}`);
-      }
-
-      const imageBlob = await imageResponse.blob();
-      const storageId = await ctx.storage.store(imageBlob);
-      const storageUrl = await ctx.storage.getUrl(storageId);
-
-      if (!storageUrl) {
-        throw new Error("Failed to get storage URL");
-      }
-
-      // Deduct token
-      await ctx.runMutation(internal.tokens.consumeTokensForOperation, {
-        operationId: crypto.randomUUID(),
+    const fail = async (error: string, outcome: "refund" | "billed"): Promise<never> => {
+      await ctx.runMutation(internal.aiOperations.failOperation, {
         operationType: "background-removal",
-        sessionId: args.sessionId,
-        targetLayerId: args.targetLayerId,
+        operationId,
+        outcome,
+        error,
       });
+      const note = outcome === "billed" ? BILLED_FAILURE_NOTE : REFUNDED_FAILURE_NOTE;
+      throw new ConvexError(`${error} ${note}`);
+    };
+
+    console.log("[BG-REMOVAL] Running Replicate model...");
+    const created = await createPrediction(replicateToken, {
+      version: "a029dff38972b5fda4ec5d75d7d1cd25aeff621d2cf4946a41055d7db66b80bc",
+      input: {
+        image: args.imageData,
+      },
+    });
+    if (created.kind === "rejected") {
+      console.error("[BG-REMOVAL] Replicate rejected the request:", created.httpStatus, created.message);
+      return await fail("Failed to start background removal.", "refund");
+    }
+    const predictionId = created.id;
+
+    let storedId: Id<"_storage"> | null = null;
+    try {
+      // From here on the provider has accepted (and bills) the request.
+      await ctx.runMutation(internal.aiOperations.markOperationProcessing, {
+        operationType: "background-removal",
+        operationId,
+        replicateId: predictionId,
+      });
+
+      const result = await pollPrediction(replicateToken, predictionId);
+      if (result.kind === "timeout" || result.kind === "poll_error") {
+        if (result.kind === "poll_error") console.error("[BG-REMOVAL] Status polling failed:", result.message);
+        await cancelPrediction(replicateToken, predictionId);
+        return await fail("Background removal timed out and was canceled.", "billed");
+      }
+      if (result.kind === "failed") {
+        const message = isModerationError(result.error)
+          ? "Content moderation flagged this image. Please try a different image."
+          : `Background removal failed: ${result.error}.`;
+        return await fail(message, "billed");
+      }
+
+      const outputUrl = extractOutputUrl(result.output);
+      if (!outputUrl) {
+        return await fail("Unexpected output format from Replicate.", "billed");
+      }
+
+      // The provider succeeded; failing to fetch/store its output is billed.
+      let storageUrl: string | null = null;
+      try {
+        const imageResponse = await fetch(outputUrl);
+        if (!imageResponse.ok) {
+          throw new Error(`Failed to fetch generated image: ${imageResponse.statusText}`);
+        }
+        storedId = await ctx.storage.store(await imageResponse.blob());
+        storageUrl = await ctx.storage.getUrl(storedId);
+      } catch (error) {
+        console.error("[BG-REMOVAL] Failed to store result:", error);
+      }
+      if (!storedId || !storageUrl) {
+        if (storedId) await ctx.storage.delete(storedId).catch(() => {});
+        return await fail("Failed to save the background-removed image.", "billed");
+      }
+
+      const completion = await ctx.runMutation(internal.aiOperations.completeOperation, {
+        operationType: "background-removal",
+        operationId,
+        resultImageUrl: storageUrl,
+        guestKey: args.guestKey,
+      });
+      if (completion !== "completed") {
+        await ctx.storage.delete(storedId).catch(() => {});
+        throw new ConvexError(
+          completion === "access_lost"
+            ? "You no longer have access to this painting, so the result was discarded."
+            : "This background removal was already finalized.",
+        );
+      }
 
       console.log("[BG-REMOVAL] Background removal successful");
-      
       return {
         success: true as const,
         imageUrl: storageUrl,
-        storageId,
+        storageId: storedId,
       };
     } catch (error) {
-      console.error("[BG-REMOVAL] Error:", error);
-      
-      if (error instanceof Error) {
-        if (error.message.includes("E005")) {
-          throw new Error("Content moderation flagged this image. Please try a different image.");
-        }
-        throw error;
+      // fail() and the completion branch throw user-facing errors after
+      // settling the row; anything else is unexpected and post-acceptance.
+      const settled = await ctx.runMutation(internal.aiOperations.failOperation, {
+        operationType: "background-removal",
+        operationId,
+        outcome: "billed",
+        error: error instanceof Error ? error.message : "Background removal failed",
+      });
+      if (settled.status === "failed_billed") {
+        await cancelPrediction(replicateToken, predictionId);
+        console.error("[BG-REMOVAL] Error:", error);
+        throw new ConvexError(`Failed to remove background. ${BILLED_FAILURE_NOTE}`);
       }
-      
-      throw new Error("Failed to remove background");
+      throw error;
     }
   },
 });

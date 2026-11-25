@@ -5,6 +5,7 @@ import { api } from '../../convex/_generated/api'
 import type { Id } from '../../convex/_generated/dataModel'
 import type { Layer } from './ToolPanel'
 import { getErrorMessage } from '../utils/errorMessage'
+import { getGuestKey } from '../utils/guestKey'
 
 interface BackgroundRemovalModalProps {
   isOpen: boolean
@@ -91,7 +92,8 @@ export function BackgroundRemovalModal({
       const result = await removeBackground({
         sessionId,
         imageData,
-        targetLayerId: selectedLayerId
+        targetLayerId: selectedLayerId,
+        guestKey: getGuestKey(sessionId) || undefined,
       })
       
       if (result.success && result.imageUrl) {

@@ -1,7 +1,6 @@
 import { mutation, query, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
-import { Id } from "./_generated/dataModel";
-import { assertCanModifySession } from "./sessionAuth";
+import { assertCanModifySession, canReadSession } from "./sessionAuth";
 
 /**
  * Upsert (update or insert) the acknowledged stroke order for a viewer in a session.
@@ -52,6 +51,7 @@ export const getViewerState = query({
   args: {
     sessionId: v.id("paintingSessions"),
     viewerId: v.string(), // Client-generated viewer ID
+    guestKey: v.optional(v.string()),
   },
   returns: v.union(
     v.object({
@@ -64,6 +64,10 @@ export const getViewerState = query({
     v.null()
   ),
   handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!(await canReadSession(ctx, session, args.guestKey))) {
+      return null;
+    }
     const state = await ctx.db
       .query("viewerStates")
       .withIndex("by_session_viewer", (q) =>
@@ -80,6 +84,7 @@ export const getViewerState = query({
 export const getAllViewerStatesForSession = query({
   args: {
     sessionId: v.id("paintingSessions"),
+    guestKey: v.optional(v.string()),
   },
   returns: v.array(
     v.object({
@@ -91,6 +96,10 @@ export const getAllViewerStatesForSession = query({
     })
   ),
   handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!(await canReadSession(ctx, session, args.guestKey))) {
+      return [];
+    }
     return await ctx.db
       .query("viewerStates")
       .withIndex("by_session_viewer", (q) => q.eq("sessionId", args.sessionId))
