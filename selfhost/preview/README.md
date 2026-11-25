@@ -222,8 +222,11 @@ org-admin rights or `sudo` on the mini):
    *selected workflows*:
    `wepaintai/wepaintai/.github/workflows/deploy-preview.yml@refs/heads/main`
    and `.../cleanup-preview.yml@refs/heads/main`. Because both workflows now
-   run from `main`, that restriction leaves previews working while refusing
-   any other workflow file (including a fork's) on the mini.
+   run from `main` (`pull_request_target`, `workflow_dispatch`), that
+   restriction should leave previews working while refusing any other
+   workflow file (including a fork's) on the mini. Confirm the exact
+   workflow-ref format GitHub expects when configuring the group, then open a
+   test PR and check that its preview still deploys.
 2. Run the runner as a **dedicated unprivileged macOS user**, separate from
    the production user, with no read access to `~/apps/wepaintai/.env*`,
    `~/Backups/`, `~/.cloudflared/`, or the production Docker context.
