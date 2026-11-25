@@ -28,7 +28,9 @@ const {
   mockConvexClient,
   p2pInstances,
   presenceState,
+  queryArgs,
 } = vi.hoisted(() => ({
+  queryArgs: new Map<string, unknown>(),
   activeSubscriptions: new Map<string, number>(),
   mutationMockMap: new Map<string, ReturnType<typeof vi.fn>>(),
   queryResponseMap: new Map<string, unknown>(),
@@ -89,6 +91,7 @@ vi.mock('convex/react', async () => {
         }
       }, [name, isActive])
       if (!isActive) return undefined
+      queryArgs.set(name, args)
       const response = queryResponseMap.get(name)
       return typeof response === 'function' ? response(args) : response
     },
@@ -139,6 +142,7 @@ import {
 } from './PaintingEditorContext'
 import type { AISessionImage, UploadedSessionImage } from '../hooks/useSessionImages'
 import { useP2PMetrics, useRemoteCursors } from '../lib/webrtc/p2pLiveStore'
+import { removeEditKey, setEditKey } from '../utils/guestKey'
 
 // Minimal DOM shim so react-dom/client's createRoot + act() run hooks and effects
 // cleanly inside Vitest's edge-runtime environment without adding jsdom.
@@ -394,6 +398,8 @@ describe('PaintingEditorContext deduplication & single-lifecycle invariants', ()
     mockConvexClient.mutation.mockClear()
     mockConvexClient.query.mockClear()
     presenceState.self.clear()
+    queryArgs.clear()
+    removeEditKey('session_abc')
     presenceState.authenticated = true
     presenceState.mutation = vi.fn(async () => ({
       presenceId: 'pres_self',
@@ -848,6 +854,307 @@ describe('PaintingEditorContext deduplication & single-lifecycle invariants', ()
     expect(renders.host).toBe(afterCursors.host)
     expect(renders.consumer).toBe(afterCursors.consumer)
     expect(renders.cursorLayer).toBe(afterCursors.cursorLayer)
+
+    unmount()
+  })
+
+  function liveManagers() {
+    return p2pInstances.filter((m) => m.destroy.mock.calls.length === 0)
+  }
+
+  function mutationArgs(ref: unknown): Record<string, unknown>[] {
+    const mock = mutationMockMap.get(fnKey(ref))
+    return (mock?.mock.calls ?? []).map((call) => call[0] as Record<string, unknown>)
+  }
+
+  test('under React.StrictMode: one subscription per query, one live P2PManager, and no leave on the simulated remount', () => {
+    seedAccessibleSession({ authenticated: true })
+    // Our presence row already exists (e.g. established on a previous render)
+    presenceState.self.set(sessionId, { presenceId: 'pres_self', leaveToken: 'leave-token' })
+
+    let editor: PaintingEditorContextValue | null = null
+    function Consumer() {
+      usePaintingEditor()
+      return null
+    }
+    function Harness() {
+      editor = usePaintingEditorController({ sessionId })
+      return React.createElement(
+        PaintingEditorProvider,
+        { value: editor },
+        React.createElement(Consumer)
+      )
+    }
+
+    const { unmount } = mountTree(
+      React.createElement(React.StrictMode, null, React.createElement(Harness))
+    )
+    act(() => {
+      vi.advanceTimersByTime(0)
+    })
+
+    for (const ref of [
+      api.auth.getCurrentUser,
+      api.paintingSessions.getSession,
+      api.strokes.getSessionStrokes,
+      api.presence.getSessionPresence,
+      api.strokes.getUndoRedoAvailability,
+      api.viewerAcks.getViewerState,
+      api.images.getSessionImages,
+      api.paintLayers.getPaintLayers,
+    ]) {
+      expect(activeSubscriptions.get(fnKey(ref))).toBe(1)
+    }
+    expect(activeSubscriptions.size).toBe(8)
+
+    // StrictMode mounts effects twice; exactly one manager is left alive and
+    // it is the one the editor sends through.
+    expect(liveManagers()).toHaveLength(1)
+    act(() => {
+      liveManagers()[0].options.onPeerConnected?.('peer_42')
+    })
+    act(() => {
+      editor!.p2p.sendStrokePoint('stroke-1234', 0.1, 0.2, 0.5)
+    })
+    expect(liveManagers()[0].sendPacket).toHaveBeenCalledTimes(1)
+
+    expect(windowListeners.get('pagehide')?.size).toBe(1)
+    // The simulated unmount/remount must not leave the session
+    expect(mutationMockMap.get(fnKey(api.presence.leaveSession))?.mock.calls.length ?? 0).toBe(0)
+    expect(mutationMockMap.get(fnKey(api.viewerAcks.removeViewerState))?.mock.calls.length ?? 0).toBe(0)
+
+    unmount()
+    act(() => {
+      vi.advanceTimersByTime(0)
+    })
+    expect(liveManagers()).toHaveLength(0)
+    expect(mutationArgs(api.presence.leaveSession)).toHaveLength(1)
+    expect(mutationArgs(api.viewerAcks.removeViewerState)).toHaveLength(1)
+  })
+
+  test('a transient return to loading (e.g. the guest-key claim re-running getSession) does not leave the session', () => {
+    seedAccessibleSession({ authenticated: true })
+    presenceState.self.set(sessionId, { presenceId: 'pres_self', leaveToken: 'leave-token' })
+    const sessionResult = queryResponseMap.get(fnKey(api.paintingSessions.getSession))
+
+    let editor: PaintingEditorContextValue | null = null
+    function Harness({ tick }: { tick: number }) {
+      void tick
+      editor = usePaintingEditorController({ sessionId })
+      return null
+    }
+    const { rerender, unmount } = mountTree(React.createElement(Harness, { tick: 0 }))
+    expect(editor!.sessionStatus).toBe('ok')
+
+    // getSession args change -> result briefly undefined -> 'loading'
+    queryResponseMap.set(fnKey(api.paintingSessions.getSession), undefined)
+    rerender(React.createElement(Harness, { tick: 1 }))
+    expect(editor!.sessionStatus).toBe('loading')
+    act(() => {
+      vi.advanceTimersByTime(10)
+    })
+
+    queryResponseMap.set(fnKey(api.paintingSessions.getSession), sessionResult)
+    rerender(React.createElement(Harness, { tick: 2 }))
+    act(() => {
+      vi.advanceTimersByTime(10)
+    })
+    expect(editor!.sessionStatus).toBe('ok')
+
+    expect(mutationArgs(api.presence.leaveSession)).toHaveLength(0)
+    expect(mutationArgs(api.viewerAcks.removeViewerState)).toHaveLength(0)
+    expect(presenceState.self.get(sessionId)).toBeTruthy()
+
+    // A real session change does leave the previous session
+    unmount()
+    act(() => {
+      vi.advanceTimersByTime(0)
+    })
+    expect(mutationArgs(api.presence.leaveSession)).toEqual([
+      expect.objectContaining({ sessionId }),
+    ])
+  })
+
+  test('edit-link collaborator: every editor query/mutation carries editKey as its own argument', async () => {
+    seedAccessibleSession({ authenticated: true })
+    setEditKey(sessionId, 'edit-secret')
+    queryResponseMap.set(fnKey(api.paintingSessions.getSession), {
+      status: 'ok',
+      canEdit: true,
+      isOwner: false,
+      session: {
+        _id: sessionId,
+        _creationTime: 1,
+        name: 'Shared Painting',
+        createdBy: 'someone_else' as Id<'users'>,
+        hasGuestOwner: false,
+        isPublic: false,
+        canvasWidth: 800,
+        canvasHeight: 600,
+        strokeCounter: 2,
+      },
+    })
+    // Empty session: the editor must create the default layer with editKey
+    queryResponseMap.set(fnKey(api.paintLayers.getPaintLayers), [])
+
+    let editor: PaintingEditorContextValue | null = null
+    function Harness() {
+      editor = usePaintingEditorController({ sessionId })
+      return null
+    }
+    const { unmount } = mountTree(React.createElement(Harness))
+
+    expect(editor!.canEdit).toBe(true)
+    expect(editor!.isOwner).toBe(false)
+    expect(editor!.editKey).toBe('edit-secret')
+    expect(editor!.guestKey).toBeUndefined()
+
+    for (const ref of [
+      api.paintingSessions.getSession,
+      api.strokes.getSessionStrokes,
+      api.presence.getSessionPresence,
+      api.images.getSessionImages,
+      api.paintLayers.getPaintLayers,
+    ]) {
+      expect(queryArgs.get(fnKey(ref))).toMatchObject({ sessionId, editKey: 'edit-secret' })
+    }
+
+    expect(mutationArgs(api.paintLayers.ensureDefaultPaintLayer)).toEqual([
+      expect.objectContaining({ sessionId, editKey: 'edit-secret' }),
+    ])
+    expect(liveManagers()).toHaveLength(1)
+    expect(liveManagers()[0].options.editKey).toBe('edit-secret')
+
+    await act(async () => {
+      await editor!.createPaintLayer('Layer 2')
+      await editor!.updatePaintLayer({ layerId: 'paint_1' as Id<'paintLayers'>, opacity: 0.5 })
+      await editor!.reorderLayer('paint_1', 1)
+      await editor!.updateImageTransform('upload_1' as Id<'uploadedImages'>, { x: 5 })
+      await editor!.updateAIImageTransform('ai_1' as Id<'aiGeneratedImages'>, { x: 6 })
+      await editor!.addAIGeneratedImage({
+        storageId: 'storage_ai' as Id<'_storage'>,
+        width: 512,
+        height: 512,
+      })
+      // Owner-only: a collaborator never sends the hard delete
+      await editor!.deletePaintLayer('paint_1' as Id<'paintLayers'>)
+    })
+
+    for (const ref of [
+      api.paintLayers.createPaintLayer,
+      api.paintLayers.updatePaintLayer,
+      api.layers.reorderLayer,
+      api.images.updateImageTransform,
+      api.images.updateAIImageTransform,
+      api.images.addAIGeneratedImage,
+    ]) {
+      expect(mutationArgs(ref)).toEqual([expect.objectContaining({ editKey: 'edit-secret' })])
+    }
+    // storageId (AUD-010's blob binding) is passed through untouched
+    expect(mutationArgs(api.images.addAIGeneratedImage)[0]).toMatchObject({
+      sessionId,
+      storageId: 'storage_ai',
+    })
+    expect(mutationArgs(api.paintLayers.deletePaintLayer)).toHaveLength(0)
+
+    unmount()
+  })
+
+  test('read-only viewer: no P2P, no default-layer creation, no presence heartbeat, no writes', async () => {
+    seedAccessibleSession({ authenticated: true })
+    queryResponseMap.set(fnKey(api.paintingSessions.getSession), {
+      status: 'ok',
+      canEdit: false,
+      isOwner: false,
+      session: {
+        _id: sessionId,
+        _creationTime: 1,
+        name: 'Public Painting',
+        createdBy: 'someone_else' as Id<'users'>,
+        hasGuestOwner: false,
+        isPublic: true,
+        canvasWidth: 800,
+        canvasHeight: 600,
+        strokeCounter: 2,
+      },
+    })
+    queryResponseMap.set(fnKey(api.paintLayers.getPaintLayers), [])
+
+    let editor: PaintingEditorContextValue | null = null
+    function Harness() {
+      editor = usePaintingEditorController({ sessionId })
+      return null
+    }
+    const setIntervalSpy = vi.spyOn(globalThis, 'setInterval')
+    const { unmount } = mountTree(React.createElement(Harness))
+
+    expect(editor!.sessionReady).toBe(true)
+    expect(editor!.canEdit).toBe(false)
+    expect(p2pInstances).toHaveLength(0)
+    expect(mutationArgs(api.paintLayers.ensureDefaultPaintLayer)).toHaveLength(0)
+    expect(setIntervalSpy.mock.calls.filter(([, ms]) => ms === 20000)).toHaveLength(0)
+
+    await act(async () => {
+      expect(await editor!.createPaintLayer('Layer 2')).toBeUndefined()
+      await editor!.reorderLayer('paint_1', 1)
+      await editor!.updateUserPresence(1, 2, false, 'brush')
+    })
+    expect(mutationArgs(api.paintLayers.createPaintLayer)).toHaveLength(0)
+    expect(mutationArgs(api.layers.reorderLayer)).toHaveLength(0)
+    expect(presenceState.mutation).not.toHaveBeenCalled()
+
+    unmount()
+    setIntervalSpy.mockRestore()
+  })
+
+  test("a replaced P2PManager's late peer-disconnect or packet never touches the live manager's peers", () => {
+    seedAccessibleSession({ authenticated: true })
+    queryResponseMap.set(fnKey(api.presence.getSessionPresence), [peerPresenceRow('peer_42')])
+    setEditKey(sessionId, 'edit-v1')
+
+    let editor: PaintingEditorContextValue | null = null
+    function Harness() {
+      editor = usePaintingEditorController({ sessionId })
+      return null
+    }
+    const { unmount } = mountTree(React.createElement(Harness))
+    const first = liveManagers()[0]
+    act(() => {
+      first.options.onPeerConnected?.('peer_42')
+    })
+    expect(editor!.p2p.isConnected).toBe(true)
+
+    // Rotating the edit key restarts P2P with a new manager
+    act(() => {
+      setEditKey(sessionId, 'edit-v2')
+    })
+    expect(first.destroy).toHaveBeenCalledTimes(1)
+    const second = liveManagers()[0]
+    expect(second).not.toBe(first)
+    expect(second.options.editKey).toBe('edit-v2')
+    act(() => {
+      second.options.onPeerConnected?.('peer_42')
+    })
+
+    // The old manager's channel closes late, after it was destroyed
+    act(() => {
+      first.options.onPeerDisconnected?.('peer_42')
+      first.options.onPacketReceived?.('peer_42', { t: 'cu', x: 0.5, y: 0.5, drawing: false })
+    })
+    expect(editor!.p2p.isConnected).toBe(true)
+    expect(editor!.p2p.liveStore.cursors.get().size).toBe(0)
+
+    // ...so sends still go out through the live manager
+    act(() => {
+      editor!.p2p.sendCursorPosition(0.1, 0.1, false)
+    })
+    expect(second.sendCursorPacket).toHaveBeenCalledTimes(1)
+
+    // The live manager's own disconnect still works
+    act(() => {
+      second.options.onPeerDisconnected?.('peer_42')
+    })
+    expect(editor!.p2p.isConnected).toBe(false)
 
     unmount()
   })
