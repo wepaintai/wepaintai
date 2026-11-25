@@ -9,11 +9,18 @@ containers. See [`preview/README.md`](preview/README.md); previews must never
 point at this production deployment.
 
 ```
-Internet ──▶ Cloudflare Tunnel ──▶ app.YOUR_DOMAIN         → localhost:3000 (node server)
-                                 ├▶ convex.YOUR_DOMAIN      → localhost:3210 (Convex API/WS)
-                                 └▶ convex-site.YOUR_DOMAIN → localhost:3211 (HTTP actions/webhooks)
-LAN only:                           localhost:6791          (Convex dashboard)
+Internet ──▶ Cloudflare Tunnel ──▶ app.YOUR_DOMAIN         → 127.0.0.1:3000 (node server)
+                                 ├▶ convex.YOUR_DOMAIN      → 127.0.0.1:3210 (Convex API/WS)
+                                 └▶ convex-site.YOUR_DOMAIN → 127.0.0.1:3211 (HTTP actions/webhooks)
+Loopback only:                      127.0.0.1:6791          (Convex dashboard, via ssh -L)
 ```
+
+Every service binds to `127.0.0.1` only (`start-app.sh` sets `HOST=127.0.0.1`;
+Docker publishes on `CONVEX_BIND_HOST=127.0.0.1`), so the tunnel config must
+target `127.0.0.1`, not `localhost` (which may resolve to `::1`). Nothing is
+reachable from the LAN. After changing `~/.cloudflared/config.yml`, restart
+cloudflared and verify `https://app.YOUR_DOMAIN/` and
+`https://convex-site.YOUR_DOMAIN/health` respond.
 
 > **Repo location on the mini**: clone to `~/apps/wepaintai`, NOT under
 > `~/Documents` — macOS TCC blocks launchd agents from reading
@@ -22,7 +29,13 @@ LAN only:                           localhost:6791          (Convex dashboard)
 
 ## 1. Prerequisites
 
-- Docker Desktop or OrbStack running
+- Docker Desktop or OrbStack running, **and configured to start at login**.
+  In Docker Desktop: Settings → General → enable "Start Docker Desktop when
+  you sign in to your computer". Production was down for months because this
+  was off (`AutoStart=false`) and Docker never came back after a reboot. The
+  compose services use `restart: unless-stopped`, so they come back on their
+  own once the Docker engine is running. After any reboot, check
+  `docker ps` shows `selfhost-backend-1` healthy.
 - Node via nvm, pnpm via corepack (already set up if you can `pnpm build`)
 - A domain on Cloudflare
 - `brew install cloudflared`
@@ -37,7 +50,18 @@ docker compose exec backend ./generate_admin_key.sh   # save this key!
 ```
 
 Then create `selfhost/.env.convex` from `.env.convex.example` with the URL and
-admin key. The dashboard is at http://localhost:6791 (login with the admin key).
+admin key. The dashboard is at http://127.0.0.1:6791 on the mini (login with the
+admin key). It is bound to loopback only; from another machine, tunnel both the
+dashboard and the API it talks to:
+
+```bash
+ssh -L 6791:127.0.0.1:6791 -L 3210:127.0.0.1:3210 <mini>
+# then open http://127.0.0.1:6791 locally
+```
+
+The images are pinned by digest in `docker-compose.yml`
+(`ghcr.io/convex/convex-backend`, `ghcr.io/convex/convex-dashboard`; the old
+`ghcr.io/get-convex/*` paths now return 403).
 
 ## 3. Deploy the Convex functions
 
@@ -91,7 +115,8 @@ VITE_CONVEX_URL=https://convex.YOUR_DOMAIN
 
 ```bash
 pnpm build
-cp selfhost/launchd/com.wepaintai.app.plist ~/Library/LaunchAgents/
+sed "s|/Users/YOUR_USER|$HOME|g" selfhost/launchd/com.wepaintai.app.plist \
+  > ~/Library/LaunchAgents/com.wepaintai.app.plist
 launchctl load ~/Library/LaunchAgents/com.wepaintai.app.plist
 ```
 
@@ -101,13 +126,28 @@ Logs: `/tmp/wepaintai-app.log`. Redeploy after changes:
 ## 7. Nightly backups
 
 ```bash
-cp selfhost/launchd/com.wepaintai.backup.plist ~/Library/LaunchAgents/
+sed "s|/Users/YOUR_USER|$HOME|g" selfhost/launchd/com.wepaintai.backup.plist \
+  > ~/Library/LaunchAgents/com.wepaintai.backup.plist
 launchctl load ~/Library/LaunchAgents/com.wepaintai.backup.plist
 ```
 
 Exports (tables + file storage) land in `~/Backups/wepaintai/selfhosted/`
 at 03:30 nightly, keeping the last 14. Test manually: `selfhost/bin/backup.sh`.
 Keep an offsite copy of this directory (iCloud/Backblaze/etc.).
+
+`backup.sh` defaults to the checkout at `~/apps/wepaintai` (override with
+`WEPAINTAI_DIR`) and exits non-zero with a clear message if the checkout,
+`selfhost/.env.convex`, or the installed Convex CLI (`node_modules/.bin/convex`,
+from `corepack pnpm install --frozen-lockfile`) is missing.
+
+**Backups must be checked, not assumed.** A launchd job that fails every night
+is silent. At least weekly (and after every reboot or deploy):
+
+```bash
+ls -lt ~/Backups/wepaintai/selfhosted | head -3   # newest zip is from last night
+tail -20 /tmp/wepaintai-backup.log                # ends with "Backup complete"
+unzip -tq "$(ls -t ~/Backups/wepaintai/selfhosted/*.zip | head -1)"
+```
 
 ## 8. Webhooks
 
@@ -117,9 +157,15 @@ Health check endpoint: `https://convex-site.YOUR_DOMAIN/health`.
 
 ## Upgrading Convex
 
+Images are pinned by digest, so `docker compose pull` alone does nothing.
+Take a manual backup first, then resolve the new digest and set it explicitly:
+
 ```bash
-cd selfhost
-docker compose pull && docker compose up -d
+docker pull ghcr.io/convex/convex-backend:latest
+docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/convex/convex-backend:latest
+# put the ghcr.io/convex/convex-backend@sha256:... value in selfhost/.env as
+# CONVEX_BACKEND_IMAGE (same for the dashboard), then:
+cd selfhost && docker compose up -d
 ```
 
-Take a manual backup first. Pin image tags in docker-compose.yml once stable.
+Once validated, update the default digests in `docker-compose.yml`.

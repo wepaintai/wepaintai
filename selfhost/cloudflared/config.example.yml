@@ -11,21 +11,26 @@
 #   sudo cloudflared service install   # runs as a launchd daemon
 
 tunnel: wepaintai
-credentials-file: /Users/travisirby/.cloudflared/TUNNEL_ID.json
+credentials-file: /Users/YOUR_USER/.cloudflared/TUNNEL_ID.json
 
 ingress:
+  # Targets use 127.0.0.1 explicitly: start-app.sh binds HOST=127.0.0.1 and
+  # Docker publishes Convex on 127.0.0.1 only, so `localhost` (which may resolve
+  # to ::1 first) is not guaranteed to reach them.
+
   # The app (TanStack Start node server)
   - hostname: app.YOUR_DOMAIN
-    service: http://localhost:3000
+    service: http://127.0.0.1:3000
 
   # Convex deployment API + WebSocket sync.
   # Cloudflare proxies WebSockets on this route automatically.
   - hostname: convex.YOUR_DOMAIN
-    service: http://localhost:3210
+    service: http://127.0.0.1:3210
 
   # Convex HTTP actions (Polar webhook endpoint lives here)
   - hostname: convex-site.YOUR_DOMAIN
-    service: http://localhost:3211
+    service: http://127.0.0.1:3211
 
-  # Do NOT expose the dashboard (6791) — LAN only.
+  # Do NOT expose the dashboard (6791). It binds to 127.0.0.1 only; reach it
+  # with `ssh -L 6791:127.0.0.1:6791 -L 3210:127.0.0.1:3210 <mini>`.
   - service: http_status:404

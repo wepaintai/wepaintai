@@ -1,0 +1,4 @@
+# actionlint configuration: declare the custom self-hosted runner label.
+self-hosted-runner:
+  labels:
+    - mini

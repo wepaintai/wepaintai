@@ -2,8 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
   Nightly Convex backup at 03:30.
-  Install:
-    cp selfhost/launchd/com.wepaintai.backup.plist ~/Library/LaunchAgents/
+  Install (substitutes your home directory for /Users/YOUR_USER; the repo must
+  live at ~/apps/wepaintai, not under ~/Documents, which launchd cannot read):
+    sed "s|/Users/YOUR_USER|$HOME|g" selfhost/launchd/com.wepaintai.backup.plist \
+      > ~/Library/LaunchAgents/com.wepaintai.backup.plist
     launchctl load ~/Library/LaunchAgents/com.wepaintai.backup.plist
   Logs: /tmp/wepaintai-backup.log
 -->
@@ -13,7 +15,7 @@
   <string>com.wepaintai.backup</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/travisirby/Documents/GitHub/wepaintai/selfhost/bin/backup.sh</string>
+    <string>/Users/YOUR_USER/apps/wepaintai/selfhost/bin/backup.sh</string>
   </array>
   <key>StartCalendarInterval</key>
   <dict>

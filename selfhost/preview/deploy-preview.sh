@@ -1,27 +1,87 @@
 #!/usr/bin/env bash
-# Allocate a bounded full-stack preview slot, deploy this PR's Convex backend,
+# Allocate a bounded full-stack preview slot, deploy a PR's Convex backend,
 # seed a small isolated dataset, then build and serve the matching frontend.
+#
+# Usage: deploy-preview.sh <pr-number> <pr-source-dir> [<expected-head-sha>]
+#
+# This script, pool-common.sh, slot-compose.yml and remove-preview.sh are
+# always executed from a trusted checkout of `main` (the directory this file
+# lives in). The PR checkout in <pr-source-dir> is treated as data: it is
+# installed with --ignore-scripts, deployed to its isolated slot and built.
+# Building it still executes PR code (Vite/Convex config) as the runner user;
+# see README.md "Security invariants" for the residual risk.
 set -euo pipefail
 export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+# Never source $PREVIEW_ROOT/bin/*: it is writable by earlier PR builds.
 # shellcheck source=pool-common.sh
 source "$SCRIPT_DIR/pool-common.sh"
 
-PR="${1:?usage: deploy-preview.sh <pr-number>}"
+PR="${1:?usage: deploy-preview.sh <pr-number> <pr-source-dir> [<expected-head-sha>]}"
+SOURCE_ARG="${2:?usage: deploy-preview.sh <pr-number> <pr-source-dir> [<expected-head-sha>]}"
+EXPECTED_SHA="${3:-}"
 preview_validate_pr "$PR"
 
 ROOT="$PREVIEW_ROOT"
 DEST="$ROOT/prs/pr-$PR"
-FRONTEND_PORT=$((3300 + PR % 700))
 FRONTEND_HOST="preview-pr-$PR.wepaint.ai"
+TRUSTED_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
+
+if [ ! -d "$SOURCE_ARG" ]; then
+  echo "PR source directory does not exist: $SOURCE_ARG" >&2
+  exit 1
+fi
+SOURCE_DIR="$(cd "$SOURCE_ARG" && pwd -P)"
+
+# The PR source must be a separate checkout: never the trusted checkout this
+# script runs from, the production checkout (its .env.production would be
+# overwritten), or anything under the preview pool root.
+PROD_DIR="$HOME/apps/wepaintai"
+[ -d "$PROD_DIR" ] && PROD_DIR="$(cd "$PROD_DIR" && pwd -P)"
+case "$SOURCE_DIR/" in
+  "$TRUSTED_ROOT/"*|"$PROD_DIR/"*|"$ROOT/"*)
+    echo "Refusing to build PR source in $SOURCE_DIR (trusted, production, or pool directory)" >&2
+    exit 1
+    ;;
+esac
+case "$TRUSTED_ROOT/" in
+  "$SOURCE_DIR/"*)
+    echo "Refusing to build PR source in $SOURCE_DIR: it contains the trusted checkout" >&2
+    exit 1
+    ;;
+esac
+
+if [ -n "$EXPECTED_SHA" ]; then
+  case "$EXPECTED_SHA" in
+    *[!0-9a-f]*|'') echo "Expected head SHA must be lowercase hex" >&2; exit 1 ;;
+  esac
+  if [ "${#EXPECTED_SHA}" -ne 40 ]; then
+    echo "Expected head SHA must be 40 hex characters" >&2
+    exit 1
+  fi
+  actual_sha="$(git -C "$SOURCE_DIR" rev-parse HEAD)"
+  if [ "$actual_sha" != "$EXPECTED_SHA" ]; then
+    echo "PR checkout is at $actual_sha, expected $EXPECTED_SHA" >&2
+    exit 1
+  fi
+fi
 
 mkdir -p "$ROOT/prs" "$ROOT/slots" "$ROOT/caddy" "$ROOT/logs" \
   "$ROOT/bin" "$ROOT/queue"
-cp "$SCRIPT_DIR/pool-common.sh" "$SCRIPT_DIR/slot-compose.yml" \
-  "$SCRIPT_DIR/remove-preview.sh" "$ROOT/bin/"
-chmod +x "$ROOT/bin/pool-common.sh" "$ROOT/bin/remove-preview.sh"
+
+# Verify the host-installed helpers (used for manual operations) against this
+# trusted checkout; reinstall any that are stale or tampered with. Everything
+# below runs the trusted copies directly.
+preview_sync_host_bin "$SCRIPT_DIR"
+SLOT_COMPOSE="$SCRIPT_DIR/slot-compose.yml"
+REMOVE_SCRIPT="$SCRIPT_DIR/remove-preview.sh"
+
+if [ -n "${PREVIEW_POLAR_API_BASE_URL:-}" ] && [ "$PREVIEW_POLAR_API_BASE_URL" != "https://sandbox-api.polar.sh" ]; then
+  echo "PREVIEW_POLAR_API_BASE_URL must point to Polar sandbox (https://sandbox-api.polar.sh)" >&2
+  exit 1
+fi
 
 if [ -z "${PREVIEW_GOOGLE_CLIENT_ID:-}" ] || [ -z "${PREVIEW_GOOGLE_CLIENT_SECRET:-}" ]; then
   echo "Preview Google OAuth credentials are missing from $PREVIEW_CONFIG" >&2
@@ -37,7 +97,10 @@ fi
 slot=""
 new_slot="false"
 blocking_pr=""
+# Install the release trap only once the lock is ours; a waiter that times out
+# must never run release against another process's lock.
 preview_acquire_lock
+trap 'preview_release_lock' EXIT
 for candidate in $(seq 1 "$PREVIEW_POOL_SIZE"); do
   owner="$(preview_slot_owner "$candidate" || true)"
   if [ "$owner" = "$PR" ]; then
@@ -63,12 +126,15 @@ fi
 if [ -z "$slot" ]; then
   [ -f "$ROOT/queue/pr-$PR" ] || date +%s > "$ROOT/queue/pr-$PR"
   preview_release_lock
+  trap - EXIT
   echo "POOL_WAITING owner_pr=$blocking_pr"
   exit 75
 fi
 rm -f "$ROOT/queue/pr-$PR"
 preview_release_lock
+trap - EXIT
 
+FRONTEND_PORT=$((3300 + slot))
 slot_dir="$(preview_slot_dir "$slot")"
 compose_env="$slot_dir/compose.env"
 backend_env="$slot_dir/backend.env"
@@ -85,7 +151,7 @@ cleanup_failed_new_slot() {
   trap - EXIT
   if [ "$status" -ne 0 ] && [ "$new_slot" = "true" ]; then
     echo "New preview slot failed to deploy; releasing slot $slot" >&2
-    "$ROOT/bin/remove-preview.sh" "$PR" || true
+    "$REMOVE_SCRIPT" "$PR" || true
   fi
   exit "$status"
 }
@@ -137,7 +203,12 @@ EOF
   append_preview_env REPLICATE_TIMEOUT_SECONDS PREVIEW_REPLICATE_TIMEOUT_SECONDS
   append_preview_env GEMINI_API_KEY PREVIEW_GEMINI_API_KEY
   append_preview_env POLAR_API_KEY PREVIEW_POLAR_API_KEY
-  append_preview_env POLAR_WEBHOOK_SECRET PREVIEW_POLAR_WEBHOOK_SECRET
+  slot_polar_webhook_var="PREVIEW_POLAR_WEBHOOK_SECRET_${slot}"
+  if [ -n "${!slot_polar_webhook_var:-}" ]; then
+    append_preview_env POLAR_WEBHOOK_SECRET "$slot_polar_webhook_var"
+  else
+    append_preview_env POLAR_WEBHOOK_SECRET PREVIEW_POLAR_WEBHOOK_SECRET
+  fi
   append_preview_env POLAR_PRODUCT_ID_50 PREVIEW_POLAR_PRODUCT_ID_50
   append_preview_env POLAR_PRODUCT_ID_125 PREVIEW_POLAR_PRODUCT_ID_125
   append_preview_env POLAR_API_BASE_URL PREVIEW_POLAR_API_BASE_URL
@@ -148,10 +219,13 @@ if [ ! -f "$compose_env" ] || [ ! -f "$backend_env" ]; then
   exit 1
 fi
 
-corepack pnpm install
+# PR code from here on: install without lifecycle scripts (esbuild, tailwind
+# oxide and parcel watcher ship prebuilt platform packages, so none are needed).
+cd "$SOURCE_DIR"
+corepack pnpm install --frozen-lockfile --ignore-scripts
 
 docker compose --env-file "$compose_env" \
-  -f "$ROOT/bin/slot-compose.yml" -p "$project" up -d backend
+  -f "$SLOT_COMPOSE" -p "$project" up -d backend
 
 cat > "$ROOT/caddy/slot-$slot.caddy.tmp" <<EOF
 @slot${slot}api host $api_host
@@ -181,7 +255,11 @@ if [ -z "$ready" ]; then
 fi
 
 if [ "$new_slot" = "true" ]; then
-  admin_key="$(docker exec "wepaintai-preview-slot-$slot" ./generate_admin_key.sh)"
+  admin_key="$(docker exec "wepaintai-preview-slot-$slot" ./generate_admin_key.sh | tr -d '\r' | awk 'NF { last = $NF } END { print last }')"
+  if [ -z "$admin_key" ]; then
+    echo "Failed to capture admin key for preview slot $slot" >&2
+    exit 1
+  fi
   cat > "$deploy_env" <<EOF
 CONVEX_SELF_HOSTED_URL=http://127.0.0.1:$api_port
 CONVEX_SELF_HOSTED_ADMIN_KEY=$admin_key
@@ -199,7 +277,6 @@ cat > .env.production <<EOF
 VITE_CONVEX_URL=https://$api_host
 VITE_CONVEX_SITE_URL=https://$site_host
 VITE_APP_URL=https://$FRONTEND_HOST
-VITE_PASSWORD_PROTECTION_ENABLED=false
 VITE_AUTH_DISABLED=false
 VITE_INTERNAL_HIDE_ADMIN_PANEL=false
 EOF
@@ -219,6 +296,24 @@ for _ in $(seq 1 20); do
   fi
   sleep 0.25
 done
+# Previews deployed before the slot-based port scheme (3300 + PR % 700) are
+# stopped by the bootout above (same launchd label); make sure nothing else is
+# still listening on this slot's port before binding it.
+port_free=""
+for _ in $(seq 1 10); do
+  if ! lsof -nP -iTCP:"$FRONTEND_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+    port_free=1
+    break
+  fi
+  sleep 1
+done
+if [ -z "$port_free" ]; then
+  echo "Frontend port $FRONTEND_PORT for slot $slot is still in use; a preview" \
+    "started under the old port scheme may need removing:" >&2
+  lsof -nP -iTCP:"$FRONTEND_PORT" -sTCP:LISTEN >&2 || true
+  exit 1
+fi
+
 mkdir -p "$DEST"
 rsync -a --delete .output/ "$DEST/output/"
 
@@ -285,9 +380,21 @@ if [ -z "$frontend_ready" ]; then
   exit 1
 fi
 
-curl -fsS "https://$site_host/health" >/dev/null
-curl -fsS "https://$api_host/version" >/dev/null
-curl -fsS "https://$FRONTEND_HOST/" >/dev/null
+verify_public_url() {
+  local url="$1"
+  for _ in $(seq 1 10); do
+    if curl -fsS --max-time 10 "$url" >/dev/null; then
+      return 0
+    fi
+    sleep 2
+  done
+  echo "Public health check failed for $url" >&2
+  return 1
+}
+
+verify_public_url "https://$site_host/health"
+verify_public_url "https://$api_host/version"
+verify_public_url "https://$FRONTEND_HOST/"
 
 cat > "$DEST/preview.env" <<EOF
 PR=$PR
