@@ -111,3 +111,35 @@ describe('POST /presence/leave (sendBeacon) authentication', () => {
     expect((await counts(t)).presence).toBe(0)
   })
 })
+
+describe('guest identity is not exposed to other clients', () => {
+  test('presence and live strokes never return guestId or leave tokens', async () => {
+    const { t, sessionId, asOther } = await seed()
+    const guestId = 'guest-browser-secret-id'
+
+    await t.mutation(api.presence.updatePresence, {
+      sessionId,
+      guestId,
+      ...presenceArgs('Guest'),
+    })
+    await t.mutation(api.liveStrokes.updateLiveStroke, { sessionId, guestId, ...liveStrokeArgs })
+
+    const presence = await asOther.query(api.presence.getSessionPresence, { sessionId })
+    const live = await asOther.query(api.liveStrokes.getLiveStrokes, { sessionId })
+    expect(presence).toHaveLength(1)
+    expect(live).toHaveLength(1)
+    const serialized = JSON.stringify([presence, live])
+    expect(serialized).not.toContain(guestId)
+    expect(presence[0]).not.toHaveProperty('guestId')
+    expect(presence[0]).not.toHaveProperty('leaveToken')
+    expect(live[0]).not.toHaveProperty('guestId')
+
+    // The public presence _id is not proof of identity: it cannot be used as a
+    // guestId to evict or overwrite the guest, and the beacon needs the token.
+    const publicId = presence[0]._id
+    await t.mutation(api.presence.leaveSession, { sessionId, guestId: publicId })
+    await t.mutation(api.liveStrokes.clearLiveStroke, { sessionId, guestId: publicId })
+    await beacon(t, { sessionId, presenceId: publicId, leaveToken: publicId })
+    expect(await counts(t)).toEqual({ presence: 1, live: 1 })
+  })
+})

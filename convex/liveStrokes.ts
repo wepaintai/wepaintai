@@ -110,7 +110,6 @@ export const getLiveStrokes = query({
     _creationTime: v.number(),
     sessionId: v.id("paintingSessions"),
     userId: v.optional(v.id("users")),
-    guestId: v.optional(v.string()),
     userColor: v.string(),
     userName: v.string(),
     points: v.array(v.object({
@@ -131,11 +130,14 @@ export const getLiveStrokes = query({
     }
     const thirtySecondsAgo = Date.now() - 30 * 1000; // 30 seconds
     
-    return await ctx.db
+    const rows = await ctx.db
       .query("liveStrokes")
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
       .filter((q) => q.gt(q.field("lastUpdated"), thirtySecondsAgo))
       .collect();
+    // Never expose a guest's per-browser guestId: it keys their presence and
+    // live stroke, so leaking it would let others impersonate them.
+    return rows.map(({ guestId: _guestId, ...stroke }) => stroke);
   },
 });
 

@@ -159,8 +159,9 @@ export const updatePresence = mutation({
 /**
  * Get all active users in a session.
  *
- * Rows are mapped to an explicit public shape so the leave token is never
- * returned.
+ * Rows are mapped to an explicit public shape: the guest's per-browser
+ * guestId (which keys guest presence/live strokes) and the leave token are
+ * never returned. Clients identify rows by the opaque presence `_id`.
  */
 export const getSessionPresence = query({
   args: {
@@ -172,7 +173,6 @@ export const getSessionPresence = query({
     _creationTime: v.number(),
     sessionId: v.id("paintingSessions"),
     userId: v.optional(v.id("users")),
-    guestId: v.optional(v.string()),
     userColor: v.string(),
     userName: v.string(),
     cursorX: v.number(),
@@ -198,7 +198,6 @@ export const getSessionPresence = query({
       _creationTime: p._creationTime,
       sessionId: p.sessionId,
       userId: p.userId,
-      guestId: p.guestId,
       userColor: p.userColor,
       userName: p.userName,
       cursorX: p.cursorX,
