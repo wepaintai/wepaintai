@@ -11,9 +11,9 @@ export function useConnectionStatus(): ConnectionStatus {
   // Assume connected during SSR/first paint; touching connectionState() before
   // mount could spin up the sync client on the server.
   const [wsConnected, setWsConnected] = useState<boolean>(true)
-  const [browserOnline, setBrowserOnline] = useState<boolean>(() =>
-    typeof navigator === 'undefined' ? true : navigator.onLine
-  )
+  // Also assume online for the first render so hydration matches the server
+  // HTML; the real navigator.onLine is read after mount.
+  const [browserOnline, setBrowserOnline] = useState<boolean>(true)
 
   useEffect(() => {
     setWsConnected(convexHigh.connectionState().isWebSocketConnected)
@@ -25,6 +25,7 @@ export function useConnectionStatus(): ConnectionStatus {
 
   useEffect(() => {
     if (typeof window === 'undefined') return
+    setBrowserOnline(navigator.onLine)
     const handleOnline = () => setBrowserOnline(true)
     const handleOffline = () => setBrowserOnline(false)
     window.addEventListener('online', handleOnline)
