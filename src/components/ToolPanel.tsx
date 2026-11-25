@@ -467,6 +467,7 @@ const LayerItem = React.memo(({
   isBottomLayer = false,
   isOnlyPaintLayer = false,
   readOnly = false,
+  canDelete = true,
 }: {
   layer: Layer
   isActive: boolean
@@ -480,6 +481,8 @@ const LayerItem = React.memo(({
   isBottomLayer?: boolean
   isOnlyPaintLayer?: boolean
   readOnly?: boolean
+  /** Deleting layers is owner-only; collaborators can edit but not delete */
+  canDelete?: boolean
 }) => {
   const [showOpacitySlider, setShowOpacitySlider] = React.useState(false)
   const [confirmingDelete, setConfirmingDelete] = React.useState(false)
@@ -565,6 +568,7 @@ const LayerItem = React.memo(({
           >
             <ChevronUp className="w-3 h-3 text-white/60 rotate-180" />
           </button>
+          {canDelete && (
           <button
             onClick={(e) => {
               e.stopPropagation()
@@ -587,6 +591,7 @@ const LayerItem = React.memo(({
           >
             <Trash2 className={confirmingDelete ? 'w-3 h-3 text-red-400' : 'w-3 h-3 text-white/60 hover:text-red-400'} />
           </button>
+          )}
         </div>
         )}
       </div>
@@ -1197,13 +1202,14 @@ export function ToolPanel({
                 isBottomLayer={index === [...layers].sort((a, b) => b.order - a.order).length - 1}
                 isOnlyPaintLayer={(layer.type === 'paint' || layer.type === 'stroke') && layers.filter(l => l.type === 'paint' || l.type === 'stroke').length <= 1}
                 readOnly={!canEdit}
+                canDelete={isOwner}
               />
             ))}
           </div>
         </>
       )}
     </div>
-  ), [canEdit, layers, onCreatePaintLayer, activeLayerId, onActiveLayerChange, onLayerVisibilityChange, onLayerDelete, onLayerReorder, onLayerOpacityChange])
+  ), [canEdit, isOwner, layers, onCreatePaintLayer, activeLayerId, onActiveLayerChange, onLayerVisibilityChange, onLayerDelete, onLayerReorder, onLayerOpacityChange])
 
   const renderAITab = React.useCallback(() => (
     <div className="space-y-2">

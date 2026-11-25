@@ -509,9 +509,16 @@ export function PaintingView() {
   // Track the guest's current session in localStorage based on access:
   // record it once confirmed accessible, and forget it when the session is
   // private or deleted so reloads and "new canvas" don't resurrect it.
+  // A view-only visit (public link without edit access) is never recorded as
+  // the current session, so the guest's next visit doesn't reopen a canvas
+  // they can't paint on.
   useEffect(() => {
     if (!sessionId || effectiveIsSignedIn) return
-    if (sessionStatus === 'ok') {
+    if (sessionStatus === 'ok' && !canEdit) {
+      if (getCurrentGuestSession() === sessionId) {
+        clearCurrentGuestSession()
+      }
+    } else if (sessionStatus === 'ok') {
       setCurrentGuestSession(sessionId)
       touchRecentGuestSession(sessionId, session?.name)
     } else if (sessionStatus === 'not_found' || sessionStatus === 'unauthorized') {
@@ -520,7 +527,7 @@ export function PaintingView() {
       }
       removeRecentGuestSession(sessionId)
     }
-  }, [sessionId, sessionStatus, effectiveIsSignedIn, session?.name])
+  }, [sessionId, sessionStatus, canEdit, effectiveIsSignedIn, session?.name])
 
   // Switch to another session (or null to create a fresh one) without a full
   // page reload: update the URL via history and let React state drive the swap.
@@ -1041,7 +1048,8 @@ export function PaintingView() {
   }, [canEdit, images, aiImages, paintLayers, sessionId, updateImageTransform, updateAIImageTransformMutation, updatePaintLayer, imageGuestKey, sessionEditKey])
 
   const handleLayerDelete = useCallback(async (layerId: string) => {
-    if (!canEdit) return
+    // Deleting layers/images is owner-only (the backend enforces it too)
+    if (!isOwner) return
     // console.log('[PaintingView] handleLayerDelete called with layerId:', layerId)
     // console.log('[PaintingView] Available paint layers:', paintLayers)
     // console.log('[PaintingView] Available layers:', layers)
@@ -1099,7 +1107,7 @@ export function PaintingView() {
     } else {
       console.warn('[PaintingView] Layer not found for deletion:', layerId)
     }
-  }, [canEdit, images, aiImages, paintLayers, sessionId, clearSession, deleteImage, deletePaintLayer, deleteAIImageMutation, imageGuestKey, sessionEditKey])
+  }, [isOwner, images, aiImages, paintLayers, sessionId, deleteImage, deletePaintLayer, deleteAIImageMutation, imageGuestKey, sessionEditKey])
 
   const handleLayerReorder = useCallback(async (layerId: string, newOrder: number) => {
     if (!sessionId || !canEdit) return
