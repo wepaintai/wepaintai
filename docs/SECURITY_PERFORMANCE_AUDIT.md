@@ -199,7 +199,7 @@ This document tracks the repository audit findings so work can continue across s
 
 ### AUD-008: Replace the client-side password gate
 
-- Status: TODO
+- Status: DONE
 - Area: Authentication
 - Files:
   - `src/components/PasswordProtection.tsx`
@@ -211,8 +211,8 @@ This document tracks the repository audit findings so work can continue across s
 - Acceptance criteria:
   - Protected routes and APIs reject unauthenticated requests server-side.
   - No access password is shipped in the browser bundle.
-- Verification: Not run
-- Notes:
+- Verification: `pnpm typecheck` PASS; `pnpm test:run` PASS (9 files, 75 tests); `pnpm exec eslint . --quiet` PASS; `pnpm build` PASS; built server smoke test: `/`, `/?session=…` and `/login` return 200 with no SSR crash, no hydration error and no CSP violation in the browser console.
+- Notes: Completed 2026-11-24 (PR #101). The gate was only a visual preview gate (hardcoded password, `sessionStorage` flag), so `PasswordProtection.tsx` and its `VITE_PASSWORD_PROTECTION_ENABLED` setting were removed rather than replaced; the app is public by design, and authorization belongs in the Convex functions (AUD-004/AUD-005). No password ships in the bundle. Rotate the old password anywhere it was reused. Removing the gate turned on full SSR of the editor for the first time: `PaintingView` now renders the same first frame on server and client (the `?session=` check, saved brush settings, `navigator.onLine` and the sync-status store are read after mount), and `getClientId()` no longer caches a value during SSR.
 
 ### AUD-009: Secure image uploads and storage registration
 
@@ -425,7 +425,7 @@ This document tracks the repository audit findings so work can continue across s
 
 ### AUD-019: Harden self-hosting configuration
 
-- Status: TODO
+- Status: IN PROGRESS
 - Area: Deployment security
 - Files:
   - `selfhost/docker-compose.yml`
@@ -441,8 +441,8 @@ This document tracks the repository audit findings so work can continue across s
   - Internal services are not unintentionally reachable from LAN/WAN.
   - Deployment versions are reproducible.
   - Security headers are verified against production responses.
-- Verification: Not run
-- Notes:
+- Verification (headers): `src/lib/securityHeaders.test.ts`; built server (`node .output/server/index.mjs`) responses to `/`, `/?session=…` and `/login` carry the CSP, HSTS and X-Frame-Options headers; browser console on `/` and `/?session=…` shows no CSP violations, with PostHog's lazy scripts loading. Not yet verified against production responses.
+- Notes: Browser security headers done 2026-11-24 (PR #101). `server/middleware/canonical-host.ts` sets HSTS (`max-age=31536000; includeSubDomains`), `X-Frame-Options: DENY`, `X-Content-Type-Options`, `Referrer-Policy` and `Permissions-Policy` on every response. `src/router.tsx` sends an enforced CSP on SSR HTML with a per-request nonce that TanStack Start puts on every inline script: `script-src 'self' 'nonce-…'` plus the PostHog hosts (no `unsafe-inline` or `unsafe-eval`), `frame-ancestors 'none'`, `base-uri 'self'`, `object-src 'none'` and `form-action 'self'` (Google sign-in is a fetch plus a top-level navigation, not a form post). The CSP is skipped under `vite dev`. HSTS `includeSubDomains` also applies to every `*.wepaint.ai` host once a browser sees it on the apex redirect, so all subdomains must stay HTTPS-only. Container pinning, port binding and the firewall documentation remain open.
 
 ### AUD-020: Add automated tests and CI gates
 
