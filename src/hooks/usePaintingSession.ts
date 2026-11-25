@@ -3,6 +3,7 @@ import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { useCallback, useEffect, useState, useRef, useMemo, useSyncExternalStore } from "react";
 import { p2pLogger } from "../lib/p2p-logger";
+import { resolveSessionCapabilities } from "../utils/sessionCapabilities";
 import {
   reportSyncFailure,
   reportSyncSuccess,
@@ -133,8 +134,12 @@ export function usePaintingSession(sessionId: Id<"paintingSessions"> | null) {
       : "skip"
   );
   const session = sessionResult?.status === "ok" ? sessionResult.session : null;
-  const canEdit = sessionResult?.status === "ok" ? sessionResult.canEdit : false;
-  const isOwner = sessionResult?.status === "ok" ? sessionResult.isOwner : false;
+  // A pre-AUD-005 backend omits canEdit/isOwner: resolveSessionCapabilities
+  // treats that as unknown (owners keep editing) instead of read-only for all.
+  const { canEdit, isOwner } = resolveSessionCapabilities(sessionResult, {
+    currentUserId: authenticatedUser?._id ?? null,
+    hasGuestKey: !!localGuestKey,
+  });
   const canEditRef = useRef(canEdit);
   canEditRef.current = canEdit;
   // 'loading' until both the session query and auth state have resolved, so

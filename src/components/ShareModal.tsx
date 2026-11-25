@@ -5,6 +5,7 @@ import { api } from '../../convex/_generated/api'
 import { Id } from '../../convex/_generated/dataModel'
 import { getGuestKey, getEditKey, subscribeEditKeys } from '../utils/guestKey'
 import { GoogleSignInButton } from './GoogleSignInButton'
+import { resolveSessionCapabilities } from '../utils/sessionCapabilities'
 
 interface ShareModalProps {
   isOpen: boolean
@@ -25,19 +26,22 @@ export function ShareModal({ isOpen, onClose, sessionId }: ShareModalProps) {
     editKey: localEditKey || undefined,
   })
   const session = sessionResult?.status === 'ok' ? sessionResult.session : null
-  const isOwner = sessionResult?.status === 'ok' ? sessionResult.isOwner : false
-  const canEdit = sessionResult?.status === 'ok' ? sessionResult.canEdit : false
+  const currentUser = useQuery(api.auth.getCurrentUser)
+  const { isOwner, canEdit, legacyBackend } = resolveSessionCapabilities(sessionResult, {
+    currentUserId: currentUser?._id ?? null,
+    hasGuestKey: !!localGuestKey,
+  })
 
+  // Edit links need an AUD-005 backend; an old backend has no such function
   const ownerEditKey = useQuery(
     api.paintingSessions.getSessionEditKey,
-    isOpen && isOwner ? { sessionId, guestKey: localGuestKey || undefined } : 'skip',
+    isOpen && isOwner && !legacyBackend ? { sessionId, guestKey: localGuestKey || undefined } : 'skip',
   )
 
   const setVisibility = useMutation(api.paintingSessions.setSessionVisibility)
   const enableEditLink = useMutation(api.paintingSessions.enableEditLink)
   const rotateEditLink = useMutation(api.paintingSessions.rotateEditLink)
   const revokeEditLink = useMutation(api.paintingSessions.revokeEditLink)
-  const currentUser = useQuery(api.auth.getCurrentUser)
 
   const [copiedView, setCopiedView] = useState(false)
   const [copiedEdit, setCopiedEdit] = useState(false)
@@ -221,7 +225,7 @@ export function ShareModal({ isOpen, onClose, sessionId }: ShareModalProps) {
               </div>
             </div>
 
-            {isOwner && (
+            {isOwner && !legacyBackend && (
               <>
                 {ownerEditKey === undefined ? (
                   <div className="text-xs text-white/60">Loading collaborate link…</div>
