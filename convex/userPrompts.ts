@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { isPromptTooLong, MAX_PROMPT_LENGTH } from "./tokenPolicy";
 
 export const addUserPrompt = mutation({
   args: {
@@ -9,6 +10,9 @@ export const addUserPrompt = mutation({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) {
       throw new Error("Must be authenticated to save prompts");
+    }
+    if (isPromptTooLong(args.prompt)) {
+      throw new Error(`Prompt is too long (max ${MAX_PROMPT_LENGTH} characters)`);
     }
 
     const user = await ctx.db

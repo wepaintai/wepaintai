@@ -2,7 +2,8 @@ import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { createUserWithWelcomeTokens } from "./users";
-import { assertCanModifySession, canReadSession } from "./sessionAuth";
+import { assertCanModifySession, canReadSession, keysMatch } from "./sessionAuth";
+import { isPromptTooLong, MAX_PROMPT_LENGTH } from "./tokenPolicy";
 
 /**
  * Create a new painting session
@@ -159,7 +160,7 @@ export const getSession = query({
     }
 
     // Guest ownership
-    if (session.guestOwnerKey && args.guestKey && session.guestOwnerKey === args.guestKey) {
+    if (session.guestOwnerKey && args.guestKey && keysMatch(session.guestOwnerKey, args.guestKey)) {
       return { status: "ok" as const, session: sanitizeSession(session) };
     }
     return { status: "unauthorized" as const };
@@ -417,6 +418,29 @@ export const purgeDeletedSessions = internalMutation({
   },
 });
 
+// Session-document size guards: an unbounded prompt list or thumbnail could
+// push the session doc to Convex's size limit and make every later patch fail.
+export const MAX_SESSION_PROMPTS = 50;
+export const MAX_THUMBNAIL_URL_LENGTH = 200 * 1024; // ~200 KB as a string
+
+function assertValidThumbnailUrl(url: string) {
+  if (url.length > MAX_THUMBNAIL_URL_LENGTH) {
+    throw new Error("Thumbnail is too large");
+  }
+  const isImageDataUrl = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(url);
+  let isHttpsUrl = false;
+  if (!isImageDataUrl) {
+    try {
+      isHttpsUrl = new URL(url).protocol === "https:";
+    } catch {
+      isHttpsUrl = false;
+    }
+  }
+  if (!isImageDataUrl && !isHttpsUrl) {
+    throw new Error("Thumbnail must be an image data URL or an HTTPS URL");
+  }
+}
+
 /**
  * Update session thumbnail
  */
@@ -433,6 +457,7 @@ export const updateSessionThumbnail = mutation({
     }
 
     await assertCanModifySession(ctx, session, args.guestKey);
+    assertValidThumbnailUrl(args.thumbnailUrl);
 
     await ctx.db.patch(args.sessionId, {
       thumbnailUrl: args.thumbnailUrl,
@@ -458,12 +483,17 @@ export const addAIPrompt = mutation({
 
     await assertCanModifySession(ctx, session, args.guestKey);
 
+    if (isPromptTooLong(args.prompt)) {
+      throw new Error(`Prompt is too long (max ${MAX_PROMPT_LENGTH} characters)`);
+    }
+
     const currentPrompts = session.aiPrompts || [];
-    
-    // Only add if it's not already in the list (avoid duplicates)
+
+    // Only add if it's not already in the list (avoid duplicates). Keep the
+    // most recent MAX_SESSION_PROMPTS so the session document stays bounded.
     if (!currentPrompts.includes(args.prompt)) {
       await ctx.db.patch(args.sessionId, {
-        aiPrompts: [...currentPrompts, args.prompt],
+        aiPrompts: [...currentPrompts, args.prompt].slice(-MAX_SESSION_PROMPTS),
         lastModified: Date.now(),
       });
     }
@@ -551,7 +581,7 @@ export const claimGuestSession = mutation({
     if (session.createdBy !== undefined) {
       return user && session.createdBy === user._id ? "already_owned" : "invalid";
     }
-    if (!session.guestOwnerKey || session.guestOwnerKey !== args.guestKey) {
+    if (!session.guestOwnerKey || !keysMatch(session.guestOwnerKey, args.guestKey)) {
       return "invalid";
     }
 
