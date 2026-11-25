@@ -138,6 +138,7 @@ import {
   type PaintingEditorContextValue,
 } from './PaintingEditorContext'
 import type { AISessionImage, UploadedSessionImage } from '../hooks/useSessionImages'
+import { useP2PMetrics, useRemoteCursors } from '../lib/webrtc/p2pLiveStore'
 
 // Minimal DOM shim so react-dom/client's createRoot + act() run hooks and effects
 // cleanly inside Vitest's edge-runtime environment without adding jsdom.
@@ -726,7 +727,7 @@ describe('PaintingEditorContext deduplication & single-lifecycle invariants', ()
     act(() => {
       manager.options.onPacketReceived?.('peer_42', packet)
     })
-    expect(latestEditor!.p2p.remoteStrokes.get('peer_42:stroke99')?.color).toBe('#12ab34')
+    expect(latestEditor!.p2p.liveStore.strokes.get().get('peer_42:stroke99')?.color).toBe('#12ab34')
 
     // First presence update sends immediately; second update 1s later is throttled by coarse (20s) cadence
     vi.setSystemTime(100_000)
@@ -752,6 +753,101 @@ describe('PaintingEditorContext deduplication & single-lifecycle invariants', ()
       await latestEditor!.updateUserPresence(30, 30, false, 'brush')
     })
     expect(updatePresenceMock).toHaveBeenCalledTimes(2)
+
+    unmount()
+  })
+
+  function peerPresenceRow(peerId: string, color = '#12ab34') {
+    return {
+      _id: `pres_${peerId}` as Id<'userPresence'>,
+      _creationTime: 1,
+      sessionId,
+      userId: peerId as Id<'users'>,
+      userColor: color,
+      userName: 'Bob',
+      cursorX: 10,
+      cursorY: 20,
+      isDrawing: false,
+      currentTool: 'brush',
+      lastSeen: Date.now(),
+    }
+  }
+
+  test('incoming cursor packets and metrics ticks re-render only their subscribers, not the editor host or other consumers', () => {
+    seedAccessibleSession({ authenticated: true })
+    queryResponseMap.set(fnKey(api.presence.getSessionPresence), [peerPresenceRow('peer_42')])
+
+    const renders = { host: 0, consumer: 0, cursorLayer: 0, metricsBadge: 0 }
+    let lastCursors: ReadonlyMap<string, { x: number; y: number; drawing: boolean }> = new Map()
+
+    function PlainConsumer() {
+      usePaintingEditor()
+      renders.consumer++
+      return null
+    }
+    function CursorLayer() {
+      const { p2p } = usePaintingEditor()
+      lastCursors = useRemoteCursors(p2p.liveStore)
+      renders.cursorLayer++
+      return null
+    }
+    function MetricsBadge() {
+      const { p2p } = usePaintingEditor()
+      useP2PMetrics(p2p.liveStore)
+      renders.metricsBadge++
+      return null
+    }
+    function Host() {
+      const editor = usePaintingEditorController({ sessionId })
+      renders.host++
+      return React.createElement(
+        PaintingEditorProvider,
+        { value: editor },
+        React.createElement(PlainConsumer),
+        React.createElement(CursorLayer),
+        React.createElement(MetricsBadge)
+      )
+    }
+
+    const { unmount } = mountTree(React.createElement(Host))
+    const manager = p2pInstances[0]
+    act(() => {
+      manager.options.onPeerConnected?.('peer_42')
+    })
+
+    const before = { ...renders }
+    act(() => {
+      manager.options.onPacketReceived?.('peer_42', { t: 'cu', x: 0.25, y: 0.5, drawing: false })
+    })
+    act(() => {
+      manager.options.onPacketReceived?.('peer_42', { t: 'cu', x: 0.3, y: 0.6, drawing: true })
+    })
+
+    expect(lastCursors.get('peer_42')).toEqual({ x: 0.3, y: 0.6, drawing: true })
+    expect(renders.cursorLayer).toBe(before.cursorLayer + 2)
+    expect(renders.host).toBe(before.host)
+    expect(renders.consumer).toBe(before.consumer)
+    expect(renders.metricsBadge).toBe(before.metricsBadge)
+
+    // Packets from a peer that isn't a current editor are dropped
+    act(() => {
+      manager.options.onPacketReceived?.('intruder', { t: 'cu', x: 0.9, y: 0.9, drawing: false })
+    })
+    expect(lastCursors.has('intruder')).toBe(false)
+    expect(renders.cursorLayer).toBe(before.cursorLayer + 2)
+
+    // Metrics ticks: only the badge re-renders, and only when metrics change
+    const afterCursors = { ...renders }
+    act(() => {
+      vi.advanceTimersByTime(1000)
+    })
+    act(() => {
+      vi.advanceTimersByTime(1000) // unchanged metrics: no notification
+    })
+    expect(renders.metricsBadge).toBe(afterCursors.metricsBadge + 1)
+    expect(renders.host).toBe(afterCursors.host)
+    expect(renders.consumer).toBe(afterCursors.consumer)
+    expect(renders.cursorLayer).toBe(afterCursors.cursorLayer)
 
     unmount()
   })

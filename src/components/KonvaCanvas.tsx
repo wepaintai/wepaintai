@@ -2,7 +2,12 @@ import React, { useRef, useEffect, useState, useCallback, forwardRef, useImperat
 import { Stage, Layer, Path, Image as KonvaImage, Circle, Text, Group, Arc, Transformer, Line } from 'react-konva'
 import Konva from 'konva'
 import { getStroke } from 'perfect-freehand'
-import type { Stroke } from '../hooks/usePaintingSession'
+import type { Stroke, UserPresence } from '../hooks/usePaintingSession'
+import {
+  useRemoteCursors,
+  useRemoteStrokes,
+  type P2PLiveStore,
+} from '../lib/webrtc/p2pLiveStore'
 import { usePaintingEditor } from '../context/PaintingEditorContext'
 import { Id } from '../../convex/_generated/dataModel'
 import { Layer as LayerType } from './ToolPanel'
@@ -183,6 +188,111 @@ interface LocalStroke {
   targetLayerId?: string
 }
 
+/**
+ * P2P remote live strokes. Subscribes to the live store itself so incoming
+ * stroke packets re-render only this layer, not KonvaCanvas or PaintingView.
+ */
+const RemoteStrokesLayer = memo(function RemoteStrokesLayer({
+  liveStore,
+  width,
+  height,
+  getStrokePathData,
+}: {
+  liveStore: P2PLiveStore
+  width: number
+  height: number
+  getStrokePathData: (stroke: LocalStroke) => { pathData: string }
+}) {
+  const remoteStrokes = useRemoteStrokes(liveStore)
+  return (
+    <>
+      {Array.from(remoteStrokes.values()).map((remoteStroke) => {
+        if (remoteStroke.points.length === 0) return null
+
+        // Denormalize points from 0-1 to canvas coordinates
+        const denormalizedPoints = remoteStroke.points.map(p => ({
+          x: p.x * width,
+          y: p.y * height,
+          pressure: p.pressure
+        }))
+
+        const { pathData } = getStrokePathData({
+          points: denormalizedPoints,
+          color: remoteStroke.color,
+          size: remoteStroke.size,
+          opacity: 0.8, // Slightly transparent for preview
+          isLive: true,
+        })
+
+        if (!pathData) return null
+
+        return (
+          <Path
+            key={`${remoteStroke.peerId}:${remoteStroke.strokeId}`}
+            data={pathData}
+            fill={remoteStroke.color}
+            opacity={0.8}
+            listening={false}
+          />
+        )
+      })}
+    </>
+  )
+})
+
+/**
+ * P2P remote cursors. Subscribes to the live store itself so incoming cursor
+ * packets (up to ~30 Hz per peer) re-render only this layer.
+ */
+const RemoteCursorsLayer = memo(function RemoteCursorsLayer({
+  liveStore,
+  width,
+  height,
+  presence,
+}: {
+  liveStore: P2PLiveStore
+  width: number
+  height: number
+  presence: ReadonlyArray<UserPresence>
+}) {
+  const remoteCursors = useRemoteCursors(liveStore)
+  return (
+    <>
+      {Array.from(remoteCursors.entries()).map(([peerId, cursor]) => {
+        const x = cursor.x * width
+        const y = cursor.y * height
+
+        // Get peer color from presence
+        const peer = presence.find(p => p.userName === peerId || p.userId?.toString() === peerId)
+        const peerColor = peer?.userColor || '#666666'
+        const peerName = peer?.userName || peerId.substring(0, 8)
+
+        return (
+          <Group key={peerId} x={x} y={y} listening={false}>
+            <Circle
+              radius={cursor.drawing ? 8 : 5}
+              fill={peerColor}
+              stroke={cursor.drawing ? '#000000' : '#FFFFFF'}
+              strokeWidth={cursor.drawing ? 2 : 1}
+            />
+            <Text
+              text={peerName}
+              fontSize={11}
+              fontStyle="bold"
+              fill="white"
+              stroke={peerColor}
+              strokeWidth={3}
+              x={-20}
+              y={-25}
+              align="center"
+            />
+          </Group>
+        )
+      })}
+    </>
+  )
+})
+
 interface KonvaCanvasProps {
   sessionId: Id<"paintingSessions"> | null
   canEdit?: boolean
@@ -320,8 +430,7 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
     updatePaintLayer: updatePaintLayerTransform,
     p2p: {
       isConnected: isP2PConnected,
-      remoteStrokes,
-      remoteCursors,
+      liveStore: p2pLiveStore,
       sendStrokePoint,
       sendCursorPosition,
     },
@@ -2060,68 +2169,24 @@ const KonvaCanvasComponent = (props: KonvaCanvasProps, ref: React.Ref<CanvasRef>
             )}
 
             {/* P2P remote strokes */}
-            {isP2PConnected && Array.from(remoteStrokes.values()).map((remoteStroke) => {
-              if (remoteStroke.points.length === 0) return null
-              
-              // Denormalize points from 0-1 to canvas coordinates
-              const denormalizedPoints = remoteStroke.points.map(p => ({
-                x: p.x * dimensions.width,
-                y: p.y * dimensions.height,
-                pressure: p.pressure
-              }))
-              
-              const { pathData } = getStrokePathData({
-                points: denormalizedPoints,
-                color: remoteStroke.color,
-                size: remoteStroke.size,
-                opacity: 0.8, // Slightly transparent for preview
-                isLive: true,
-              })
-              
-              if (!pathData) return null
-              
-              return (
-                <Path
-                  key={remoteStroke.strokeId}
-                  data={pathData}
-                  fill={remoteStroke.color}
-                  opacity={0.8}
-                  listening={false}
-                />
-              )
-            })}
+            {isP2PConnected && (
+              <RemoteStrokesLayer
+                liveStore={p2pLiveStore}
+                width={dimensions.width}
+                height={dimensions.height}
+                getStrokePathData={getStrokePathData}
+              />
+            )}
 
             {/* Remote cursors */}
-            {isP2PConnected && Array.from(remoteCursors.entries()).map(([peerId, cursor]) => {
-              const x = cursor.x * dimensions.width
-              const y = cursor.y * dimensions.height
-              
-              // Get peer color from presence
-              const peerColor = presence.find(p => p.userName === peerId || p.userId?.toString() === peerId)?.userColor || '#666666'
-              const peerName = presence.find(p => p.userName === peerId || p.userId?.toString() === peerId)?.userName || peerId.substring(0, 8)
-              
-              return (
-                <Group key={peerId} x={x} y={y}>
-                  <Circle
-                    radius={cursor.drawing ? 8 : 5}
-                    fill={peerColor}
-                    stroke={cursor.drawing ? '#000000' : '#FFFFFF'}
-                    strokeWidth={cursor.drawing ? 2 : 1}
-                  />
-                  <Text
-                    text={peerName}
-                    fontSize={11}
-                    fontStyle="bold"
-                    fill="white"
-                    stroke={peerColor}
-                    strokeWidth={3}
-                    x={-20}
-                    y={-25}
-                    align="center"
-                  />
-                </Group>
-              )
-            })}
+            {isP2PConnected && (
+              <RemoteCursorsLayer
+                liveStore={p2pLiveStore}
+                width={dimensions.width}
+                height={dimensions.height}
+                presence={presence}
+              />
+            )}
 
             {/* Fallback remote cursors from Convex presence when P2P is not connected */}
             {!isP2PConnected && presence

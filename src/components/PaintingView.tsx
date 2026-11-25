@@ -307,8 +307,7 @@ export function PaintingView() {
     p2p: {
       isConnected: isP2PConnected,
       connectionMode,
-      metrics: p2pMetrics,
-      remoteStrokes,
+      liveStore: p2pLiveStore,
     },
   } = editor
   const connectionStatus = useConnectionStatus()
@@ -1119,7 +1118,7 @@ export function PaintingView() {
         <P2PStatus
           isConnected={isP2PConnected}
           connectionMode={connectionMode}
-          metrics={p2pMetrics}
+          liveStore={p2pLiveStore}
           className="absolute bottom-2 left-2 z-10"
         />
       )}
@@ -1128,8 +1127,7 @@ export function PaintingView() {
         <P2PDebugPanel
           isConnected={isP2PConnected}
           connectionMode={connectionMode}
-          metrics={p2pMetrics}
-          remoteStrokesCount={remoteStrokes.size}
+          liveStore={p2pLiveStore}
         />
       )}
       <ToolPanel

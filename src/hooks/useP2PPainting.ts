@@ -3,13 +3,18 @@ import { useConvex } from "convex/react";
 import { Id } from "../../convex/_generated/dataModel";
 import { P2PManager } from '../lib/webrtc/P2PManager';
 import { getGuestKey } from '../utils/guestKey';
-import type { 
-  PreviewPacket, 
+import {
+  createP2PLiveStore,
+  resetP2PLiveStore,
+  type P2PLiveStore,
+} from '../lib/webrtc/p2pLiveStore';
+import type {
+  PreviewPacket,
   CursorPacket,
   P2PPacket,
-  RemoteStroke, 
-  ConnectionMode, 
-  P2PMetrics 
+  RemoteStroke,
+  ConnectionMode,
+  P2PMetrics,
 } from '../lib/webrtc/types';
 
 export interface P2PPresencePeer {
@@ -58,15 +63,105 @@ export function isPacketFromEditor(
 export interface P2PPaintingResult {
   isConnected: boolean;
   connectionMode: ConnectionMode;
-  remoteStrokes: Map<string, RemoteStroke>;
-  remoteCursors: Map<string, { x: number; y: number; drawing: boolean }>;
+  /**
+   * Remote cursors, remote live strokes and metrics. Not React state: read it
+   * with useRemoteCursors / useRemoteStrokes / useP2PMetrics in the component
+   * that draws it, so incoming packets don't re-render the editor host.
+   * Stable for the lifetime of the hook.
+   */
+  liveStore: P2PLiveStore;
   sendStrokePoint: (strokeId: string, x: number, y: number, pressure: number) => void;
   sendCursorPosition: (x: number, y: number, drawing: boolean) => void;
   clearRemoteStroke: (peerId: string, strokeId: string) => void;
-  metrics: P2PMetrics | null;
 }
 
 const EMPTY_PRESENCE: ReadonlyArray<P2PPresencePeer> = [];
+
+function sameMetrics(a: P2PMetrics | null, b: P2PMetrics): boolean {
+  return (
+    !!a &&
+    a.latency === b.latency &&
+    a.packetsSent === b.packetsSent &&
+    a.packetsReceived === b.packetsReceived &&
+    a.bytesTransferred === b.bytesTransferred &&
+    a.connectedPeers === b.connectedPeers
+  );
+}
+
+/** Apply one incoming packet to the live store (pure w.r.t. React). */
+export function applyP2PPacket(
+  store: P2PLiveStore,
+  peerId: string,
+  packet: P2PPacket,
+  presence: ReadonlyArray<P2PPresencePeer>,
+  now: number = Date.now(),
+): void {
+  if (packet.t === 'cu') {
+    store.cursors.set((prev) => {
+      const current = prev.get(peerId);
+      if (
+        current &&
+        current.x === packet.x &&
+        current.y === packet.y &&
+        current.drawing === packet.drawing
+      ) {
+        return prev;
+      }
+      const next = new Map(prev);
+      next.set(peerId, { x: packet.x, y: packet.y, drawing: packet.drawing });
+      return next;
+    });
+    return;
+  }
+
+  const strokeKey = `${peerId}:${packet.id}`;
+  const point = { x: packet.x, y: packet.y, pressure: packet.p };
+  store.strokes.set((prev) => {
+    const next = new Map(prev);
+    const existing = prev.get(strokeKey);
+    if (existing) {
+      next.set(strokeKey, {
+        ...existing,
+        points: [...existing.points, point],
+        lastUpdate: now,
+      });
+    } else {
+      const peerInfo = presence.find(
+        (p) => p.userName === peerId || p.userId?.toString() === peerId
+      );
+      const stroke: RemoteStroke = {
+        peerId,
+        strokeId: packet.id,
+        points: [point],
+        // Peer color from the latest presence snapshot
+        color: peerInfo?.userColor || '#FF0000',
+        size: 20, // Default brush size
+        lastUpdate: now,
+      };
+      next.set(strokeKey, stroke);
+    }
+    return next;
+  });
+}
+
+function removePeerFromStore(store: P2PLiveStore, peerId: string): void {
+  store.strokes.set((prev) => {
+    let next: Map<string, RemoteStroke> | null = null;
+    for (const key of prev.keys()) {
+      if (key.startsWith(`${peerId}:`)) {
+        next ??= new Map(prev);
+        next.delete(key);
+      }
+    }
+    return next ?? prev;
+  });
+  store.cursors.set((prev) => {
+    if (!prev.has(peerId)) return prev;
+    const next = new Map(prev);
+    next.delete(peerId);
+    return next;
+  });
+}
 
 export function useP2PPainting({
   sessionId,
@@ -81,10 +176,9 @@ export function useP2PPainting({
   const p2pManagerRef = useRef<P2PManager | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [connectionMode, setConnectionMode] = useState<ConnectionMode>('disconnected');
-  const [remoteStrokes, setRemoteStrokes] = useState<Map<string, RemoteStroke>>(new Map());
-  const [remoteCursors, setRemoteCursors] = useState<Map<string, { x: number; y: number; drawing: boolean }>>(new Map());
-  const [metrics, setMetrics] = useState<P2PMetrics | null>(null);
-  const metricsIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [liveStore] = useState(createP2PLiveStore);
+  // Peers connected to the *current* manager. Each manager gets its own set;
+  // a destroyed manager can never touch the live one's.
   const connectedPeersRef = useRef<Set<string>>(new Set());
   const allowedPeerIdsRef = useRef(allowedPeerIds);
   allowedPeerIdsRef.current = allowedPeerIds;
@@ -97,193 +191,101 @@ export function useP2PPainting({
   const resolvedGuestKey =
     guestKey !== undefined ? guestKey : getGuestKey(sessionId) || undefined;
 
-  // Handle incoming packets
-  const handlePacketReceived = useCallback((peerId: string, packet: P2PPacket) => {
-    if (!isPacketFromEditor(peerId, allowedPeerIdsRef.current)) {
-      // Not (or no longer) an editor of this session: ignore its packets.
-      return;
-    }
-    if (packet.t === 'cu') {
-      // Handle cursor packet
-      setRemoteCursors(prev => {
-        const newCursors = new Map(prev);
-        newCursors.set(peerId, {
-          x: packet.x,
-          y: packet.y,
-          drawing: packet.drawing,
-        });
-        return newCursors;
-      });
-      return;
-    }
-    
-    // Handle stroke packet
-    console.log('🎨 P2P: Processing remote stroke', { peerId, strokeId: packet.id });
-    
-    setRemoteStrokes(prev => {
-      const newStrokes = new Map(prev);
-      const strokeKey = `${peerId}:${packet.id}`;
-      
-      const existingStroke = newStrokes.get(strokeKey);
-      if (existingStroke) {
-        // Add point to existing stroke
-        existingStroke.points.push({
-          x: packet.x,
-          y: packet.y,
-          pressure: packet.p,
-        });
-        existingStroke.lastUpdate = Date.now();
-        console.log('🔄 P2P: Updated stroke', strokeKey, 'points:', existingStroke.points.length);
-      } else {
-        // Create new stroke
-        const peerInfo = presenceRef.current.find(
-          p => p.userName === peerId || p.userId?.toString() === peerId
-        );
-        const newStroke = {
-          peerId,
-          strokeId: packet.id,
-          points: [{
-            x: packet.x,
-            y: packet.y,
-            pressure: packet.p,
-          }],
-          // Try to find peer color from latest presence snapshot
-          color: peerInfo?.userColor || '#FF0000',
-          size: 20, // Default brush size
-          lastUpdate: Date.now(),
-        };
-        newStrokes.set(strokeKey, newStroke);
-        console.log('✨ P2P: Created new stroke', strokeKey);
-      }
-      
-      console.log('📋 P2P: Total remote strokes:', newStrokes.size);
-      return newStrokes;
-    });
-  }, []);
-
-  // Handle peer connections
-  const handlePeerConnected = useCallback((peerId: string) => {
-    console.log(`Peer connected: ${peerId}`);
-    connectedPeersRef.current.add(peerId);
-    setIsConnected(true);
-  }, []);
-
-  const handlePeerDisconnected = useCallback((peerId: string) => {
-    console.log(`Peer disconnected: ${peerId}`);
-    connectedPeersRef.current.delete(peerId);
-    // Drop back to disconnected when the last peer leaves so the app can fall
-    // back to Convex presence for cursors
-    if (connectedPeersRef.current.size === 0) {
-      setIsConnected(false);
-    }
-    // Clean up strokes and cursor from disconnected peer
-    setRemoteStrokes(prev => {
-      const newStrokes = new Map(prev);
-      for (const [key] of newStrokes) {
-        if (key.startsWith(`${peerId}:`)) {
-          newStrokes.delete(key);
-        }
-      }
-      return newStrokes;
-    });
-    setRemoteCursors(prev => {
-      if (!prev.has(peerId)) return prev;
-      const newCursors = new Map(prev);
-      newCursors.delete(peerId);
-      return newCursors;
-    });
-  }, []);
-
   // Initialize P2P manager
   useEffect(() => {
-    console.log('🔍 P2P Hook - Enabled:', enabled, 'SessionId:', sessionId, 'UserId:', userId);
-    
     if (!enabled || !sessionId || !userId) {
-      console.log('⚠️ P2P Hook - Skipping initialization:', {
-        enabled,
-        hasSession: !!sessionId,
-        hasUserId: !!userId
-      });
       return;
     }
 
-    let cancelled = false;
-    const connectedPeers = connectedPeersRef.current;
-    const manager = new P2PManager({
+    const connectedPeers = new Set<string>();
+    connectedPeersRef.current = connectedPeers;
+    let manager: P2PManager | null = null;
+    // Callbacks are bound to this manager: once it is replaced or destroyed,
+    // late events (e.g. a data channel's onclose firing after destroy) are
+    // ignored instead of mutating the live manager's peers or the store.
+    const isCurrent = () => manager !== null && p2pManagerRef.current === manager;
+
+    manager = new P2PManager({
       sessionId,
       peerId: userId,
       guestKey: resolvedGuestKey,
       editKey,
       convexClient: convex,
-      onPacketReceived: handlePacketReceived,
-      onPeerConnected: handlePeerConnected,
-      onPeerDisconnected: handlePeerDisconnected,
+      onPacketReceived: (peerId, packet) => {
+        if (!isCurrent()) return;
+        if (!isPacketFromEditor(peerId, allowedPeerIdsRef.current)) {
+          // Not (or no longer) an editor of this session: ignore its packets.
+          return;
+        }
+        applyP2PPacket(liveStore, peerId, packet, presenceRef.current);
+      },
+      onPeerConnected: (peerId) => {
+        if (!isCurrent()) return;
+        connectedPeers.add(peerId);
+        setIsConnected(true);
+      },
+      onPeerDisconnected: (peerId) => {
+        if (!isCurrent()) return;
+        connectedPeers.delete(peerId);
+        // Drop back to disconnected when the last peer leaves so the app can
+        // fall back to Convex presence for cursors
+        if (connectedPeers.size === 0) {
+          setIsConnected(false);
+        }
+        removePeerFromStore(liveStore, peerId);
+      },
       onModeChanged: (mode) => {
-        if (!cancelled) {
+        if (isCurrent()) {
           setConnectionMode(mode);
         }
       },
     });
+    const current = manager;
+    p2pManagerRef.current = current;
 
-    p2pManagerRef.current = manager;
-
-    // Initialize connection
-    manager.init().catch(error => {
-      if (cancelled) return;
+    current.init().catch(error => {
+      if (!isCurrent()) return;
       console.error('Failed to initialize P2P:', error);
       // No fallback - P2P is required
       setIsConnected(false);
     });
 
-    // Start metrics collection
-    metricsIntervalRef.current = setInterval(() => {
-      if (p2pManagerRef.current) {
-        setMetrics(p2pManagerRef.current.getMetrics());
-      }
+    // Metrics go to the live store (only components showing them re-render),
+    // and only when something actually changed.
+    const metricsInterval = setInterval(() => {
+      if (!isCurrent()) return;
+      const next = current.getMetrics();
+      liveStore.metrics.set((prev) => (sameMetrics(prev, next) ? prev : next));
     }, 1000);
 
-    // Cleanup
-    return () => {
-      cancelled = true;
-      if (metricsIntervalRef.current) {
-        clearInterval(metricsIntervalRef.current);
-        metricsIntervalRef.current = null;
-      }
-      void manager.destroy();
-      p2pManagerRef.current = null;
-      connectedPeers.clear();
-      setIsConnected(false);
-      setConnectionMode('disconnected');
-      setMetrics(null);
-      setRemoteStrokes(new Map());
-      setRemoteCursors(new Map());
-    };
-  }, [enabled, sessionId, userId, resolvedGuestKey, editKey, convex, handlePacketReceived, handlePeerConnected, handlePeerDisconnected]);
-
-  // Clean up old remote strokes (older than 5 seconds) only while P2P is active
-  useEffect(() => {
-    if (!enabled || !sessionId || !userId) return;
-
-    const interval = setInterval(() => {
+    // Expire remote strokes that stopped updating (older than 5 seconds)
+    const sweepInterval = setInterval(() => {
       const now = Date.now();
-      setRemoteStrokes(prev => {
-        if (prev.size === 0) return prev;
-        const newStrokes = new Map(prev);
-        let changed = false;
-        
-        for (const [key, stroke] of newStrokes) {
+      liveStore.strokes.set((prev) => {
+        let next: Map<string, RemoteStroke> | null = null;
+        for (const [key, stroke] of prev) {
           if (now - stroke.lastUpdate > 5000) {
-            newStrokes.delete(key);
-            changed = true;
+            next ??= new Map(prev);
+            next.delete(key);
           }
         }
-        
-        return changed ? newStrokes : prev;
+        return next ?? prev;
       });
     }, 1000);
 
-    return () => clearInterval(interval);
-  }, [enabled, sessionId, userId]);
+    return () => {
+      clearInterval(metricsInterval);
+      clearInterval(sweepInterval);
+      if (p2pManagerRef.current === current) {
+        p2pManagerRef.current = null;
+      }
+      void current.destroy();
+      connectedPeers.clear();
+      setIsConnected(false);
+      setConnectionMode('disconnected');
+      resetP2PLiveStore(liveStore);
+    };
+  }, [enabled, sessionId, userId, resolvedGuestKey, editKey, convex, liveStore]);
 
   // Send stroke point
   const sendStrokePoint = useCallback((
@@ -307,7 +309,8 @@ export function useP2PPainting({
     p2pManagerRef.current.sendPacket(packet);
   }, []);
 
-  // Send cursor position
+  // Send cursor position (throttled to ~30 Hz with a trailing send inside
+  // P2PManager.sendCursorPacket)
   const sendCursorPosition = useCallback((
     x: number,
     y: number,
@@ -329,32 +332,28 @@ export function useP2PPainting({
 
   // Clear a remote stroke (useful when stroke is completed)
   const clearRemoteStroke = useCallback((peerId: string, strokeId: string) => {
-    setRemoteStrokes(prev => {
-      const key = `${peerId}:${strokeId}`;
+    const key = `${peerId}:${strokeId}`;
+    liveStore.strokes.set((prev) => {
       if (!prev.has(key)) return prev;
-      const newStrokes = new Map(prev);
-      newStrokes.delete(key);
-      return newStrokes;
+      const next = new Map(prev);
+      next.delete(key);
+      return next;
     });
-  }, []);
+  }, [liveStore]);
 
   return useMemo(() => ({
     isConnected,
     connectionMode,
-    remoteStrokes,
-    remoteCursors,
+    liveStore,
     sendStrokePoint,
     sendCursorPosition,
     clearRemoteStroke,
-    metrics,
   }), [
     isConnected,
     connectionMode,
-    remoteStrokes,
-    remoteCursors,
+    liveStore,
     sendStrokePoint,
     sendCursorPosition,
     clearRemoteStroke,
-    metrics,
   ]);
 }
