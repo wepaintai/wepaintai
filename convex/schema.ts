@@ -273,8 +273,21 @@ const schema = defineSchema({
     status: v.union(v.literal("pending"), v.literal("completed"), v.literal("failed")),
     createdAt: v.number(),
     completedAt: v.optional(v.number()),
+    // Why a purchase left `pending` without completing. `failed` is not
+    // terminal: a later validated `succeeded` checkout still completes it.
+    failureReason: v.optional(
+      v.union(
+        v.literal("checkout_failed"),
+        v.literal("checkout_expired"),
+        v.literal("validation_rejected"),
+        v.literal("reconcile_timeout")
+      )
+    ),
+    failedAt: v.optional(v.number()),
   }).index("by_user", ["userId"])
-    .index("by_checkout", ["checkoutId"]),
+    .index("by_checkout", ["checkoutId"])
+    // Reconciliation scans stale `pending` purchases oldest-first.
+    .index("by_status_created", ["status", "createdAt"]),
 
   // User-level AI prompts history
   userPrompts: defineTable({
