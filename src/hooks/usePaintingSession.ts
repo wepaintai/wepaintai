@@ -3,7 +3,7 @@ import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { useCallback, useEffect, useState, useRef, useMemo, useSyncExternalStore } from "react";
 import { p2pLogger } from "../lib/p2p-logger";
-import { resolveSessionCapabilities } from "../utils/sessionCapabilities";
+import { holdCapabilitiesWhileLoading, resolveSessionCapabilities } from "../utils/sessionCapabilities";
 import {
   reportSyncFailure,
   reportSyncSuccess,
@@ -197,10 +197,41 @@ export function usePaintingSession(
   const session = sessionResult?.status === "ok" ? sessionResult.session : null;
   // A pre-AUD-005 backend omits canEdit/isOwner: resolveSessionCapabilities
   // treats that as unknown (owners keep editing) instead of read-only for all.
-  const { canEdit, isOwner } = resolveSessionCapabilities(sessionResult, {
+  const resolvedCapabilities = resolveSessionCapabilities(sessionResult, {
     currentUserId: authenticatedUser?._id ?? null,
     hasGuestKey: !!localGuestKey,
   });
+  // useQuery returns undefined for a moment whenever its args change (e.g. the
+  // guest-key claim on sign-in). Keep the last resolved capabilities for the
+  // same session through that gap so the P2P manager and presence heartbeat
+  // aren't torn down and rebuilt. The server still enforces every write, and a
+  // real revocation arrives as a resolved result, which replaces these at once.
+  const [lastCapabilities, setLastCapabilities] = useState<{
+    sessionId: string;
+    canEdit: boolean;
+    isOwner: boolean;
+  } | null>(null);
+  const { canEdit, isOwner } = holdCapabilitiesWhileLoading({
+    sessionId,
+    sessionResult,
+    resolved: resolvedCapabilities,
+    last: lastCapabilities,
+  });
+  useEffect(() => {
+    if (!sessionId || sessionResult === undefined) return;
+    setLastCapabilities((prev) =>
+      prev &&
+      prev.sessionId === sessionId &&
+      prev.canEdit === resolvedCapabilities.canEdit &&
+      prev.isOwner === resolvedCapabilities.isOwner
+        ? prev
+        : {
+            sessionId,
+            canEdit: resolvedCapabilities.canEdit,
+            isOwner: resolvedCapabilities.isOwner,
+          }
+    );
+  }, [sessionId, sessionResult, resolvedCapabilities.canEdit, resolvedCapabilities.isOwner]);
   const canEditRef = useRef(canEdit);
   canEditRef.current = canEdit;
   // 'loading' until both the session query and auth state have resolved, so

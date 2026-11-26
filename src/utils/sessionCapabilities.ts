@@ -40,3 +40,26 @@ export function resolveSessionCapabilities(
     : isOwner || !!result.session.isPublic
   return { canEdit, isOwner, legacyBackend: !hasCanEdit }
 }
+
+/**
+ * While a getSession query is reloading (result `undefined`) for the same
+ * session, keep the last resolved capabilities instead of dropping to
+ * read-only. Any resolved result (including a revocation) wins immediately,
+ * and a different session never inherits another session's capabilities.
+ */
+export function holdCapabilitiesWhileLoading({
+  sessionId,
+  sessionResult,
+  resolved,
+  last,
+}: {
+  sessionId: string | null | undefined
+  sessionResult: unknown
+  resolved: { canEdit: boolean; isOwner: boolean }
+  last: { sessionId: string; canEdit: boolean; isOwner: boolean } | null
+}): { canEdit: boolean; isOwner: boolean } {
+  if (sessionResult === undefined && sessionId && last && last.sessionId === sessionId) {
+    return { canEdit: last.canEdit, isOwner: last.isOwner }
+  }
+  return { canEdit: resolved.canEdit, isOwner: resolved.isOwner }
+}
