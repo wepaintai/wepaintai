@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { resolveSessionCapabilities } from './sessionCapabilities'
+import { holdCapabilitiesWhileLoading, resolveSessionCapabilities } from './sessionCapabilities'
 
 const local = (currentUserId: string | null = null, hasGuestKey = false) => ({ currentUserId, hasGuestKey })
 
@@ -40,5 +40,42 @@ describe('resolveSessionCapabilities', () => {
         legacyBackend: false,
       })
     }
+  })
+})
+
+describe('holdCapabilitiesWhileLoading', () => {
+  const editor = { sessionId: 's1', canEdit: true, isOwner: false }
+  const readOnly = { canEdit: false, isOwner: false }
+
+  test('keeps the last capabilities while the same session reloads', () => {
+    expect(
+      holdCapabilitiesWhileLoading({ sessionId: 's1', sessionResult: undefined, resolved: readOnly, last: editor })
+    ).toEqual({ canEdit: true, isOwner: false })
+  })
+
+  test('never carries capabilities over to a different session', () => {
+    expect(
+      holdCapabilitiesWhileLoading({ sessionId: 's2', sessionResult: undefined, resolved: readOnly, last: editor })
+    ).toEqual(readOnly)
+  })
+
+  test('applies a resolved result immediately, including a revocation', () => {
+    expect(
+      holdCapabilitiesWhileLoading({
+        sessionId: 's1',
+        sessionResult: { status: 'ok', session: {}, canEdit: false, isOwner: false },
+        resolved: readOnly,
+        last: editor,
+      })
+    ).toEqual(readOnly)
+    expect(
+      holdCapabilitiesWhileLoading({ sessionId: 's1', sessionResult: { status: 'unauthorized' }, resolved: readOnly, last: editor })
+    ).toEqual(readOnly)
+  })
+
+  test('is read-only on first load with nothing held', () => {
+    expect(
+      holdCapabilitiesWhileLoading({ sessionId: 's1', sessionResult: undefined, resolved: readOnly, last: null })
+    ).toEqual(readOnly)
   })
 })
